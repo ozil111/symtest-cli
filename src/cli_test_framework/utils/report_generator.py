@@ -119,17 +119,12 @@ class ReportGenerator:
                         # ── Error analysis (full-dataset streaming stats) ──
                         es = cf.get('error_stats')
                         if es:
-                            report += "    error_stats (--error-analysis):\n"
-                            report += f"      total_numeric_cells: {es.get('total_numeric_cells')}\n"
-                            report += f"      mismatched_cells: {es.get('mismatched_cells')}\n"
-                            if es.get('max_abs_error') is not None:
-                                report += f"      max_abs_error: {es['max_abs_error']:.6g} at {es.get('max_abs_error_at')}\n"
-                            if es.get('max_rel_error') is not None:
-                                report += f"      max_rel_error: {es['max_rel_error']:.6g} at {es.get('max_rel_error_at')}\n"
-                            if es.get('mean_abs_error') is not None:
-                                report += f"      mean_abs_error: {es['mean_abs_error']:.6g}\n"
-                            if es.get('rms_abs_error') is not None:
-                                report += f"      rms_abs_error: {es['rms_abs_error']:.6g}\n"
+                            report += "    error_stats:\n"
+                            for key, val in es.items():
+                                if isinstance(val, float):
+                                    report += f"      {key}: {val:.6g}\n"
+                                else:
+                                    report += f"      {key}: {val}\n"
                         diffs = cf.get('differences', [])
                         if diffs:
                             report += "    sample differences:\n"
@@ -137,6 +132,19 @@ class ReportGenerator:
                                 report += f"      {d.get('position')}: expected={d.get('expected')}, actual={d.get('actual')}\n"
                             if len(diffs) > 5:
                                 report += f"      ... and {len(diffs) - 5} more\n"
+                        # ── Comparator Output (script/custom comparators) ──
+                        cmd_out = cf.get('command_output')
+                        if cmd_out:
+                            cmd_lines = str(cmd_out).splitlines()
+                            if cmd_lines:
+                                report += "    Comparator Output:\n"
+                                report += "-" * 28 + "\n"
+                                limit = 20
+                                for line in cmd_lines[:limit]:
+                                    report += f"      {line}\n"
+                                if len(cmd_lines) > limit:
+                                    report += f"      ... and {len(cmd_lines) - limit} more lines\n"
+                                report += "-" * 28 + "\n"
                         report += "\n"
 
                 # 添加步骤结果

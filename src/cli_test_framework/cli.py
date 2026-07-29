@@ -91,6 +91,11 @@ Examples:
                            help='Enable streaming error statistics for numerical file comparisons '
                                 '(CSV/H5): total_numeric_cells, mismatched_cells, '
                                 'max_abs/rel_error, mean/rms_abs_error')
+    run_parser.add_argument('--plugin-dir', action='append', default=None,
+                           dest='plugin_dirs',
+                           help='Add a directory for workspace-level comparator plugins '
+                                '(can be used multiple times). '
+                                'The workspace/comparators/ directory is always auto-detected.')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -214,6 +219,7 @@ def run_tests(args):
     error_analysis = getattr(args, 'error_analysis', False)
     last_failed = getattr(args, 'last_failed', False)
     resume = getattr(args, 'resume', False)
+    plugin_dirs = getattr(args, 'plugin_dirs', None)
 
     try:
         if args.parallel:
@@ -233,6 +239,7 @@ def run_tests(args):
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -249,6 +256,7 @@ def run_tests(args):
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
@@ -268,6 +276,7 @@ def run_tests(args):
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = YAMLRunner(
@@ -282,6 +291,7 @@ def run_tests(args):
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format: %s", file_ext)

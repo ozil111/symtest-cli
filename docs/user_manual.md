@@ -1593,7 +1593,87 @@ class MySetup(BaseSetup):
 
 ### 自定义文件比较器
 
-`ComparatorFactory` 会在首次使用时自动扫描 `file_comparator` 包内所有 `*_comparator.py` 模块并注册其中的 `*Comparator` 类。如需注册自定义比较器，调用 `register_comparator` 即可：
+框架支持三种方式扩展比较能力：
+
+#### 方式一：工作区插件目录（推荐）
+
+在 workspace 下创建 `comparators/` 目录，放入 `*_comparator.py` 文件（命名与内置比较器一致），框架会在首次使用时自动发现并注册其中的 `*Comparator` 类。
+
+```
+your-workspace/
+├── comparators/
+│   └── my_analysis_comparator.py   # 由框架自动发现
+└── test_config.json
+```
+
+可通过 CLI `--plugin-dir` 参数指定额外插件目录（支持多次使用）：
+
+```bash
+cli-test run test_config.json --plugin-dir ./extra_plugins
+```
+
+插件也会通过环境变量 `CLITEST_PLUGIN_DIRS` 自动继承到 process 模式子进程。
+
+**插件开发注意事项**：
+- 继承 `cli_test_framework.file_comparator.BaseComparator`
+- 类名必须以 `Comparator` 结尾（如 `MyAnalysisComparator`）
+- 注册的 type 名 = 类名去掉 `Comparator` 再小写（如 `myanalysis`）
+- 推荐重写 `compare_files(file1, file2, **kwargs)` 方法而非 `read_content`/`compare_content`（若比较器不使用两文件模型）
+- 通过 `from cli_test_framework.file_comparator import ComparisonResult, Difference` 构造结构化结果
+- `extra_kwargs` 自动从 config `compareSpec` 透传
+
+在配置中直接使用注册的类型名：
+
+```json
+{
+  "type": "myanalysis",
+  "actual": "optional_for_plugins",
+  "baseline": "optional_for_plugins",
+  "param1": "value1"
+}
+```
+
+#### 方式二：内置 `script` 类型比较器
+
+适用于独立分析脚本快速接入，无需编写比较器类：
+
+```json
+{
+  "type": "script",
+  "script": "analyze_xxx.py",
+  "actual": "output.txt",
+  "baseline": "baseline.txt",
+  "cwd": ".",
+  "pass_pattern": "RESULT: PASS",
+  "fail_pattern": "RESULT: (MISMATCH|FAILED)",
+  "pass_exit_code": 0,
+  "timeout": 600
+}
+```
+
+**参数说明**：
+
+| 参数 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `script` | 是 | — | 脚本路径（相对 workspace 或绝对） |
+| `actual` | 否 | — | 传给脚本的第一个文件参数 |
+| `baseline` | 否 | — | 传给脚本的第二个文件参数 |
+| `cwd` | 否 | — | 脚本工作目录 |
+| `interpreter` | 否 | `sys.executable` | Python 解释器 |
+| `pass_exit_code` | 否 | `0` | 判定为通过的退出码 |
+| `pass_pattern` | 否 | — | stdout 必须匹配此正则才判定为通过 |
+| `fail_pattern` | 否 | — | stdout 匹配此正则则强制判定为失败（优先级最高） |
+| `timeout` | 否 | `3600` | 超时秒数 |
+
+**判定逻辑**：
+1. `fail_pattern` 匹配 → 失败（优先级最高）
+2. `pass_pattern` 设置但不匹配 → 失败
+3. `pass_pattern` 匹配 → 使用退出码判定
+4. 无 pattern → 直接使用退出码判定
+
+脚本的 stdout 和 stderr 会完整捕获到 `Comparator Output` 区块中，在报告渲染时限 20 行展示。
+
+#### 方式三：手动注册（编程方式）
 
 ```python
 from cli_test_framework.file_comparator import ComparatorFactory
@@ -1608,6 +1688,29 @@ ComparatorFactory.register_comparator("foo", FooComparator)
 # 之后即可在 compare_files 断言或命令行 --file-type foo 中使用
 comparator = ComparatorFactory.create_comparator("foo")
 ```
+
+#### 专用插件示例：hourglass 切线刚度分析
+
+`examples/plugins/hourglass_tangent_comparator.py` 是一个完整的工作区插件示例，展示了如何将专用的 `analyze_*_tangent.py` 分析脚本接入框架：
+
+```json
+{
+  "type": "hourglass_tangent",
+  "script": "case/.../analyze_HG-M1_D1_A1e-4_tangent.py",
+  "case_dir": "case/.../WP31_pure/HG-M1_D1_A1e-4",
+  "pass_threshold": 1e-6,
+  "timeout": 600
+}
+```
+
+**特点**：
+- 通过 subprocess 调分析脚本（**零改动** analyze 代码），捕获 stdout 后用正则解析 `RESULT:` 行和 `full_rel`/`aa_rel`/`hh_rel`/`asymmetry` 等数值指标
+- 构造结构化 `ComparisonResult`：`identical` 基于 `full_rel < pass_threshold` 判定；`differences` 列出超限指标；`error_stats` 包含全部数值
+- 脚本 stdout 进入 `Comparator Output` 区块
+
+使用方法：将插件文件复制到 workspace 的 `comparators/` 目录下即可自动发现，无需改框架代码。
+
+> **更多插件开发指导**：参见 `examples/plugins/README.md`。entry points (`pip install` 即生效) 将在后续迭代中支持。
 
 ### 断言与文件比较
 

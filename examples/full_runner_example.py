@@ -228,6 +228,15 @@ def main():
         help="模板变量替换，格式 KEY=VALUE，例如：--var solver=/path/to/solver.exe",
     )
 
+    # ---- 自定义比较器插件 ----
+    parser.add_argument(
+        "--plugin-dir",
+        nargs="+",
+        default=None,
+        help="额外比较器插件目录（可包含 *_comparator.py）。"
+             "工作区 comparators/ 目录始终自动探测。",
+    )
+
     args = parser.parse_args()
 
     # ---- 日志配置 ----
@@ -262,6 +271,7 @@ def main():
         history_dir=args.history_dir,
         regression_threshold=args.regression_threshold,
         variables=variables,
+        plugin_dirs=args.plugin_dir,
     )
 
     # ---- 运行测试 ----

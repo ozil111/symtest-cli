@@ -93,6 +93,7 @@ class ComparisonResult:
         self.similarity = None  # Similarity index for binary comparisons
         self.truncated = False  # Whether differences were truncated due to max_diffs limit
         self.error_stats = None  # Optional error statistics from streaming numerical analysis
+        self.command_output = None  # Optional subprocess stdout captured by script/custom comparators
     
     def __str__(self):
         """
@@ -159,6 +160,7 @@ class ComparisonResult:
             "error": self.error,
             "truncated": self.truncated,
             "error_stats": self.error_stats,
+            "command_output": self.command_output,
         }
     
     def to_html(self):

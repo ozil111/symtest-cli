@@ -81,34 +81,46 @@ CONFIG_SCHEMA: Dict[str, Any] = {
         },
         "compareSpec": {
             "type": "object",
-            "required": ["actual", "baseline"],
+            "required": [],
             "additionalProperties": True,
             "description": (
-                "One file comparison rule. Keys other than actual/baseline/type/"
-                "start_line/end_line/start_column/end_column are forwarded to the "
-                "comparator as kwargs (e.g. rtol, atol, encoding, tables, data_filter)."
+                "One file comparison rule. actual/baseline are required for built-in "
+                "file-type comparators (text/csv/json/xml/h5/binary). "
+                "They are optional for script or custom (plugin) comparator types. "
+                "Keys other than those listed below are forwarded to the comparator "
+                "as kwargs (e.g. rtol, atol, encoding, tables, data_filter, "
+                "pass_threshold, pass_pattern)."
             ),
             "properties": {
                 "actual": {
                     "type": "string",
-                    "description": "File produced by the test command (relative paths resolve against the workspace).",
+                    "description": "File produced by the test command. Optional when type is 'script' or a workspace plugin.",
                 },
                 "baseline": {
                     "type": "string",
-                    "description": "Golden/reference file (relative paths resolve against the workspace).",
+                    "description": "Golden/reference file. Optional when type is 'script' or a workspace plugin.",
                 },
                 "type": {
                     "type": "string",
                     "description": (
-                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary. "
-                        "Omit to auto-detect from the file extension. "
-                        "Custom registered comparator types are also allowed."
+                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary, script. "
+                        "Custom (workspace plugin) comparator types are also allowed. "
+                        "Omit to auto-detect from the actual file extension."
                     ),
                 },
                 "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
                 "end_line": {"type": "integer", "minimum": 1, "description": "Only compare up to this line (1-based)."},
                 "start_column": {"type": "integer", "minimum": 1, "description": "Only compare from this column (1-based)."},
                 "end_column": {"type": "integer", "minimum": 1, "description": "Only compare up to this column (1-based)."},
+                "script": {"type": "string", "description": "Path to the analysis script (script / custom comparator types)."},
+                "case_dir": {"type": "string", "description": "Working directory for the analysis script."},
+                "cwd": {"type": "string", "description": "Working directory for script execution (alias for case_dir)."},
+                "pass_threshold": {"type": "number", "description": "Numeric threshold below which the comparison is considered a pass."},
+                "pass_exit_code": {"type": "integer", "default": 0, "description": "Process exit code that indicates a pass (script comparator)."},
+                "pass_pattern": {"type": "string", "description": "Regex that must match stdout for a pass (script comparator)."},
+                "fail_pattern": {"type": "string", "description": "Regex that, if matched in stdout, forces a fail (script comparator)."},
+                "interpreter": {"type": "string", "description": "Python interpreter to use for running the script."},
+                "timeout": {"type": "number", "description": "Per-comparison timeout in seconds."},
             },
         },
         "resources": {

@@ -9,6 +9,7 @@ from .setup import SetupManager, EnvironmentSetup
 from .execution import execute_single_test_case
 from .history_store import load_history, update_case, check_regression, save_history
 from .last_run_store import update_last_run, get_last_failed_names
+from ..file_comparator.factory import ComparatorFactory
 
 logger = logging.getLogger("cli_test_framework.core.base_runner")
 
@@ -21,7 +22,8 @@ class BaseRunner(ABC):
                  update_baseline: bool = False,
                  error_analysis: bool = False,
                  last_failed: bool = False,
-                 resume: bool = False):
+                 resume: bool = False,
+                 plugin_dirs: Optional[List[str]] = None):
         if workspace:
             self.workspace = Path(workspace)
         else:
@@ -43,6 +45,13 @@ class BaseRunner(ABC):
         self.error_analysis = error_analysis
         self.last_failed = last_failed
         self.resume = resume
+
+        # --- workspace plugin directories ---
+        resolved_plugin_dirs: List[str] = list(plugin_dirs) if plugin_dirs else []
+        default_plugin_dir = self.workspace / "comparators"
+        if default_plugin_dir.is_dir() and str(default_plugin_dir.resolve()) not in resolved_plugin_dirs:
+            resolved_plugin_dirs.append(str(default_plugin_dir.resolve()))
+        ComparatorFactory.set_plugin_dirs(resolved_plugin_dirs)
         self.results: Dict[str, Any] = {
             "total": 0,
             "passed": 0,

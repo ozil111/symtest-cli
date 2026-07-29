@@ -149,13 +149,19 @@ class Assertions:
         # Resolve paths relative to workspace
         orig_actual = actual_path
         orig_baseline = baseline_path
-        if workspace and not os.path.isabs(actual_path):
+        if actual_path and workspace and not os.path.isabs(actual_path):
             actual_path = os.path.join(workspace, actual_path)
-        if workspace and not os.path.isabs(baseline_path):
+        if baseline_path and workspace and not os.path.isabs(baseline_path):
             baseline_path = os.path.join(workspace, baseline_path)
 
         # Auto-detect file type from extension
         if not file_type:
+            if not actual_path:
+                raise ValidationError(
+                    "File type cannot be auto-detected: 'actual' path is empty. "
+                    "Specify 'type' explicitly (e.g. 'script' or a custom plugin type).",
+                    failure_kind="file_compare",
+                )
             file_type = _detect_file_type(actual_path)
 
         # Extract compare_files() method-level parameters (not constructor kwargs).
@@ -206,6 +212,7 @@ class Assertions:
                     if result.differences else []
                 ),
                 "error_stats": result.error_stats,
+                "command_output": result.command_output,
                 "baseline_updated": False,
             }
 
