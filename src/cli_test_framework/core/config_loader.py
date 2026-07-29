@@ -196,6 +196,7 @@ def execute_sequence(
     lock: Any = None,
     executor: Any = None,
     case_expected: Optional[Dict[str, Any]] = None,
+    update_baseline: bool = False,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -225,6 +226,9 @@ def execute_sequence(
         output_contains, output_matches, compare_files) that are
         evaluated after *all* steps pass.  Supports the same fields
         as step-level ``expected``.
+    update_baseline:
+        If True, overwrite baseline files on comparison failure in steps.
+        Forwarded to ``execute_single_test_case`` for each step.
     """
     if executor is None:
         executor = execute_single_test_case
@@ -256,7 +260,7 @@ def execute_sequence(
         )
         logger.info("  %sExecuting step %d/%d: %s", prefix, i+1, len(steps), command_preview)
 
-        result = executor(step_case, workspace)
+        result = executor(step_case, workspace, update_baseline=update_baseline)
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)

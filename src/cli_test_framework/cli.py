@@ -95,6 +95,10 @@ Examples:
     tui_parser.add_argument(
         '--workspace', '-w', help='Working directory'
     )
+    tui_parser.add_argument(
+        '--update-baseline', action='store_true',
+        help='On comparison failure, overwrite baseline files with actual output'
+    )
 
     # ---- Validate command ----
     validate_parser = subparsers.add_parser(
@@ -338,7 +342,8 @@ def run_tui(args):
     """Launch the TUI manager."""
     from .tui.app import run_tui as _run_tui
 
-    _run_tui(args.config_file, args.workspace)
+    update_baseline = getattr(args, 'update_baseline', False)
+    _run_tui(args.config_file, args.workspace, update_baseline=update_baseline)
 
 
 def run_validate(args):

@@ -34,11 +34,13 @@ class CaseManagerApp(App):
     }
     """
 
-    def __init__(self, config_file: str, workspace: Optional[str] = None):
+    def __init__(self, config_file: str, workspace: Optional[str] = None,
+                 update_baseline: bool = False):
         super().__init__()
         self._config_file = config_file
         self._workspace = workspace
         self._controller = CaseController()
+        self._controller.update_baseline = update_baseline
 
     def on_mount(self) -> None:
         try:
@@ -55,7 +57,8 @@ class CaseManagerApp(App):
 # ---------------------------------------------------------------------------
 
 
-def run_tui(config_file: str, workspace: Optional[str] = None) -> None:
+def run_tui(config_file: str, workspace: Optional[str] = None,
+            update_baseline: bool = False) -> None:
     """Launch the TUI manager.
 
     Safe to call without installing textual — raises :exc:`ImportError`
@@ -74,5 +77,5 @@ def run_tui(config_file: str, workspace: Optional[str] = None) -> None:
         )
         sys.exit(1)
 
-    app = CaseManagerApp(config_file, workspace)
+    app = CaseManagerApp(config_file, workspace, update_baseline=update_baseline)
     app.run()

@@ -102,6 +102,7 @@ class CaseController:
         self._workspace: Optional[str] = None
         self._dirty = False
         self._setup: Dict[str, Any] = {}
+        self._update_baseline: bool = False
 
     # -- properties ----------------------------------------------------------
 
@@ -128,6 +129,14 @@ class CaseController:
     @property
     def case_count(self) -> int:
         return len(self._cases)
+
+    @property
+    def update_baseline(self) -> bool:
+        return self._update_baseline
+
+    @update_baseline.setter
+    def update_baseline(self, value: bool) -> None:
+        self._update_baseline = value
 
     # -- load / save ---------------------------------------------------------
 
@@ -256,10 +265,13 @@ class CaseController:
                 case_name=case.name,
                 steps=case.steps,
                 workspace=self._workspace,
+                update_baseline=self._update_baseline,
             )
         # Single-command mode — unified to_execution_dict()
         return execute_single_test_case(
-            case.to_execution_dict(), self._workspace
+            case.to_execution_dict(),
+            self._workspace,
+            update_baseline=self._update_baseline,
         )
 
     @staticmethod

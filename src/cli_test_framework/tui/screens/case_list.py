@@ -185,11 +185,32 @@ class CaseListScreen(Screen):
         try:
             result = self._ctrl.run_case(idx)
             status_icon = "[OK]" if result["status"] == "passed" else "[FAIL]"
+            # Build rich status line with new result fields
+            parts = [f"{status_icon} {case.name}"]
+            parts.append(f"rc={result.get('return_code')}")
+            parts.append(f"{result.get('duration', 0):.2f}s")
+            # Failure kind
+            if result.get("failure_kind"):
+                parts.append(f"kind={result['failure_kind']}")
+            # Flaky / attempts
+            if result.get("flaky"):
+                parts.append(f"flaky ({result.get('attempts', 1)} attempts)")
+            elif result.get("attempts", 1) > 1:
+                parts.append(f"{result['attempts']} attempts")
+            # Failed step (sequence)
+            if result.get("failed_step"):
+                parts.append(f"step={result['failed_step']}")
             self.notify(
-                f"{status_icon} {case.name} | rc={result['return_code']} | "
-                f"{result['duration']:.2f}s",
+                " | ".join(parts),
                 severity="information" if result["status"] == "passed" else "error",
             )
+            # Show error message separately for failed cases
+            if result["status"] != "passed" and result.get("message"):
+                self.notify(f"[ERROR] {result['message']}", severity="error")
+            # Show baseline updates
+            if result.get("baseline_updated"):
+                for bu in result["baseline_updated"]:
+                    self.notify(f"[BASELINE UPDATED] {bu}", severity="information")
         except Exception as e:
             self.notify(f"Run error: {e}", severity="error")
 
