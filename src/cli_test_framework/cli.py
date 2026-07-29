@@ -115,6 +115,13 @@ Examples:
         help='Output format for validation results (default: text)'
     )
 
+    # ---- Schema command ----
+    subparsers.add_parser(
+        'schema',
+        help='Print the JSON Schema for test configuration files '
+             '(machine-readable contract for generating configs)',
+    )
+
     # ---- Compare command ----
     compare_parser = subparsers.add_parser('compare', help='Compare two files')
     compare_parser.add_argument('file1', help='Path to the first file')
@@ -377,6 +384,12 @@ def run_validate(args):
             print("  [OK] All required fields present")
             print("  [OK] No circular imports detected")
 
+        if report.get("warnings"):
+            print()
+            for warn in report["warnings"]:
+                print(f"  [WARN] {warn}")
+            print()
+
         if summary.get("files_loaded"):
             print("\n  Files:")
             for f in summary["files_loaded"]:
@@ -384,6 +397,13 @@ def run_validate(args):
         print()
 
     return report["valid"]
+
+
+def run_schema() -> None:
+    """Print the JSON Schema for test configuration files."""
+    from .config.config_schema import get_config_schema
+
+    print(json.dumps(get_config_schema(), indent=2, ensure_ascii=False))
 
 
 def main():
@@ -407,6 +427,9 @@ def main():
         success = run_validate(args)
         # 0 = valid, 1 = validation errors found
         sys.exit(0 if success else 1)
+    elif args.command == 'schema':
+        run_schema()
+        sys.exit(0)
     elif args.command == 'compare':
         success = run_compare(args)
         sys.exit(0 if success else 1)

@@ -431,6 +431,26 @@ class TestRunValidate:
         captured = capsys.readouterr()
         assert "Missing test_cases" in captured.out
 
+    def test_warnings_shown_in_text_output(self, tmp_path, monkeypatch, capsys):
+        config = tmp_path / "config.json"
+        config.write_text('{}')
+
+        monkeypatch.setattr(
+            "cli_test_framework.config.config_io.validate_config",
+            lambda cf, ws: {
+                "valid": True,
+                "summary": {"cases": 1, "files": 1},
+                "errors": [],
+                "warnings": ["case 'tc': baseline file not found: 'b.txt'"],
+            },
+        )
+
+        success = cli.run_validate(make_args(config))
+        assert success  # warnings do not affect validity
+        captured = capsys.readouterr()
+        assert "[WARN]" in captured.out
+        assert "baseline file not found" in captured.out
+
     def test_with_workspace(self, tmp_path, monkeypatch):
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -451,6 +471,42 @@ class TestRunValidate:
         success = cli.run_validate(make_args("config.json", workspace=str(workspace)))
         assert success
         assert validate_config_called[0][1] == str(workspace)
+
+
+# =========================================================================
+# run_schema
+# =========================================================================
+
+
+class TestRunSchema:
+    """Test cli.run_schema."""
+
+    def test_prints_valid_json_schema(self, capsys):
+        cli.run_schema()
+        captured = capsys.readouterr()
+        schema = json.loads(captured.out)
+        assert schema["title"] == "cli-test configuration"
+        assert "$defs" in schema
+        assert schema["$schema"].startswith("https://json-schema.org/")
+
+    def test_main_schema_dispatch(self, monkeypatch):
+        called = []
+
+        def fake_schema():
+            called.append("schema")
+
+        monkeypatch.setattr(cli, "run_schema", fake_schema)
+        monkeypatch.setattr("sys.argv", ["cli-test", "schema"])
+
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 0
+        assert "schema" in called
+
+    def test_schema_subcommand_parser(self):
+        parser = cli.create_parser()
+        args = parser.parse_args(["schema"])
+        assert args.command == "schema"
 
 
 # =========================================================================
