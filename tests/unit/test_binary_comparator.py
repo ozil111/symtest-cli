@@ -71,20 +71,20 @@ class TestCompareContent:
     def test_identical_content(self):
         comp = BinaryComparator()
         data = b"hello world"
-        identical, diffs = comp.compare_content(data, data)
+        identical, diffs, _ = comp.compare_content(data, data)
         assert identical is True
         assert diffs == []
 
     def test_size_difference(self):
         comp = BinaryComparator()
-        identical, diffs = comp.compare_content(b"abc", b"abcdef")
+        identical, diffs, _ = comp.compare_content(b"abc", b"abcdef")
         assert identical is False
         assert len(diffs) >= 1
         assert diffs[0].diff_type == "size"
 
     def test_single_byte_diff(self):
         comp = BinaryComparator()
-        identical, diffs = comp.compare_content(b"hello xorld", b"hello world")
+        identical, diffs, _ = comp.compare_content(b"hello xorld", b"hello world")
         assert identical is False
         assert len(diffs) >= 1
         assert diffs[0].diff_type == "content"
@@ -92,7 +92,7 @@ class TestCompareContent:
 
     def test_diff_at_beginning(self):
         comp = BinaryComparator()
-        identical, diffs = comp.compare_content(b"Xello world", b"hello world")
+        identical, diffs, _ = comp.compare_content(b"Xello world", b"hello world")
         assert identical is False
         assert len(diffs) >= 1
         assert "byte 0" in diffs[0].position
@@ -101,7 +101,7 @@ class TestCompareContent:
         comp = BinaryComparator()
         data1 = b"aaaaaaaaaaX"
         data2 = b"aaaaaaaaaaY"
-        identical, diffs = comp.compare_content(data1, data2)
+        identical, diffs, _ = comp.compare_content(data1, data2)
         assert identical is False
         assert len(diffs) >= 1
 
@@ -111,22 +111,23 @@ class TestCompareContent:
         # Create two 40-byte sequences that differ in every chunk
         data1 = bytes([i % 256 for i in range(40)])
         data2 = bytes([(i + 1) % 256 for i in range(40)])
-        identical, diffs = comp.compare_content(data1, data2)
+        identical, diffs, truncated = comp.compare_content(data1, data2)
         assert identical is False
-        # Should have at most 10 + 1("more differences") ≤ 11 diffs
-        assert len(diffs) <= 11
-        # Last diff should be "more differences not shown"
-        assert any(d.diff_type == "more differences not shown" for d in diffs)
+        # Should have at most 10 real differences
+        assert len(diffs) <= 10
+        # Should be truncated (no fake placeholder diff)
+        assert truncated is True
+        assert not any(d.position is None for d in diffs)
 
     def test_empty_content(self):
         comp = BinaryComparator()
-        identical, diffs = comp.compare_content(b"", b"")
+        identical, diffs, _ = comp.compare_content(b"", b"")
         assert identical is True
         assert diffs == []
 
     def test_hex_context_in_differences(self):
         comp = BinaryComparator()
-        identical, diffs = comp.compare_content(b"\x00\x01\x02\x03\x04", b"\x00\x01\xff\x03\x04")
+        identical, diffs, _ = comp.compare_content(b"\x00\x01\x02\x03\x04", b"\x00\x01\xff\x03\x04")
         assert identical is False
         # expected/actual should contain hex representations
         assert any(" " in d.expected for d in diffs if d.diff_type == "content")
@@ -231,7 +232,7 @@ class TestCompareFilesStreaming:
         f2.write_bytes(b"streaming data test")
 
         comp = BinaryComparator(chunk_size=4)
-        identical, diffs = comp._compare_files_streaming(f1, f2)
+        identical, diffs, _ = comp._compare_files_streaming(f1, f2)
         assert identical is True
         assert diffs == []
 
@@ -242,7 +243,7 @@ class TestCompareFilesStreaming:
         f2.write_bytes(b"abcHELLOxyz")
 
         comp = BinaryComparator(chunk_size=2)
-        identical, diffs = comp._compare_files_streaming(f1, f2, start_offset=3, end_offset=8)
+        identical, diffs, _ = comp._compare_files_streaming(f1, f2, start_offset=3, end_offset=8)
         assert identical is True
 
     def test_streaming_different_sizes(self, tmp_path):
@@ -252,7 +253,7 @@ class TestCompareFilesStreaming:
         f2.write_bytes(b"much longer")
 
         comp = BinaryComparator()
-        identical, diffs = comp._compare_files_streaming(f1, f2)
+        identical, diffs, _ = comp._compare_files_streaming(f1, f2)
         assert identical is False
         assert any("byte" in d.position for d in diffs)
 
@@ -263,7 +264,7 @@ class TestCompareFilesStreaming:
         f2.write_bytes(b"AABBXXDD")
 
         comp = BinaryComparator(chunk_size=4)
-        identical, diffs = comp._compare_files_streaming(f1, f2)
+        identical, diffs, _ = comp._compare_files_streaming(f1, f2)
         assert identical is False
 
     def test_streaming_max_differences(self, tmp_path):
@@ -274,9 +275,10 @@ class TestCompareFilesStreaming:
         f2.write_bytes(bytes([255] * 100))
 
         comp = BinaryComparator(chunk_size=4)
-        identical, diffs = comp._compare_files_streaming(f1, f2)
+        identical, diffs, truncated = comp._compare_files_streaming(f1, f2)
         assert identical is False
-        assert any(d.diff_type == "more differences not shown" for d in diffs)
+        assert truncated is True
+        assert not any(d.position is None for d in diffs)
 
     def test_streaming_file_not_found(self, tmp_path):
         comp = BinaryComparator()

@@ -88,7 +88,7 @@ class CsvComparator(TextComparator):
         @brief Compare CSV content structurally
         @param content1 list: First CSV data to compare (list of rows)
         @param content2 list: Second CSV data to compare (list of rows)
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         @details Performs structural comparison of CSV data, including:
                  - Row count comparison
                  - Column count comparison per row
@@ -96,7 +96,7 @@ class CsvComparator(TextComparator):
                  - Limits the number of reported differences
         """
         if content1 == content2:
-            return True, []
+            return True, [], False
             
         differences = []
         
@@ -151,18 +151,10 @@ class CsvComparator(TextComparator):
             if len(differences) >= max_diffs:
                 break
         
-        # Add a summary if there are more differences
-        if len(differences) >= max_diffs:
-            differences.append(Difference(
-                position=None,
-                expected=None,
-                actual=None,
-                diff_type=f"more differences not shown"
-            ))
-        
+        truncated = len(differences) >= max_diffs
         if not differences:
-            return True, []
-        return False, differences
+            return True, [], False
+        return False, differences, truncated
 
     def _parse_filter(self):
         """Parse data filter string and return a scalar filter function"""

@@ -49,21 +49,23 @@ class TestDifferenceStr:
     def test_missing_type(self):
         d = Difference(position="line 10", expected="missing_content", diff_type="missing")
         result = str(d)
-        assert "Missing content" in result
         assert "line 10" in result
         assert "missing_content" in result
+        # With value-based display, shows expected value even for non-content types
+        assert "expected" in result
 
     def test_extra_type(self):
         d = Difference(position="line 5", actual="extra_stuff", diff_type="extra")
         result = str(d)
-        assert "Extra content" in result
         assert "line 5" in result
         assert "extra_stuff" in result
+        # With value-based display, shows actual value even for non-content types
+        assert "got" in result
 
     def test_unknown_type(self):
         d = Difference(position="byte 100", diff_type="unknown_type")
         result = str(d)
-        assert "Difference at byte 100" == result
+        assert "At byte 100" == result
 
     def test_size_type(self):
         d = Difference(
@@ -73,8 +75,10 @@ class TestDifferenceStr:
             diff_type="size",
         )
         result = str(d)
-        # size is not content/missing/extra, falls to else branch
-        assert "Difference at file size" == result
+        # With value-based display, shows expected/actual for all types
+        assert "1024 bytes" in result
+        assert "2048 bytes" in result
+        assert "file size" in result
 
 
 class TestDifferenceToDict:
@@ -121,6 +125,7 @@ class TestComparisonResultInit:
         assert cr.differences == []
         assert cr.error is None
         assert cr.similarity is None
+        assert cr.truncated is False
 
     def test_full_initialisation(self):
         cr = ComparisonResult(
@@ -248,6 +253,16 @@ class TestComparisonResultStr:
         result = str(cr)
         assert "0 differences" in result
 
+    def test_different_truncated(self):
+        cr = ComparisonResult()
+        cr.identical = False
+        cr.truncated = True
+        cr.differences = [
+            Difference(position="line 1", expected="a", actual="b"),
+        ]
+        result = str(cr)
+        assert "more differences not shown" in result
+
 
 # ---------------------------------------------------------------------------
 # to_dict
@@ -273,6 +288,7 @@ class TestComparisonResultToDict:
         assert result["similarity"] == 1.0
         assert result["error"] is None
         assert result["differences"] == []
+        assert result["truncated"] is False
         assert result["range"]["start_line"] == 0
         assert result["range"]["end_line"] is None
 

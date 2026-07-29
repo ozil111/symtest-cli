@@ -91,7 +91,7 @@ class TextComparator(BaseComparator):
         @brief Compare text content and return detailed differences
         @param content1 list: First list of text lines to compare
         @param content2 list: Second list of text lines to compare
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         @details Uses difflib to generate a detailed comparison of the text content.
                  Returns a tuple containing a boolean indicating if the content is identical
                  and a list of Difference objects describing any differences found.
@@ -100,7 +100,7 @@ class TextComparator(BaseComparator):
         self.logger.debug(f"Comparing text content")
         
         if content1 == content2:
-            return True, []
+            return True, [], False
             
         differences = []
         
@@ -175,13 +175,8 @@ class TextComparator(BaseComparator):
         
         # Limit the number of differences reported
         max_diffs = 10
-        if len(differences) > max_diffs:
+        truncated = len(differences) > max_diffs
+        if truncated:
             differences = differences[:max_diffs]
-            differences.append(Difference(
-                position=None,
-                expected=None,
-                actual=None,
-                diff_type=f"more differences not shown (total: {len(differences)})"
-            ))
             
-        return False, differences
+        return False, differences, truncated

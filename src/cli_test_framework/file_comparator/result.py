@@ -36,15 +36,17 @@ class Difference:
         """
         @brief Convert the difference to a string representation
         @return str: Human-readable description of the difference
+        @details Shows expected/actual values whenever they exist,
+                 regardless of diff_type.
         """
-        if self.diff_type == "content":
+        if self.expected is not None and self.actual is not None:
             return f"At {self.position}: expected '{self.expected}', got '{self.actual}'"
-        elif self.diff_type == "missing":
-            return f"Missing content at {self.position}: '{self.expected}'"
-        elif self.diff_type == "extra":
-            return f"Extra content at {self.position}: '{self.actual}'"
+        elif self.expected is not None:
+            return f"At {self.position}: expected '{self.expected}'"
+        elif self.actual is not None:
+            return f"At {self.position}: got '{self.actual}'"
         else:
-            return f"Difference at {self.position}"
+            return f"At {self.position}"
     
     def to_dict(self):
         """
@@ -89,6 +91,7 @@ class ComparisonResult:
         self.differences = []
         self.error = None
         self.similarity = None  # Similarity index for binary comparisons
+        self.truncated = False  # Whether differences were truncated due to max_diffs limit
     
     def __str__(self):
         """
@@ -105,6 +108,8 @@ class ComparisonResult:
             lines.append(f"Files are different. Found {len(self.differences)} differences:")
             for i, diff in enumerate(self.differences, 1):
                 lines.append(f"{i}. {diff}")
+            if self.truncated:
+                lines.append("... more differences not shown")
             if self.similarity is not None:
                 lines.append(f"Similarity Index: {self.similarity:.2f}")
         return "\n".join(lines)
@@ -150,7 +155,8 @@ class ComparisonResult:
             "identical": self.identical,
             "differences": [diff.to_dict() for diff in self.differences],
             "similarity": self.similarity,
-            "error": self.error
+            "error": self.error,
+            "truncated": self.truncated,
         }
     
     def to_html(self):
@@ -188,6 +194,8 @@ class ComparisonResult:
                 html.append(f"<p>Type: {diff.diff_type}</p>")
                 html.append("</div>")
                 
+            if self.truncated:
+                html.append("<p class='truncated'>... more differences not shown</p>")
             html.append("</div>")
             
         html.append("</body></html>")

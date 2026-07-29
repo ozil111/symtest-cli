@@ -232,7 +232,9 @@ class H5Comparator(BaseComparator):
         return content
 
     def compare_content(self, content1, content2):
-        """Compare two H5 file contents"""
+        """Compare two H5 file contents
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
+        """
         identical = True
         differences = []
 
@@ -440,7 +442,7 @@ class H5Comparator(BaseComparator):
                             ))
                             identical = False
         
-        return identical, differences
+        return identical, differences, False
 
     def _compare_attributes(self, attrs1, attrs2, table_name):
         """Compare HDF5 attributes"""
