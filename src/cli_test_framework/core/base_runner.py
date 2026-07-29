@@ -129,7 +129,8 @@ class BaseRunner(ABC):
                 result["expected"] = case.expected if case.expected else None
                 result["description"] = case.description or None
                 result["tags"] = case.tags or []
-                
+                self._fill_hint_command(result, case.name)
+
                 self.results["details"].append(result)
                 duration = result.get("duration", 0)
                 if result["status"] == "passed":
@@ -168,6 +169,23 @@ class BaseRunner(ABC):
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
+
+    def _fill_hint_command(self, result: Dict[str, Any], case_name: str) -> None:
+        """Fill in the concrete CLI command inside ``next_action_hint``.
+
+        The execution layer attaches the hint with ``command=None`` because it
+        does not know the config file path; the runner does.
+        """
+        hint = result.get("next_action_hint")
+        if not hint or hint.get("command"):
+            return
+        config = str(self.config_path)
+        if hint.get("action") == "update_baseline":
+            hint["command"] = (
+                f'cli-test run "{config}" --update-baseline -t "{case_name}"'
+            )
+        else:
+            hint["command"] = f'cli-test run "{config}" -t "{case_name}"'
 
     def _save_last_run(self) -> None:
         """Persist per-case status for ``--last-failed`` support."""

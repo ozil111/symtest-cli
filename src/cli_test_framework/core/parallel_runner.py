@@ -202,6 +202,7 @@ class ParallelRunner(BaseRunner):
     def _update_results(self, result: Dict[str, Any], test_index: int, case: TestCase) -> None:
         """线程安全地更新测试结果"""
         with self.lock:
+            self._fill_hint_command(result, case.name)
             self.results["details"].append(result)
             duration = result.get("duration", 0)
             if result["status"] == "passed":

@@ -239,6 +239,8 @@ def execute_sequence(
     last_result = None
     failed_step = None
     step_results: List[Dict[str, Any]] = []
+    case_assertion_results: List[Dict[str, Any]] = []
+    case_hint: Optional[Dict[str, Any]] = None
 
     prefix = f"{print_prefix} " if print_prefix else ""
 
@@ -303,10 +305,16 @@ def execute_sequence(
                 "return_code": last_result["return_code"] if last_result else None,
                 "duration": total_duration,
             }
-            validate_result(case_expected, case_result, workspace)
+            case_assertion_results = validate_result(case_expected, case_result, workspace)
         except AssertionError as exc:
+            from .execution import _build_next_action_hint
+
             all_passed = False
             failed_step = len(steps) + 1  # synthetic step number
+            case_assertion_results = getattr(exc, "assertion_results", [])
+            case_hint = _build_next_action_hint(
+                getattr(exc, "failure_kind", None), update_baseline=update_baseline,
+            )
             last_result = {
                 "name": case_name,
                 "status": "failed",
@@ -354,6 +362,24 @@ def execute_sequence(
     else:
         slim_output = ""
 
+    # ── assertion_results / next_action_hint resolution ──
+    # Case-level assertion data takes precedence; otherwise propagate the
+    # failed step's data so sequence results honor the same contract as
+    # single-command results.
+    if case_assertion_results:
+        assertion_results = case_assertion_results
+    elif not all_passed and last_result is not None:
+        assertion_results = last_result.get("assertion_results", [])
+    else:
+        assertion_results = []
+
+    if case_hint is not None:
+        next_action_hint = case_hint
+    elif not all_passed and last_result is not None:
+        next_action_hint = last_result.get("next_action_hint")
+    else:
+        next_action_hint = None
+
     command_summary = " -> ".join(
         f"{_step_attr(s, 'command')} {' '.join(_step_attr(s, 'args'))}".strip()
         for s in steps
@@ -373,4 +399,6 @@ def execute_sequence(
         "compare_failures": last_result.get("compare_failures", []) if last_result else [],
         "attempts": last_result.get("attempts", 1) if last_result else 1,
         "flaky": last_result.get("flaky", False) if last_result else False,
+        "assertion_results": assertion_results,
+        "next_action_hint": next_action_hint,
     }

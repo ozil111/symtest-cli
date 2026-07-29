@@ -78,6 +78,11 @@ class TestResultData(TypedDict):
     # ── Structured output channels (split from combined ``output``) ──
     stdout: str
     stderr: str
-    # ── Per-assertion pass/fail detail (populated on failure) ──
+    # ── Per-assertion pass/fail detail (populated on both pass and failure) ──
     assertion_results: List[Dict[str, Any]]
+    # ── Structured remediation suggestion (populated on failure) ──
+    # Dict with: action ('update_baseline' | 'update_expected' | 'increase_timeout'
+    # | 'investigate'), command (concrete cli-test command, filled by runners),
+    # reason (human/AI-readable explanation).
+    next_action_hint: Optional[Dict[str, Any]]
 

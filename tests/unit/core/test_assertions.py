@@ -166,7 +166,16 @@ def test_validate_result_compare_files_passes():
             _mini_result(),
             workspace=d,
         )
-        assert result is None  # no exception → pass
+        # no exception → pass; returns per-assertion detail
+        assert result == [
+            {
+                "assertion": "compare_files",
+                "passed": True,
+                "compare_failures": [],
+                "baseline_updated": [],
+                "message": "",
+            }
+        ]
 
 
 def test_validate_result_compare_files_fails():
@@ -224,7 +233,10 @@ def test_validate_result_no_compare_files_still_works():
         {"return_code": 0, "output_contains": ["hello"]},
         _mini_result(output="hello world", return_code=0),
     )
-    assert result is None
+    assert result == [
+        {"assertion": "return_code", "passed": True},
+        {"assertion": "output_contains", "passed": True, "text": "hello"},
+    ]
 
 
 def test_validate_result_compare_files_with_existing_assertions():

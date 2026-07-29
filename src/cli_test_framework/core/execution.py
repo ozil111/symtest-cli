@@ -80,13 +80,94 @@ def _trim_compare_failures(
     return trimmed
 
 
+def _build_next_action_hint(
+    failure_kind: Optional[str],
+    *,
+    update_baseline: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Build a structured remediation hint for a failed test case.
+
+    The ``command`` field is left as ``None`` here because the execution layer
+    does not know the config file path; runners fill it in (see
+    ``BaseRunner._fill_hint_command``).
+
+    ``action`` vocabulary (stable, for AI consumers to branch on):
+    - ``update_baseline``  – file comparison failed; accept new output as baseline
+    - ``update_expected``  – an expectation assertion failed; fix program or config
+    - ``increase_timeout`` – the command timed out
+    - ``investigate``      – execution errors and everything else
+    """
+    if not failure_kind:
+        return None
+    if failure_kind == "file_compare":
+        if update_baseline:
+            return {
+                "action": "investigate",
+                "command": None,
+                "reason": (
+                    "File comparison failed even though --update-baseline was "
+                    "enabled; the actual output file may be missing or "
+                    "unreadable. Inspect compare_failures for details."
+                ),
+            }
+        return {
+            "action": "update_baseline",
+            "command": None,
+            "reason": (
+                "File comparison failed. If the new output is the intended "
+                "behavior, re-run with --update-baseline to accept it as the "
+                "new baseline; otherwise inspect compare_failures/diff_summary "
+                "and fix the program under test."
+            ),
+        }
+    if failure_kind in ("return_code", "output_contains", "output_matches"):
+        return {
+            "action": "update_expected",
+            "command": None,
+            "reason": (
+                f"Assertion '{failure_kind}' failed. If the new behavior is "
+                "intended, update the 'expected' block in the test config; "
+                "otherwise fix the program under test. Compare 'expected' "
+                "against 'stdout'/'stderr' and 'assertion_results' in this "
+                "result to locate the discrepancy."
+            ),
+        }
+    if failure_kind == "timeout":
+        return {
+            "action": "increase_timeout",
+            "command": None,
+            "reason": (
+                "The command timed out. Increase 'timeout' in the test "
+                "config or investigate why the program did not finish."
+            ),
+        }
+    if failure_kind == "execution_error":
+        return {
+            "action": "investigate",
+            "command": None,
+            "reason": (
+                "The command failed to execute. Check that it exists, that "
+                "arguments are valid, and that the environment is set up "
+                "correctly."
+            ),
+        }
+    return {
+        "action": "investigate",
+        "command": None,
+        "reason": (
+            "Investigate the failure using 'message', 'stdout'/'stderr' and "
+            "'expected' in this result."
+        ),
+    }
+
+
 def validate_result(
     expected: ExpectedResult,
     actual: TestResultData,
     workspace: Optional[str] = None,
     *,
     update_baseline: bool = False,
-) -> None:
+) -> List[Dict[str, Any]]:
     """
     Pure validation logic. Collects all assertion failures and raises
     ``ValidationError`` with structured data when any fail.
@@ -96,6 +177,9 @@ def validate_result(
     :param workspace: Working directory; used to resolve relative file paths in
                       ``compare_files`` assertions.
     :param update_baseline: If True, overwrite baseline files on comparison failure.
+    :returns: Per-assertion pass/fail detail (``assertion_results``) when all
+              assertions pass. On failure the same data is carried by the
+              raised ``ValidationError.assertion_results``.
     """
     assertions = Assertions()
     failure_messages: List[str] = []
@@ -171,6 +255,8 @@ def validate_result(
             baseline_updated=baseline_updated,
             assertion_results=assertion_results,
         )
+
+    return assertion_results
 
 
 def _dispatch_file_compare(
@@ -263,6 +349,7 @@ def _execute_command_once(
         "baseline_updated": [],
         "failed_step": None,
         "assertion_results": [],
+        "next_action_hint": None,
     }
 
     # Prepare environment variables
@@ -298,6 +385,7 @@ def _execute_command_once(
             raw_output = (stdout or "") + (stderr or "")
             result["status"] = "timeout"
             result["failure_kind"] = "timeout"
+            result["next_action_hint"] = _build_next_action_hint("timeout")
             result["message"] = f"Timeout reached! Killed after {timeout_limit} seconds."
             result["output"] = _trim_output(raw_output, output_max_chars)
             result["stdout"] = _trim_output(stdout or "", output_max_chars)
@@ -310,7 +398,9 @@ def _execute_command_once(
             result["stderr"] = _trim_output(stderr, output_max_chars)
             result["return_code"] = process.returncode
 
-            validate_result(case["expected"], result, workspace, update_baseline=update_baseline)
+            result["assertion_results"] = validate_result(
+                case["expected"], result, workspace, update_baseline=update_baseline,
+            )
             result["status"] = "passed"
     except ValidationError as exc:
         result["message"] = str(exc)
@@ -318,13 +408,18 @@ def _execute_command_once(
         result["compare_failures"] = _trim_compare_failures(exc.compare_failures)
         result["baseline_updated"] = exc.baseline_updated
         result["assertion_results"] = exc.assertion_results
+        result["next_action_hint"] = _build_next_action_hint(
+            exc.failure_kind, update_baseline=update_baseline,
+        )
     except AssertionError as exc:
         # Legacy AssertionError catch for backward compatibility
         result["message"] = str(exc)
         result["failure_kind"] = result["failure_kind"] or "unknown"
+        result["next_action_hint"] = _build_next_action_hint(result["failure_kind"])
     except Exception as exc:
         result["message"] = f"Execution error: {str(exc)}"
         result["failure_kind"] = "execution_error"
+        result["next_action_hint"] = _build_next_action_hint("execution_error")
     finally:
         result["duration"] = time.time() - start_time
 
