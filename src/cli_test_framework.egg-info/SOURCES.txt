@@ -4,6 +4,7 @@ pyproject.toml
 setup.py
 docs/design.md
 docs/design_en.md
+docs/development_plan.md
 docs/tui_and_config_split_design.md
 docs/user_manual.md
 docs/user_manual_en.md
