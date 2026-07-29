@@ -8,6 +8,7 @@
 - [配置校验](#配置校验)
 - [TUI 交互式管理器](#tui-交互式管理器)
 - [运行测试](#运行测试)
+- [项目入口脚本](#项目入口脚本)
 - [占位符（变量替换）](#占位符变量替换)
 - [标签过滤](#标签过滤)
 - [Setup 模块](#setup-模块)
@@ -678,6 +679,89 @@ for detail in runner.results["details"]:
 | `step_results` | list | 步骤序列每个 step 的 `{step, name, status, message, duration, command}` |
 | `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`actual`/`baseline` 路径、容差参数） |
 | `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
+
+## 项目入口脚本
+
+如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `cli-test run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
+
+### 何时直接用 CLI
+
+| 场景 | 推荐方式 |
+|---|---|
+| 简单项目、单个配置文件 | `cli-test run config.json --workers 4` |
+| 一次性运行、无特殊环境需求 | `cli-test run config.yaml --tag smoke` |
+| CI 流水线 | `cli-test run config.json --junit-xml report.xml` |
+
+### 何时包一层入口脚本
+
+| 场景 | 推荐方式 |
+|---|---|
+| 需要预设环境变量（如注入 venv PATH） | 入口脚本 |
+| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本 |
+| 团队共享固定运行参数（workers、history-dir 等） | 入口脚本 |
+| 需要根据配置文件扩展名自动选择 JSON/YAML runner | 入口脚本 |
+| Windows 下 console-script 命令（如 `compare-files`）找不到的问题 | 入口脚本（注入 venv Scripts 到 PATH） |
+
+### 入口脚本示例
+
+框架提供了开箱即用的示例脚本 `examples/full_runner_example.py`，可复制到你的项目根目录直接使用或按需修改。它支持以下所有 CLI 参数：
+
+| 参数 | 说明 |
+|---|---|
+| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .yaml） |
+| `--test-target` / `-t` | 按名称过滤用例 |
+| `--tag` | 按标签过滤用例（OR 关系） |
+| `--last-failed` | 只运行上次失败的用例 |
+| `--resume` | 断点续跑序列用例 |
+| `--update-baseline` | 比较失败时自动更新基线 |
+| `--junit-xml` | JUnit XML 报告输出路径 |
+| `--report` | 文本报告输出路径，默认 `test_report.txt` |
+| `--workers` / `-w` | 并行工作线程数，默认 4 |
+| `--execution-mode` | thread 或 process |
+| `--workspace` | 工作目录，默认脚本所在目录 |
+| `--var` | 模板变量替换，格式 `KEY=VALUE` |
+| `--verbose` / `-v` | 详细输出（DEBUG 级别日志） |
+
+### 快速上手
+
+1. 复制 `examples/full_runner_example.py` 到你的项目根目录，重命名为 `run_tests.py`
+2. 如果使用了虚拟环境且需要 console-script 命令，取消文件中 venv PATH 注入代码的注释
+3. 按团队习惯修改默认参数（如 `--workers` 默认值、`--history-dir` 默认路径）
+4. 运行测试：
+
+```bash
+# 全量运行
+python run_tests.py test_cases.json --workers 4
+
+# 只跑上次失败的用例
+python run_tests.py test_cases.json --last-failed
+
+# CI 中输出 JUnit 报告
+python run_tests.py test_cases.json --junit-xml report.xml
+```
+
+### Windows 下 WinError 2 问题
+
+如果你的测试用例 `command` 字段引用了 console-script 命令（例如 `compare-files`、`cli-test` 等通过 pip 安装的入口点），在 Windows 下直接双击运行脚本或通过未激活的环境启动时，子进程可能找不到这些可执行文件，报错：
+
+```
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+```
+
+这是因为这些命令以 `.exe` 包装器的形式存在于 `venv/Scripts/` 目录下，而子进程的 PATH 中没有该目录。
+
+**解决方案**：在入口脚本的最顶部（`main()` 函数开头或文件级）将 venv 的 `Scripts` 目录前置到 `PATH` 环境变量：
+
+```python
+import os
+
+venv_scripts = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", ".venv", "Scripts"))
+if os.path.isdir(venv_scripts):
+    os.environ["PATH"] = venv_scripts + os.pathsep + os.environ.get("PATH", "")
+```
+
+示例脚本 `examples/full_runner_example.py` 中已包含此段代码（默认注释），按需取消注释并调整路径即可。
 
 ## 占位符（变量替换）
 
