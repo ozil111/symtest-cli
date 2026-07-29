@@ -7,75 +7,107 @@ description: >-
   tests and diagnosing failures, or managing golden (baseline) files.
 ---
 
-# cli-test TDD Skill
+# cli-test Skill — AI Onboarding Manual
 
 `cli-test` is a CLI testing framework that executes commands and validates
 results with structured assertions (exit code, output content, file
-comparison with numeric tolerances). All machine-facing output is JSON on
-stdout; logs go to stderr and never pollute the JSON.
+comparison with numeric tolerances).
 
-## When to use
-
-- Testing a command-line program end-to-end (exit code + output + produced files).
-- Golden-file / baseline regression testing (CSV, JSON, H5, XML, text, binary).
-- Numeric result validation with tolerances (`rtol`/`atol`) instead of exact diffs.
-- Any TDD loop where the "test" is "run a program, check its output".
-
-Do NOT use it for unit tests of Python functions — use pytest directly.
-
-## Command cheat sheet
+## Command Cheat Sheet
 
 ```bash
-cli-test run <config>                          # run all cases (text report)
-cli-test run <config> --output-format json     # machine-readable results (ALWAYS use this)
-cli-test run <config> -t "<case name>"         # run one case by name (repeatable)
-cli-test run <config> --last-failed            # re-run only cases that failed last time
-cli-test run <config> --update-baseline        # accept current outputs as new baselines
-cli-test validate <config> --output-format json  # static config check (errors + warnings)
-cli-test schema                                # JSON Schema for config files
+cli-test run <config>                              # full suite, text report
+cli-test run <config> --output-format json         # structured JSON (AI must use this)
+cli-test run <config> -t "<case>"                  # single case by name (repeatable)
+cli-test run <config> --last-failed                # re-run only last-failed cases
+cli-test run <config> --resume                     # resume sequence cases from failed step
+cli-test run <config> --resume -t "<case>"         # combine: resume + single-case filter
+cli-test run <config> --update-baseline            # accept current outputs as baselines
+cli-test validate <config> --output-format json    # static config check
+cli-test schema                                    # print JSON Schema
 ```
 
 Exit codes: `0` = all passed, `1` = test failures, `2` = framework/config error.
 
-## The TDD loop
+## JSON Result Fields
 
-### RED — write a failing test
+`cli-test run --output-format json` outputs:
 
-1. **Get the schema first**: run `cli-test schema` and follow it exactly when
-   authoring the config. Do not invent fields.
-2. Add a test case describing the desired behavior (see "Authoring configs").
-3. Run `cli-test validate <config> --output-format json`. Fix every `errors`
-   entry; treat `warnings` (missing baseline, command not found) as errors
-   unless clearly intentional.
-4. Run the case and confirm it fails **for the expected reason**:
-   ```bash
-   cli-test run <config> -t "<case name>" --output-format json
-   ```
-   Check `failure_kind` in the result — a test that fails because the config
-   itself is wrong (e.g. `execution_error`) is not a valid RED state.
-
-### GREEN — make it pass
-
-1. Modify the program under test.
-2. Re-run with `cli-test run <config> --last-failed --output-format json`.
-3. If it still fails, diagnose from the structured result (see "Failure
-   playbook") and iterate. Do not re-run the full suite until all previously
-   failed cases pass.
-
-### ACCEPT — baseline changes (golden-file tests only)
-
-If `failure_kind` is `file_compare` and the difference is the **intended**
-new behavior, accept it:
-
-```bash
-cli-test run <config> --update-baseline -t "<case name>"
+```json
+{
+  "total": 3, "passed": 2, "failed": 1, "updated": 0,
+  "details": [ { "...one result per case..." } ]
+}
 ```
 
-This is a deliberate, case-scoped action — see "Safety rules" below.
+Per-case fields you will use:
 
-## Authoring configs
+| Field | Meaning |
+|---|---|
+| `status` | `passed` / `failed` / `timeout` |
+| `failure_kind` | `return_code` / `output_contains` / `output_matches` / `file_compare` / `timeout` / `execution_error` — **branch on this, not on `message`** |
+| `expected` | Echo of the expected block — compare against actuals without re-reading config |
+| `assertion_results` | Per-assertion pass/fail detail (which `output_contains` string was missing) |
+| `stdout` / `stderr` | Separated, trimmed output channels |
+| `compare_failures[].diff_summary` | `total_differences`, `max_rel_error`, `max_abs_error` |
+| `compare_failures[].differences` | Sample diffs (capped at 50; `differences_total` has true count) |
+| `failed_step` / `step_results` | For sequence cases: which step failed; skipped steps marked `"resumed": true` |
+| `next_action_hint` | `{action, command, reason}` — framework's suggested next step |
+| `flaky` / `attempts` | Retry behavior; `flaky: true` = passed only after retries |
 
-Minimal example (JSON; YAML uses the same structure):
+## Project Workflow
+
+The standard entry point is a script like `python test.py` supporting:
+
+```bash
+python test.py                                     # full suite
+python test.py --test-target BS-U_01               # single case
+python test.py --last-failed                       # only last-failed cases
+python test.py --test-target BS-U_01 --resume      # resume from failed step
+python test.py --tag smoke                         # tag filter
+```
+
+Standard AI workflow:
+
+1. Run full suite once → inspect JSON results
+2. For each failed case: branch on `failure_kind` → diagnose → fix
+3. Verify: `--last-failed` or `-t "<case>"` for narrow re-runs
+4. Once all pass, run full suite once to confirm no regressions
+
+## Failure Diagnosis
+
+Branch on `failure_kind`:
+
+| `failure_kind` | Meaning | Action |
+|---|---|---|
+| `return_code` | Exit code mismatch | Read `stderr`; fix the program, or update `expected.return_code` |
+| `output_contains` | Required string missing | `assertion_results[].text` names the missing string; check `stdout` vs `stderr` |
+| `output_matches` | Regex didn't match | Simplify the regex or inspect `stdout` |
+| `file_compare` | Produced file differs from baseline | Check `compare_failures[].diff_summary`: small `max_rel_error` → numeric noise; large → real change |
+| `timeout` | Command exceeded timeout | Increase `timeout` or investigate the hang |
+| `execution_error` | Command couldn't start | Check command exists and paths resolve correctly |
+
+`next_action_hint.action` gives the same guidance in one token:
+`update_baseline` / `update_expected` / `increase_timeout` / `investigate`.
+
+## Step-Level Resume (`--resume`)
+
+When a sequence test case fails, `--resume` skips already-passed steps and
+continues from the failed one.
+
+How it works:
+- After each step passes, state + stdout are persisted to `.cli-test/sequence_state/<case_name>.json`
+- On `--resume`, a config hash (command/args/expected of all steps) is computed
+- Hash matches → passed steps are skipped, `combined_output` is rebuilt from cached outputs
+- Full case passes → state file is deleted
+- Hash mismatch (config changed) → automatic full re-run
+
+**Trust model**: pure-trust. No workspace artifact validation. Using `--resume`
+implies the user asserts input files haven't changed.
+
+## Authoring Configs
+
+Minimal example (JSON; YAML same structure):
 
 ```json
 {
@@ -98,65 +130,18 @@ Minimal example (JSON; YAML uses the same structure):
 ```
 
 Key rules:
-
-- `name`, `command`, `args`, `expected` are required per case.
-- Relative paths in `actual`/`baseline` resolve against the **workspace**
-  (the directory where `cli-test` runs, or `--workspace`).
-- `compare_files` extras (`rtol`, `atol`, `encoding`, `tables`, `data_filter`,
-  ...) are forwarded to the comparator; `type` auto-detects from extension.
-- Multi-step cases use `steps: [{command, args, expected}, ...]` instead of
-  top-level `command`/`args`; the case-level `expected` is evaluated once
-  after all steps pass.
-- `{placeholder}` strings are substituted from `--var KEY=VALUE` at runtime.
+- `name`, `command`, `args`, `expected` are required per case
+- Relative paths resolve against the **workspace** (not config file dir, not CWD)
+- `compare_files` extras (`rtol`, `atol`, `encoding`, `tables`, `data_filter`, ...)
+  are forwarded to the comparator; type is auto-detected from extension
+- Multi-step: use `steps: [{command, args, expected}, ...]` instead of top-level
+  `command`/`args`; case-level `expected` is evaluated once after all steps pass
+- `{placeholder}` strings are substituted via `--var KEY=VALUE` at runtime
 
 Always run `cli-test schema` before authoring if unsure — the schema is the
 authoritative, version-matched contract.
 
-## Reading JSON results
-
-`cli-test run --output-format json` prints:
-
-```json
-{
-  "total": 3, "passed": 2, "failed": 1, "updated": 0,
-  "details": [ { "...one result per case..." } ]
-}
-```
-
-Per-case fields you will actually use:
-
-| Field | Meaning |
-|---|---|
-| `status` | `passed` / `failed` / `timeout` |
-| `failure_kind` | `return_code` / `output_contains` / `output_matches` / `file_compare` / `timeout` / `execution_error` — branch on this, not on `message` |
-| `expected` | Echo of the expected block — compare against actuals without re-reading the config |
-| `assertion_results` | Per-assertion pass/fail detail, e.g. which of 3 `output_contains` strings failed |
-| `stdout` / `stderr` | Separated, trimmed channels (`output` is the combined legacy field) |
-| `compare_failures[].diff_summary` | `total_differences`, `max_rel_error`, `max_abs_error` (+ positions) |
-| `compare_failures[].differences` | Sample of differing cells/lines (capped; `differences_total` has the real count) |
-| `failed_step` / `step_results` | For sequence cases: which step failed |
-| `next_action_hint` | `{action, command, reason}` — the framework's suggested next step |
-| `flaky` / `attempts` | Retry behavior; `flaky: true` = passed only after retry |
-
-## Failure playbook
-
-Branch on `failure_kind`:
-
-| `failure_kind` | What it means | What to do |
-|---|---|---|
-| `return_code` | Exit code differs | Read `stderr`; fix the program, or update `expected.return_code` if the new behavior is intended |
-| `output_contains` | A required string is missing from output | `assertion_results[].text` names the missing string; check `stdout` vs `stderr` for where it went |
-| `output_matches` | Regex did not match | Simplify the regex or inspect actual `stdout` |
-| `file_compare` | Produced file differs from baseline | Inspect `compare_failures[].diff_summary`: small `max_rel_error` → likely numeric noise (consider tolerance); large/structural → real behavior change |
-| `timeout` | Command exceeded `timeout` | Increase `timeout` in the case, or investigate the hang |
-| `execution_error` | Command could not start | Check the command exists and paths resolve against the workspace |
-
-`next_action_hint.action` gives the same guidance in one token:
-`update_baseline`, `update_expected`, `increase_timeout`, `investigate`.
-`next_action_hint.command` is a ready-to-run cli-test command (already
-includes the config path and `-t "<case>"`).
-
-## Safety rules (non-negotiable)
+## Safety Rules (non-negotiable)
 
 1. **Never run `--update-baseline` without explicit user confirmation.**
    Updating a baseline redefines "correct". Before proposing it, show the user
@@ -168,3 +153,15 @@ includes the config path and `-t "<case>"`).
    entries, loosening `rtol`) without telling the user why.
 4. A test that fails with `execution_error` or a config mistake is not a
    valid RED state — fix the config first.
+
+## Numeric Tolerance Failures (special handling)
+
+When `failure_kind` is `file_compare` and `diff_summary` shows errors in a
+gray zone (e.g. `max_rel_error` in 0.1%–5% range):
+
+- **Do not blindly adjust tolerances or update baselines.** First report the
+  error magnitude and distribution to the user (extract from
+  `compare_failures[].differences`).
+- This could be a real bug (program needs fixing) or an intentional behavior
+  change (baseline should be updated).
+- Before updating a baseline, the user must confirm "this error is physically acceptable."
