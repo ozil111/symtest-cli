@@ -167,6 +167,7 @@ def validate_result(
     workspace: Optional[str] = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Pure validation logic. Collects all assertion failures and raises
@@ -237,7 +238,7 @@ def validate_result(
     # ── compare_files ──
     if "compare_files" in expected:
         for spec in expected["compare_files"]:
-            cf_result = _dispatch_file_compare(spec, workspace, assertions, update_baseline=update_baseline)
+            cf_result = _dispatch_file_compare(spec, workspace, assertions, update_baseline=update_baseline, error_analysis=error_analysis)
             assertion_results.append(cf_result)
             if cf_result.get("passed") is False:
                 if failure_kind is None:
@@ -265,6 +266,7 @@ def _dispatch_file_compare(
     assertions: Assertions,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
 ) -> Dict[str, Any]:
     """Extract fields from a compare_files spec dict and delegate to Assertions.compare_files.
 
@@ -285,6 +287,7 @@ def _dispatch_file_compare(
             file_type=file_type,
             workspace=workspace,
             update_baseline=update_baseline,
+            error_analysis=error_analysis,
             **comparator_kwargs,
         )
         if cf_result.get("baseline_updated"):
@@ -318,6 +321,7 @@ def _execute_command_once(
     env: Optional[Dict[str, str]] = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
 ) -> TestResultData:
     """Execute a single command once (no retry logic)."""
@@ -399,7 +403,9 @@ def _execute_command_once(
             result["return_code"] = process.returncode
 
             result["assertion_results"] = validate_result(
-                case["expected"], result, workspace, update_baseline=update_baseline,
+                case["expected"], result, workspace,
+                update_baseline=update_baseline,
+                error_analysis=error_analysis,
             )
             result["status"] = "passed"
     except ValidationError as exc:
@@ -432,6 +438,7 @@ def execute_single_test_case(
     env: Optional[Dict[str, str]] = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
 ) -> TestResultData:
     """
@@ -458,6 +465,7 @@ def execute_single_test_case(
         result = _execute_command_once(
             case, workspace, env,
             update_baseline=update_baseline,
+            error_analysis=error_analysis,
             output_max_chars=output_max_chars,
         )
         total_duration += result["duration"]

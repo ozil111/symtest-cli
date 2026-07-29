@@ -172,6 +172,18 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                     "description": "Tags for --tag filtering.",
                 },
                 "resources": {"$ref": "#/$defs/resources"},
+                "expected_failure": {
+                    "type": "boolean",
+                    "description": (
+                        "Mark this case as an expected failure (xfail). "
+                        "When true, a failure counts as XFailed (not a suite failure); "
+                        "an unexpected pass counts as XPassed (suite failure)."
+                    ),
+                },
+                "xfail_reason": {
+                    "type": "string",
+                    "description": "Optional reason displayed in the report alongside XFailed results.",
+                },
             },
         },
         "sequenceCase": {
@@ -196,6 +208,18 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                 "description": {"type": ["string", "null"]},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "resources": {"$ref": "#/$defs/resources"},
+                "expected_failure": {
+                    "type": "boolean",
+                    "description": (
+                        "Mark this case as an expected failure (xfail). "
+                        "When true, a failure counts as XFailed (not a suite failure); "
+                        "an unexpected pass counts as XPassed (suite failure)."
+                    ),
+                },
+                "xfail_reason": {
+                    "type": "string",
+                    "description": "Optional reason displayed in the report alongside XFailed results.",
+                },
             },
         },
         "importRef": {

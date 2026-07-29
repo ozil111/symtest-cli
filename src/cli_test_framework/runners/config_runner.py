@@ -78,6 +78,7 @@ class ConfigRunner(BaseRunner):
             case_data,
             str(self.workspace) if self.workspace else None,
             update_baseline=self.update_baseline,
+            error_analysis=self.error_analysis,
         )
 
         if result["output"].strip():

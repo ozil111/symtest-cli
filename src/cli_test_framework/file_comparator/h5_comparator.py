@@ -5,7 +5,7 @@ import logging
 import re
 
 class H5Comparator(BaseComparator):
-    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, **kwargs):
+    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, **kwargs):
         """
         Initialize H5 comparator
         :param tables: List of table names to compare. If None, compare all tables
@@ -17,6 +17,7 @@ class H5Comparator(BaseComparator):
         :param atol: Absolute tolerance for numerical comparison
         :param expand_path: If True, expand group paths to compare all sub-items. Defaults to True.
         :param data_filter: String filter expression for data comparison (e.g., '>1e-6', 'abs>1e-9')
+        :param error_analysis: Enable streaming error statistics over ALL numeric cells
         """
         super().__init__(**kwargs)
         self.tables = tables
@@ -28,6 +29,8 @@ class H5Comparator(BaseComparator):
         self.expand_path = expand_path
         self.data_filter = data_filter
         self.filter_func = self._parse_filter()
+        self.error_analysis = error_analysis
+        self._error_stats = None
         
         # Set debug level if verbose is enabled
         if kwargs.get('verbose', False) or debug:
@@ -235,8 +238,19 @@ class H5Comparator(BaseComparator):
         """Compare two H5 file contents
         @return tuple: (bool, list, bool) - (identical, differences, truncated)
         """
+        self._error_stats = None  # Reset per comparison
         identical = True
         differences = []
+
+        # ── Error analysis accumulators ──
+        _ea_total = 0
+        _ea_mismatched = 0
+        _ea_sum_abs = 0.0
+        _ea_sum_sq = 0.0
+        _ea_max_abs = None
+        _ea_max_abs_at = None
+        _ea_max_rel = None
+        _ea_max_rel_at = None
 
         # Filter out metadata keys (starting with _)
         metadata_keys = {'_file_path', '_start_line', '_end_line', '_start_column', '_end_column'}
@@ -391,7 +405,36 @@ class H5Comparator(BaseComparator):
                             
                             # 对于数值类型数据使用 isclose
                             if np.issubdtype(data1.dtype, np.number) and np.issubdtype(data2.dtype, np.number):
-                                if not np.all(np.isclose(filtered_data1, filtered_data2, equal_nan=True, rtol=self.rtol, atol=self.atol)):
+                                is_close = np.isclose(filtered_data1, filtered_data2, equal_nan=True, rtol=self.rtol, atol=self.atol)
+                                all_close = np.all(is_close)
+
+                                # ── Error analysis: streaming stats over ALL numeric cells ──
+                                if self.error_analysis:
+                                    f1 = np.asarray(filtered_data1, dtype=np.float64)
+                                    f2 = np.asarray(filtered_data2, dtype=np.float64)
+                                    n_cells = int(f1.size)
+                                    _ea_total += n_cells
+                                    if not all_close:
+                                        mismatched = int(np.sum(~is_close))
+                                        _ea_mismatched += mismatched
+                                        diff = np.abs(f2 - f1)
+                                        abs_err_vals = diff[~is_close]
+                                        _ea_sum_abs += float(np.sum(abs_err_vals))
+                                        _ea_sum_sq += float(np.sum(abs_err_vals ** 2))
+                                        table_max_abs = float(np.max(abs_err_vals))
+                                        if _ea_max_abs is None or table_max_abs > _ea_max_abs:
+                                            _ea_max_abs = table_max_abs
+                                            _ea_max_abs_at = table_name
+                                        # Relative error (avoid div by zero)
+                                        d1_vals = np.abs(f1[~is_close])
+                                        safe_div = np.where(d1_vals > 0, d1_vals, 1e-300)
+                                        rel_errs = abs_err_vals / safe_div
+                                        table_max_rel = float(np.max(rel_errs))
+                                        if _ea_max_rel is None or table_max_rel > _ea_max_rel:
+                                            _ea_max_rel = table_max_rel
+                                            _ea_max_rel_at = table_name
+
+                                if not all_close:
                                     if self.show_content_diff:
                                         # 如果过滤后数据不相等，需要找到原始数据的索引来报告差异
                                         # 简化处理：直接报告内容不同
@@ -441,7 +484,20 @@ class H5Comparator(BaseComparator):
                                 diff_type="error"
                             ))
                             identical = False
-        
+
+        # ── Store error stats ──
+        if self.error_analysis and _ea_total > 0:
+            self._error_stats = {
+                "total_numeric_cells": _ea_total,
+                "mismatched_cells": _ea_mismatched,
+                "max_abs_error": _ea_max_abs,
+                "max_abs_error_at": _ea_max_abs_at,
+                "max_rel_error": _ea_max_rel,
+                "max_rel_error_at": _ea_max_rel_at,
+                "mean_abs_error": _ea_sum_abs / _ea_mismatched if _ea_mismatched > 0 else 0.0,
+                "rms_abs_error": (np.sqrt(_ea_sum_sq / _ea_mismatched) if _ea_mismatched > 0 else 0.0),
+            }
+
         return identical, differences, False
 
     def _compare_attributes(self, attrs1, attrs2, table_name):

@@ -257,3 +257,78 @@ def test_hostname_present(tmp_path):
     suite = tree.getroot()
     import socket
     assert suite.get("hostname") == socket.gethostname()
+
+
+# ── xfail / xpassed JUnit mapping ──
+
+def test_xfailed_maps_to_skipped(tmp_path):
+    results = {
+        "total": 1, "passed": 0, "failed": 0,
+        "details": [
+            {"name": "xfail_test", "status": "xfailed",
+             "message": "Expected failure: file compare mismatch",
+             "xfail_reason": "Bug #42", "command": "", "output": "",
+             "return_code": 1, "duration": 0.5},
+        ],
+    }
+    path = tmp_path / "report.xml"
+    write_junit_xml(results, str(path), suite_name="demo")
+
+    tree = ET.parse(str(path))
+    suite = tree.getroot()
+    assert suite.get("skipped") == "1"
+    assert suite.get("failures") == "0"
+    assert suite.get("errors") == "0"
+
+    tc = suite.find("testcase")
+    skipped = tc.find("skipped")
+    assert skipped is not None
+    assert skipped.get("message") == "Bug #42"
+
+
+def test_xpassed_maps_to_failure(tmp_path):
+    results = {
+        "total": 1, "passed": 0, "failed": 1,
+        "details": [
+            {"name": "xpass_test", "status": "xpassed",
+             "message": "UNEXPECTED PASS", "command": "", "output": "",
+             "return_code": 0, "duration": 0.1},
+        ],
+    }
+    path = tmp_path / "report.xml"
+    write_junit_xml(results, str(path), suite_name="demo")
+
+    tree = ET.parse(str(path))
+    suite = tree.getroot()
+    assert suite.get("skipped") == "0"
+    assert suite.get("failures") == "1"
+
+    tc = suite.find("testcase")
+    failure = tc.find("failure")
+    assert failure is not None
+    assert "UNEXPECTED PASS" in (failure.text or "")
+
+
+def test_mixed_xfail_statuses(tmp_path):
+    results = {
+        "total": 4, "passed": 1, "failed": 1,
+        "details": [
+            {"name": "ok", "status": "passed", "message": "", "command": "",
+             "output": "", "return_code": 0, "duration": 0.1},
+            {"name": "fail", "status": "failed", "message": "mismatch",
+             "command": "", "output": "", "return_code": 1, "duration": 0.2},
+            {"name": "xpassed", "status": "xpassed", "message": "UNEXPECTED",
+             "command": "", "output": "", "return_code": 0, "duration": 0.1},
+            {"name": "xfailed", "status": "xfailed",
+             "message": "Expected: file mismatch", "xfail_reason": "Known issue",
+             "command": "", "output": "", "return_code": 1, "duration": 0.3},
+        ],
+    }
+    path = tmp_path / "report.xml"
+    write_junit_xml(results, str(path), suite_name="demo")
+
+    tree = ET.parse(str(path))
+    suite = tree.getroot()
+    assert suite.get("tests") == "4"
+    assert suite.get("failures") == "2"  # failed + xpassed
+    assert suite.get("skipped") == "1"   # xfailed

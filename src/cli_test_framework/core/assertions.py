@@ -123,6 +123,7 @@ class Assertions:
         workspace: Optional[str] = None,
         *,
         update_baseline: bool = False,
+        error_analysis: bool = False,
         **comparator_kwargs: Any,
     ) -> Dict[str, Any]:
         """
@@ -136,6 +137,8 @@ class Assertions:
                               this directory when they are not absolute.
         :param update_baseline: If True, on comparison failure copy ``actual`` over
                                 ``baseline`` and report the update.
+        :param error_analysis: If True, enable streaming error statistics over ALL
+                               numeric cells (CSV/H5 comparators).
         :param comparator_kwargs: Extra keyword arguments forwarded to the comparator
                                   (e.g. ``rtol=1e-5``, ``atol=1e-8``, ``encoding='utf-8'``).
         :return: A dict with ``identical``, ``error``, ``diff_summary``,
@@ -183,6 +186,7 @@ class Assertions:
             comparator = ComparatorFactory.create_comparator(
                 file_type,
                 verbose=True,  # always include diff details in the assertion message
+                error_analysis=error_analysis,
                 **comparator_kwargs,
             )
             result = comparator.compare_files(actual_path, baseline_path, **method_params)
@@ -201,6 +205,7 @@ class Assertions:
                     [d.to_dict() for d in result.differences]
                     if result.differences else []
                 ),
+                "error_stats": result.error_stats,
                 "baseline_updated": False,
             }
 

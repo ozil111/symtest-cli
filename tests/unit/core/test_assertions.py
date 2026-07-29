@@ -292,7 +292,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
     assert baseline_path == "ref.h5"
     assert file_type == "h5"
     assert workspace == "/ws"
-    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False}
+    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False, "error_analysis": False}
 
 
 def test_dispatch_omits_type_when_absent(monkeypatch):

@@ -21,10 +21,17 @@ class ReportGenerator:
         self.file_path = file_path
 
     def generate_report(self) -> str:
+        xfailed = self.results.get("xfailed", 0)
+        xpassed = self.results.get("xpassed", 0)
+
         report = "Test Results Summary:\n"
         report += f"Total Tests: {self.results['total']}\n"
         report += f"Passed: {self.results['passed']}\n"
         report += f"Failed: {self.results['failed']}\n"
+        if xfailed:
+            report += f"XFailed: {xfailed}\n"
+        if xpassed:
+            report += f"XPassed: {xpassed} (unexpected!)\n"
         if self.results.get("updated", 0) > 0:
             report += f"Baseline Updated: {self.results['updated']}\n"
         total_duration = sum(d.get('duration', 0) for d in self.results['details'])
@@ -32,20 +39,34 @@ class ReportGenerator:
 
         report += "Detailed Results:\n"
         for detail in self.results['details']:
-            status_icon = "✓" if detail['status'] == 'passed' else "✗"
+            status = detail['status']
+            if status == 'passed':
+                status_icon = "✓"
+            elif status == 'xfailed':
+                status_icon = "✓"
+            elif status == 'xpassed':
+                status_icon = "✗"
+            else:
+                status_icon = "✗"
             duration = detail.get('duration', 0)
             flaky_label = _format_flaky_label(detail)
-            report += f"{status_icon} {detail['name']} ({duration:.2f}s{flaky_label})\n"
+            xfail_suffix = ""
+            if status == 'xfailed':
+                reason = detail.get('xfail_reason', '')
+                xfail_suffix = f", expected failure" + (f": {reason}" if reason else "")
+            elif status == 'xpassed':
+                xfail_suffix = ", UNEXPECTED PASS — remove xfail marker!"
+            report += f"{status_icon} {detail['name']} ({duration:.2f}s{flaky_label}{xfail_suffix})\n"
             if detail.get('description'):
                 report += f"   Description: {detail['description']}\n"
-            if detail.get('message'):
+            if detail.get('message') and status != 'passed':
                 report += f"   -> {detail['message']}\n"
 
-        # 添加失败案例的详细输出信息（含 timeout 等非通过状态）
+        # 添加失败案例的详细输出信息（含 xfailed、xpassed、timeout 等非通过状态）
         failed_tests = [detail for detail in self.results['details'] if detail['status'] != 'passed']
         if failed_tests:
             report += "\n" + "="*50 + "\n"
-            report += "FAILED TEST CASES DETAILS:\n"
+            report += "NON-PASSED TEST CASES DETAILS:\n"
             report += "="*50 + "\n\n"
 
             for i, failed_test in enumerate(failed_tests, 1):
@@ -95,6 +116,20 @@ class ReportGenerator:
                                 report += f"    max_rel_error: {ds['max_rel_error']:.6g} at {ds.get('max_rel_error_at')}\n"
                             if ds.get('max_abs_error') is not None:
                                 report += f"    max_abs_error: {ds['max_abs_error']:.6g} at {ds.get('max_abs_error_at')}\n"
+                        # ── Error analysis (full-dataset streaming stats) ──
+                        es = cf.get('error_stats')
+                        if es:
+                            report += "    error_stats (--error-analysis):\n"
+                            report += f"      total_numeric_cells: {es.get('total_numeric_cells')}\n"
+                            report += f"      mismatched_cells: {es.get('mismatched_cells')}\n"
+                            if es.get('max_abs_error') is not None:
+                                report += f"      max_abs_error: {es['max_abs_error']:.6g} at {es.get('max_abs_error_at')}\n"
+                            if es.get('max_rel_error') is not None:
+                                report += f"      max_rel_error: {es['max_rel_error']:.6g} at {es.get('max_rel_error_at')}\n"
+                            if es.get('mean_abs_error') is not None:
+                                report += f"      mean_abs_error: {es['mean_abs_error']:.6g}\n"
+                            if es.get('rms_abs_error') is not None:
+                                report += f"      rms_abs_error: {es['rms_abs_error']:.6g}\n"
                         diffs = cf.get('differences', [])
                         if diffs:
                             report += "    sample differences:\n"

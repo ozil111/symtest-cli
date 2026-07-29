@@ -98,7 +98,8 @@ class BaseComparator(ABC):
             result.identical = identical
             result.differences = differences
             result.truncated = truncated
-            
+            result.error_stats = getattr(self, "_error_stats", None)
+
             return result
             
         except Exception as e:

@@ -184,6 +184,7 @@ class ParallelConfigRunner(ParallelRunner):
             print_prefix="[Worker]",
             case_expected=case.expected if case.expected else None,
             update_baseline=self.update_baseline,
+            error_analysis=self.error_analysis,
             resume=self.resume,
         )
 
@@ -244,6 +245,7 @@ class ParallelConfigRunner(ParallelRunner):
                 str(self.workspace) if self.workspace else None,
                 env=task_env,
                 update_baseline=self.update_baseline,
+                error_analysis=self.error_analysis,
             )
 
             if result["output"].strip():

@@ -27,7 +27,7 @@ class ResourceRequirements(TypedDict, total=False):
     cpu_cores: int  # number of CPU cores required by this task
 
 
-class TestCaseData(TypedDict):
+class TestCaseData(TypedDict, total=False):
     """Input data shape for a test case after解析/路径处理."""
 
     name: str
@@ -38,6 +38,8 @@ class TestCaseData(TypedDict):
     timeout: Optional[float]
     resources: Optional[ResourceRequirements]
     retry_count: int
+    expected_failure: bool
+    xfail_reason: Optional[str]
 
 
 class SetupConfig(TypedDict):
@@ -80,6 +82,7 @@ class TestResultData(TypedDict):
     stderr: str
     # ── Per-assertion pass/fail detail (populated on both pass and failure) ──
     assertion_results: List[Dict[str, Any]]
+    xfail_reason: Optional[str]
     # ── Structured remediation suggestion (populated on failure) ──
     # Dict with: action ('update_baseline' | 'update_expected' | 'increase_timeout'
     # | 'investigate'), command (concrete cli-test command, filled by runners),

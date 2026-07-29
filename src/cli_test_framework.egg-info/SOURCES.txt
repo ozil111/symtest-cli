@@ -178,6 +178,7 @@ tests/unit/core/test_last_run_store.py
 tests/unit/core/test_process_worker.py
 tests/unit/core/test_setup.py
 tests/unit/core/test_validation_error.py
+tests/unit/core/test_xfail.py
 tests/unit/core/__pycache__/test_assertions.cpython-312-pytest-7.4.4.pyc
 tests/unit/core/__pycache__/test_assertions.cpython-312-pytest-9.0.3.pyc
 tests/unit/core/__pycache__/test_config_loader.cpython-312-pytest-9.0.3.pyc
@@ -194,6 +195,10 @@ tests/unit/core/__pycache__/test_setup.cpython-312-pytest-7.4.4.pyc
 tests/unit/core/__pycache__/test_setup.cpython-312-pytest-9.0.3.pyc
 tests/unit/core/__pycache__/test_setup.cpython-39-pytest-8.3.4.pyc
 tests/unit/core/__pycache__/test_validation_error.cpython-312-pytest-9.0.3.pyc
+tests/unit/core/__pycache__/test_xfail.cpython-312-pytest-9.0.3.pyc
+tests/unit/file_comparator/test_error_analysis.py
+tests/unit/file_comparator/__pycache__/__init__.cpython-312.pyc
+tests/unit/file_comparator/__pycache__/test_error_analysis.cpython-312-pytest-9.0.3.pyc
 tests/unit/runners/test_json_yaml_runner.py
 tests/unit/runners/test_test_case_filter.py
 tests/unit/runners/test_test_case_tag_filter.py

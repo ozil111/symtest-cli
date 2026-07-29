@@ -69,6 +69,14 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
                     }
                 ]
             }
+        },
+        {
+            "name": "已知失败的测试",
+            "command": "echo",
+            "args": ["should_fail"],
+            "expected_failure": true,
+            "xfail_reason": "Bug #42 尚未修复",
+            "expected": { "return_code": 1 }
         }
     ]
 }
@@ -97,6 +105,36 @@ test_cases:
         - actual: output.txt
           baseline: baseline.txt
           type: text
+
+  - name: 已知失败的测试
+    command: echo
+    args: ["should_fail"]
+    expected_failure: true
+    xfail_reason: "Bug #42 尚未修复"
+    expected:
+      return_code: 1
+```
+
+### 预期失败（xfail）
+
+当存在已知缺陷导致某用例无法通过时，可标记 `expected_failure: true`，框架会区分"预期中的失败"与"意外的通过"：
+
+| 场景 | 状态 | 退出码影响 | 说明 |
+|---|---|---|---|
+| xfail 标记 + 确实失败 | `xfailed` | 不计数为失败 | 报告展示 `xfail_reason`，详情照常输出 |
+| xfail 标记 + 意外通过 | `xpassed` | **计入失败** | 报告高亮提示"移除 xfail 标记" |
+
+这与 pytest 的 xfail 语义一致。搭配 `--last-failed` 时，xfailed 不会进入重跑集，xpassed 会进入。
+
+```json
+{
+    "name": "已知Bug",
+    "command": "solver",
+    "args": ["--input", "bug_case.dat"],
+    "expected_failure": true,
+    "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
+    "expected": { "return_code": 1 }
+}
 ```
 
 ### 字段说明
@@ -111,6 +149,8 @@ test_cases:
 | `retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step。重试后通过会在结果中标记 `flaky: true` |
 | `tags` | 否 | 标签列表，用于批量过滤（如 `["smoke", "fast"]`） |
 | `resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
+| `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
+| `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
@@ -498,11 +538,16 @@ cli-test run test_cases.json --resume -t BS-U_01
 
 # 比较失败时自动更新基线文件
 cli-test run test_cases.json --update-baseline
+
+# 启用误差分析（数值比较时输出全量统计）
+cli-test run test_cases.json --error-analysis
 ```
 
 ### 只运行上次失败的用例（--last-failed）
 
-`--last-failed` 自动过滤出上一次运行中状态为 `failed` 或 `timeout` 的用例，适合 AI 迭代修复场景：修复一轮代码后，只需验证上次失败的用例，无需全量重跑（有限元全量可能几小时）。
+`--last-failed` 自动过滤出上一次运行中**真正失败**的用例（`failed`、`timeout` 和 `xpassed`），适合 AI 迭代修复场景：修复一轮代码后，只需验证上次失败的用例，无需全量重跑（有限元全量可能几小时）。
+
+**xfail 语义**：标记为 `expected_failure` 的用例如果失败（`xfailed`），是预期行为，**不会**被 `--last-failed` 选中重跑。但如果 xfail 标记的用例意外通过（`xpassed`），则被视为真正失败，**会**被选中。
 
 **工作原理**：
 - 每次运行结束后，框架在 `<workspace>/.cli-test/last_run.json` 中记录每个用例的状态
@@ -643,14 +688,17 @@ runner.run_tests()
 runner.results["total"]
 runner.results["passed"]
 runner.results["failed"]
+runner.results["xfailed"]      # 预期失败（不影响退出码）
+runner.results["xpassed"]      # 意外通过（计入失败）
 runner.results["updated"]   # 被 --update-baseline 更新的基线文件数
 
 # 详情 — 每个结果字典包含以下字段
 for detail in runner.results["details"]:
     print(detail["name"])                     # 用例名称
-    print(detail["status"])                   # "passed" / "failed" / "timeout"
+    print(detail["status"])                   # "passed" / "failed" / "xfailed" / "xpassed" / "timeout"
     print(detail.get("message", ""))          # 失败原因
     print(detail.get("duration"))             # 耗时（秒）
+    print(detail.get("xfail_reason", ""))     # xfail 原因（仅 xfailed/xpassed 状态）
     print(detail.get("expected"))             # 期望断言（注册的验收标准）
     print(detail.get("description"))          # 用例描述
     print(detail.get("tags"))                 # 标签列表
@@ -670,6 +718,8 @@ for detail in runner.results["details"]:
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
+| `status` | str | 四态之一：`passed`（通过）、`failed`（失败）、`xfailed`（预期失败）、`xpassed`（意外通过）、`timeout`（超时） |
+| `xfail_reason` | str | xfail 原因文本（来自配置中的 `xfail_reason` 字段），仅在 `xfailed`/`xpassed` 状态时有值 |
 | `expected` | dict | 注册的期望断言（含 return_code、output_contains、compare_files 等），方便回查验收标准 |
 | `description` | str | 测试用例的描述文本 |
 | `failure_kind` | str | 失败类型枚举，AI/脚本可据此选择修复策略 |
@@ -677,7 +727,7 @@ for detail in runner.results["details"]:
 | `flaky` | bool | 重试后才通过时为 `true` |
 | `attempt_history` | list | 每次尝试的 `{attempt, status, message, duration}` |
 | `step_results` | list | 步骤序列每个 step 的 `{step, name, status, message, duration, command}` |
-| `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`actual`/`baseline` 路径、容差参数） |
+| `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`error_stats`、`actual`/`baseline` 路径、容差参数） |
 | `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
 
 ## 项目入口脚本
@@ -1228,7 +1278,7 @@ runner.run_tests()
 write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 ```
 
-状态映射：`passed` 记为通过；`failed`（断言失败）记为 failure；`timeout` 与执行错误记为 error。每个 testcase 元素附带命令输出与失败原因。
+状态映射：`passed` 记为通过；`failed` 记为 failure（断言失败）或 error（执行错误）；`timeout` 记为 error；`xfailed` 记为 **skipped**（预期失败，不影响构建）；`xpassed` 记为 **failure**（意外通过，视为构建失败）。每个 testcase 元素附带命令输出与失败原因。
 
 ## 日志配置
 
@@ -1368,6 +1418,55 @@ compare-files data1.csv data2.csv --csv-data-filter '<=0.01'
 
 CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内视为相等。`--csv-data-filter` 过滤后，不满足条件的数值单元格对不会报差异。差异报告包含行数、列数不匹配与单元格不一致，最多列出 10 条。
 
+#### 误差分析（--error-analysis）
+
+默认情况下，CSV 和 HDF5 比较器在发现 10 条差异后停止报告。当需要了解**全体数值单元格**的统计特征时，可通过 `--error-analysis` 启用流式全量统计。
+
+启用后，每个失败的文件比较会在报告的 Compare Failures 区块中附加 `error_stats` 信息：
+
+| 统计量 | 说明 |
+|---|---|
+| `total_numeric_cells` | 参与数值比较的单元格总数 |
+| `mismatched_cells` | 超出容差的单元格数 |
+| `max_abs_error` | 最大绝对误差及其位置 |
+| `max_rel_error` | 最大相对误差及其位置 |
+| `mean_abs_error` | 平均绝对误差 |
+| `rms_abs_error` | 均方根绝对误差（RMSE） |
+
+统计是**流式**计算的，不依赖差异截断，覆盖全体数值单元格。仅失败的比较输出统计，通过的比较不输出。
+
+**CLI 用法**：
+
+```bash
+# 启用误差分析
+cli-test run config.json --error-analysis
+
+# 与比较参数组合使用
+cli-test run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
+```
+
+**Python API**：
+
+```python
+# 在比较器中启用
+comparator = ComparatorFactory.create_comparator(
+    "csv", rtol=1e-5, atol=1e-8, error_analysis=True
+)
+result = comparator.compare_files("data1.csv", "data2.csv")
+print(result.error_stats)  # dict 或 None
+
+# 通过 Assertions.compare_files 启用
+from cli_test_framework.core.assertions import Assertions
+cf_result = Assertions.compare_files(
+    "actual.csv", "baseline.csv",
+    file_type="csv", rtol=1e-5, atol=1e-8,
+    error_analysis=True,
+)
+print(cf_result["error_stats"])
+```
+
+> **注意**：`--error-analysis` 仅对数值型比较器（CSV、HDF5）生效，文本/JSON/XML/二进制比较器忽略此参数。未启用时行为不变，无额外开销。
+
 ### XML 文件比较
 
 ```bash
@@ -1443,6 +1542,11 @@ result = comparator.compare_files("data1.json", "data2.json")
 comparator = ComparatorFactory.create_comparator("csv", rtol=1e-5, atol=1e-8, delimiter=",")
 result = comparator.compare_files("data1.csv", "data2.csv")
 
+# CSV 比较（启用误差分析）
+comparator = ComparatorFactory.create_comparator("csv", rtol=1e-5, atol=1e-8, delimiter=",", error_analysis=True)
+result = comparator.compare_files("data1.csv", "data2.csv")
+print(result.error_stats)  # 全量数值统计
+
 # XML 比较
 comparator = ComparatorFactory.create_comparator("xml", encoding="utf-8")
 result = comparator.compare_files("config1.xml", "config2.xml")
@@ -1516,9 +1620,12 @@ Assertions.return_code_equals(actual_code, 0)
 Assertions.contains(output, "expected text")
 Assertions.matches(output, r".*regex.*")
 Assertions.compare_files("actual.txt", "baseline.txt", file_type="text", workspace="/ws")
+
+# 启用误差分析（仅 CSV/H5 生效）
+Assertions.compare_files("actual.h5", "baseline.h5", file_type="h5", workspace="/ws", rtol=1e-5, error_analysis=True)
 ```
 
-`compare_files` 会自动按扩展名识别类型（`.h5/.hdf5/.hdf`→h5、`.json`→json、`.csv/.tsv`→csv、`.xml/.html/.htm`→xml、`.txt/.log/.out/.py`→text、其余→binary），相对路径按 `workspace` 解析，额外参数透传给比较器。
+`compare_files` 会自动按扩展名识别类型（`.h5/.hdf5/.hdf`→h5、`.json`→json、`.csv/.tsv`→csv、`.xml/.html/.htm`→xml、`.txt/.log/.out/.py`→text、其余→binary），相对路径按 `workspace` 解析，额外参数（含 `error_analysis`）透传给比较器。
 
 成功时返回结构化字典（含 `identical`、`actual`、`baseline`、`diff_summary`、`differences` 等字段），失败时抛出 `ValidationError(AssertionError)`，携带 `failure_kind` 和 `compare_failures` 列表。
 

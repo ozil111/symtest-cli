@@ -87,6 +87,10 @@ Examples:
     run_parser.add_argument('--resume', action='store_true',
                            help='Resume sequence test cases from last failed step '
                                 '(trusts workspace artifacts are unchanged)')
+    run_parser.add_argument('--error-analysis', action='store_true',
+                           help='Enable streaming error statistics for numerical file comparisons '
+                                '(CSV/H5): total_numeric_cells, mismatched_cells, '
+                                'max_abs/rel_error, mean/rms_abs_error')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -207,6 +211,7 @@ def run_tests(args):
     var_list = getattr(args, 'var', [])
     variables = _parse_vars(var_list)
     update_baseline = getattr(args, 'update_baseline', False)
+    error_analysis = getattr(args, 'error_analysis', False)
     last_failed = getattr(args, 'last_failed', False)
     resume = getattr(args, 'resume', False)
 
@@ -225,6 +230,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
                 )
@@ -240,6 +246,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
                 )
@@ -258,6 +265,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
                 )
@@ -271,6 +279,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
                 )
@@ -322,6 +331,13 @@ def _format_results_html(results, text_report):
     """Format test results as a basic HTML page."""
     escaped_report = text_report.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     pass_pct = (results['passed'] / max(results['total'], 1)) * 100
+    xfailed = results.get('xfailed', 0)
+    xpassed = results.get('xpassed', 0)
+    extras = ""
+    if xfailed:
+        extras += f" | XFailed: <span class=\"xfailed\">{xfailed}</span>"
+    if xpassed:
+        extras += f" | XPassed: <span class=\"xpassed\">{xpassed} (unexpected!)</span>"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -332,13 +348,15 @@ def _format_results_html(results, text_report):
   .summary {{ margin-bottom: 1em; }}
   .passed {{ color: green; }}
   .failed {{ color: red; }}
+  .xfailed {{ color: orange; }}
+  .xpassed {{ color: red; font-weight: bold; }}
   pre {{ background: #f5f5f5; padding: 1em; border-radius: 4px; }}
 </style>
 </head>
 <body>
 <h1>CLI Test Results</h1>
 <div class="summary">
-  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span></p>
+  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span>{extras}</p>
   <p>Pass rate: {pass_pct:.1f}%</p>
 </div>
 <pre>{escaped_report}</pre>

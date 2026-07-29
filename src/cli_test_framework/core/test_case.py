@@ -24,6 +24,8 @@ class TestCase:
     steps: Optional[List[TestCaseStep]] = None
     tags: List[str] = field(default_factory=list)
     retry_count: int = 0
+    expected_failure: bool = False
+    xfail_reason: str = ""
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert test case to dictionary format"""
@@ -37,6 +39,9 @@ class TestCase:
             "tags": self.tags,
             "retry_count": self.retry_count,
         }
+        if self.expected_failure:
+            result["expected_failure"] = self.expected_failure
+            result["xfail_reason"] = self.xfail_reason
         if self.steps is not None:
             result["steps"] = [
                 {

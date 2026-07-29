@@ -104,4 +104,39 @@ class TestLastRunStore:
 
     def test_get_last_run_summary_empty(self, workspace):
         s = get_last_run_summary(workspace)
-        assert s == {"total": 0, "passed": 0, "failed": 0, "timeout": 0}
+        assert s == {"total": 0, "passed": 0, "failed": 0, "xfailed": 0, "xpassed": 0, "timeout": 0}
+
+    # ── xfail semantics ──
+
+    def test_get_last_failed_names_excludes_xfailed(self, workspace):
+        """xfailed cases should NOT be in --last-failed (they're expected failures)."""
+        save_last_run(workspace, {
+            "case_a": {"status": "xfailed"},
+            "case_b": {"status": "failed"},
+            "case_c": {"status": "xpassed"},
+        })
+        failed = get_last_failed_names(workspace)
+        assert set(failed) == {"case_b", "case_c"}
+
+    def test_get_last_failed_names_includes_xpassed(self, workspace):
+        """xpassed IS a failure, should be in --last-failed."""
+        save_last_run(workspace, {
+            "case_a": {"status": "xpassed"},
+            "case_b": {"status": "xfailed"},
+        })
+        failed = get_last_failed_names(workspace)
+        assert set(failed) == {"case_a"}
+
+    def test_get_last_run_summary_xfail_counts(self, workspace):
+        save_last_run(workspace, {
+            "a": {"status": "xfailed"},
+            "b": {"status": "xfailed"},
+            "c": {"status": "xpassed"},
+            "d": {"status": "failed"},
+        })
+        s = get_last_run_summary(workspace)
+        assert s["total"] == 4
+        assert s["passed"] == 0
+        assert s["xfailed"] == 2
+        assert s["xpassed"] == 1
+        assert s["failed"] >= 2  # xpassed(1) + failed(1) = 2

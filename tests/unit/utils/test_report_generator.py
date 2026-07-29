@@ -29,7 +29,7 @@ def test_generate_report_summarizes_passed_and_failed_results():
     assert "Passed: 1" in report
     assert "Failed: 1" in report
     assert "ok" in report
-    assert "FAILED TEST CASES DETAILS" in report
+    assert "NON-PASSED TEST CASES DETAILS" in report
     assert "Command: tool --flag" in report
     assert "Return Code: 2" in report
     assert "stderr text" in report
