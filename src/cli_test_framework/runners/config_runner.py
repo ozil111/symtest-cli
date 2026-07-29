@@ -77,6 +77,7 @@ class ConfigRunner(BaseRunner):
         result = execute_single_test_case(
             case_data,
             str(self.workspace) if self.workspace else None,
+            update_baseline=self.update_baseline,
         )
 
         if result["output"].strip():

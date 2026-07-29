@@ -1,8 +1,12 @@
 import os
 import re
-from typing import Any, Dict, Optional, Pattern
+import shutil
+import logging
+from typing import Any, Dict, List, Optional, Pattern
 
 from ..file_comparator.factory import ComparatorFactory
+
+logger = logging.getLogger("cli_test_framework.core.assertions")
 
 
 def _detect_file_type(file_path: str) -> str:
@@ -19,6 +23,66 @@ def _detect_file_type(file_path: str) -> str:
         return _type_map[ext]
     # For unknown extensions, use binary comparator
     return 'binary'
+
+
+class ValidationError(AssertionError):
+    """Structured assertion failure carrying failure_kind and detailed data.
+
+    Extends ``AssertionError`` for backward compatibility with existing
+    ``except AssertionError`` catch blocks, while adding structured fields
+    that reporters and AI consumers can use directly.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        failure_kind: str = "",
+        compare_failures: Optional[List[Dict[str, Any]]] = None,
+        baseline_updated: Optional[List[str]] = None,
+        assertion_results: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_kind = failure_kind
+        self.compare_failures = compare_failures or []
+        self.baseline_updated = baseline_updated or []
+        self.assertion_results = assertion_results or []
+
+
+def _build_diff_summary(result: Any) -> Dict[str, Any]:
+    """Extract a numerical diff summary from a ``ComparisonResult``.
+
+    Walks the ``differences`` list and computes:
+    - ``total_differences``
+    - ``max_rel_error`` / ``max_abs_error`` (for cells that are numeric)
+    - ``max_rel_error_at`` / ``max_abs_error_at`` (position string)
+    """
+    differences = getattr(result, "differences", []) or []
+    summary: Dict[str, Any] = {
+        "total_differences": len(differences),
+        "max_rel_error": None,
+        "max_rel_error_at": None,
+        "max_abs_error": None,
+        "max_abs_error_at": None,
+    }
+    for diff in differences:
+        exp = getattr(diff, "expected", None)
+        act = getattr(diff, "actual", None)
+        pos = getattr(diff, "position", None)
+        try:
+            ve = float(exp)
+            va = float(act)
+            abs_err = abs(va - ve)
+            rel_err = abs_err / max(abs(ve), 1e-300) if abs(ve) > 0 else float("inf")
+            if summary["max_abs_error"] is None or abs_err > summary["max_abs_error"]:
+                summary["max_abs_error"] = abs_err
+                summary["max_abs_error_at"] = pos
+            if summary["max_rel_error"] is None or rel_err > summary["max_rel_error"]:
+                summary["max_rel_error"] = rel_err
+                summary["max_rel_error_at"] = pos
+        except (ValueError, TypeError):
+            pass
+    return summary
 
 
 class Assertions:
@@ -57,8 +121,10 @@ class Assertions:
         baseline_path: str,
         file_type: Optional[str] = None,
         workspace: Optional[str] = None,
+        *,
+        update_baseline: bool = False,
         **comparator_kwargs: Any,
-    ) -> bool:
+    ) -> Dict[str, Any]:
         """
         Compare two files using the appropriate file comparator.
 
@@ -68,12 +134,18 @@ class Assertions:
                               Auto-detected from file extension if omitted.
         :param workspace:     Working directory; both paths are resolved relative to
                               this directory when they are not absolute.
+        :param update_baseline: If True, on comparison failure copy ``actual`` over
+                                ``baseline`` and report the update.
         :param comparator_kwargs: Extra keyword arguments forwarded to the comparator
                                   (e.g. ``rtol=1e-5``, ``atol=1e-8``, ``encoding='utf-8'``).
-        :return: True when files are identical.
-        :raises AssertionError: when files differ or an error occurs during comparison.
+        :return: A dict with ``identical``, ``error``, ``diff_summary``,
+                 ``differences``, ``actual``, ``baseline``, ``type``,
+                 ``comparator_kwargs``, ``baseline_updated``.
+        :raises ValidationError: when files differ (unless update_baseline is enabled).
         """
         # Resolve paths relative to workspace
+        orig_actual = actual_path
+        orig_baseline = baseline_path
         if workspace and not os.path.isabs(actual_path):
             actual_path = os.path.join(workspace, actual_path)
         if workspace and not os.path.isabs(baseline_path):
@@ -101,6 +173,12 @@ class Assertions:
         if "end_column" in method_params and method_params["end_column"] is not None:
             method_params["end_column"] = max(0, int(method_params["end_column"]) - 1)
 
+        # Collect tolerances for reporting (before they're consumed by factory)
+        reported_kwargs = {
+            k: v for k, v in comparator_kwargs.items()
+            if k not in ("verbose", "debug", "num_threads", "chunk_size", "encoding")
+        }
+
         try:
             comparator = ComparatorFactory.create_comparator(
                 file_type,
@@ -109,23 +187,55 @@ class Assertions:
             )
             result = comparator.compare_files(actual_path, baseline_path, **method_params)
 
+            # Build structured response
+            diff_summary = _build_diff_summary(result)
+            response: Dict[str, Any] = {
+                "identical": result.identical,
+                "error": result.error,
+                "actual": orig_actual,
+                "baseline": orig_baseline,
+                "type": file_type,
+                "comparator_kwargs": reported_kwargs,
+                "diff_summary": diff_summary,
+                "differences": (
+                    [d.to_dict() for d in result.differences]
+                    if result.differences else []
+                ),
+                "baseline_updated": False,
+            }
+
             if result.error:
-                raise AssertionError(
-                    f"File comparison error ({actual_path} vs {baseline_path}): {result.error}"
+                raise ValidationError(
+                    f"File comparison error ({orig_actual} vs {orig_baseline}): {result.error}",
+                    failure_kind="file_compare",
+                    compare_failures=[response],
                 )
 
             if not result.identical:
-                detail_lines = [str(result)]
-                raise AssertionError(
-                    f"File comparison failed ({actual_path} vs {baseline_path}):\n"
-                    + "\n".join(detail_lines)
-                )
+                if update_baseline:
+                    # Overwrite baseline with actual
+                    os.makedirs(os.path.dirname(baseline_path), exist_ok=True)
+                    shutil.copy2(actual_path, baseline_path)
+                    response["baseline_updated"] = True
+                    response["identical"] = True  # treated as pass
+                    logger.info(
+                        "  [UPDATE BASELINE] %s → %s",
+                        orig_actual, orig_baseline,
+                    )
+                    return response
+                else:
+                    raise ValidationError(
+                        f"File comparison failed ({orig_actual} vs {orig_baseline}):\n{result}",
+                        failure_kind="file_compare",
+                        compare_failures=[response],
+                    )
 
-            return True
+            return response
 
-        except AssertionError:
+        except ValidationError:
             raise
         except Exception as exc:
-            raise AssertionError(
-                f"File comparison error ({actual_path} vs {baseline_path}): {exc}"
+            raise ValidationError(
+                f"File comparison error ({orig_actual} vs {orig_baseline}): {exc}",
+                failure_kind="file_compare",
             )

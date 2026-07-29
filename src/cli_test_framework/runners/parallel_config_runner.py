@@ -241,6 +241,7 @@ class ParallelConfigRunner(ParallelRunner):
                 case_data,
                 str(self.workspace) if self.workspace else None,
                 env=task_env,
+                update_baseline=self.update_baseline,
             )
 
             if result["output"].strip():

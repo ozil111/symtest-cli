@@ -57,10 +57,22 @@ class TestResultData(TypedDict):
     """Normalized result produced by executing a single test case."""
 
     name: str
-    status: str  # 'passed', 'failed'
+    status: str  # 'passed', 'failed', 'timeout'
     message: str
     command: str
     output: str
     return_code: Optional[int]
     duration: float
+    # ── New fields (optional, backward-compatible) ──
+    expected: Optional[Dict[str, Any]]
+    description: Optional[str]
+    tags: List[str]
+    failure_kind: Optional[str]  # 'return_code' | 'output_contains' | 'output_matches' | 'file_compare' | 'timeout' | 'execution_error'
+    attempts: int
+    flaky: bool
+    attempt_history: List[Dict[str, Any]]
+    step_results: List[Dict[str, Any]]
+    compare_failures: List[Dict[str, Any]]
+    baseline_updated: List[str]
+    failed_step: Optional[int]
 

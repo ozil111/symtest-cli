@@ -196,6 +196,7 @@ def execute_sequence(
     lock: Any = None,
     executor: Any = None,
     case_expected: Optional[Dict[str, Any]] = None,
+    update_baseline: bool = False,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -225,6 +226,9 @@ def execute_sequence(
         output_contains, output_matches, compare_files) that are
         evaluated after *all* steps pass.  Supports the same fields
         as step-level ``expected``.
+    update_baseline:
+        If True, overwrite baseline files on comparison failure in steps.
+        Forwarded to ``execute_single_test_case`` for each step.
     """
     if executor is None:
         executor = execute_single_test_case
@@ -234,6 +238,7 @@ def execute_sequence(
     all_passed = True
     last_result = None
     failed_step = None
+    step_results: List[Dict[str, Any]] = []
 
     prefix = f"{print_prefix} " if print_prefix else ""
 
@@ -255,12 +260,22 @@ def execute_sequence(
         )
         logger.info("  %sExecuting step %d/%d: %s", prefix, i+1, len(steps), command_preview)
 
-        result = executor(step_case, workspace)
+        result = executor(step_case, workspace, update_baseline=update_baseline)
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)
             for line in result["output"].splitlines():
                 logger.debug("    %s", line)
+
+        step_result = {
+            "step": i + 1,
+            "name": step_name,
+            "status": result["status"],
+            "message": result.get("message", ""),
+            "duration": result.get("duration", 0),
+            "command": f"{step_case['command']} {' '.join(step_case['args'])}".strip(),
+        }
+        step_results.append(step_result)
 
         combined_output += result["output"]
         total_duration += result["duration"]
@@ -283,6 +298,7 @@ def execute_sequence(
                 "status": "passed",
                 "message": "",
                 "command": "",
+                # Validate against full combined output; only trim when reporting
                 "output": combined_output,
                 "return_code": last_result["return_code"] if last_result else None,
                 "duration": total_duration,
@@ -299,14 +315,23 @@ def execute_sequence(
                 "output": "",
                 "return_code": None,
                 "duration": 0.0,
+                "failure_kind": getattr(exc, "failure_kind", None),
+                "compare_failures": getattr(exc, "compare_failures", []),
             }
+            step_result = {
+                "step": "case_assertion",
+                "name": case_name,
+                "status": "failed",
+                "message": f"Case-level assertion failed: {exc}",
+                "duration": 0,
+                "command": "case-level expected check",
+            }
+            step_results.append(step_result)
             logger.error("  %sCase-level assertion failed: %s", prefix, exc)
 
     status = "passed" if all_passed else (last_result["status"] if last_result else "failed")
     message = ""
     if not all_passed:
-        # Only count the synthetic case-level step when the failure
-        # actually happens at that stage (not when a real step fails).
         total_steps = len(steps) + (
             1 if case_expected and failed_step == len(steps) + 1 else 0
         )
@@ -314,6 +339,20 @@ def execute_sequence(
             f"Failed at step {failed_step}/{total_steps}: "
             f"{last_result['message']}" if last_result else "Unknown error"
         )
+
+    # ── Output sliming: only keep the failed step's output ──
+    # When all steps pass, keep the full combined output.
+    # When a step or case-level assertion fails, only expose the failed step's
+    # output (or empty for case-level failures).
+    if all_passed:
+        slim_output = combined_output
+    elif last_result is not None:
+        if failed_step == len(steps) + 1:
+            slim_output = ""
+        else:
+            slim_output = last_result.get("output", "")
+    else:
+        slim_output = ""
 
     command_summary = " -> ".join(
         f"{_step_attr(s, 'command')} {' '.join(_step_attr(s, 'args'))}".strip()
@@ -325,7 +364,13 @@ def execute_sequence(
         "status": status,
         "message": message,
         "command": command_summary,
-        "output": combined_output,
+        "output": slim_output,
         "return_code": last_result["return_code"] if last_result else None,
         "duration": total_duration,
+        "step_results": step_results,
+        "failed_step": failed_step,
+        "failure_kind": last_result.get("failure_kind") if last_result else None,
+        "compare_failures": last_result.get("compare_failures", []) if last_result else [],
+        "attempts": last_result.get("attempts", 1) if last_result else 1,
+        "flaky": last_result.get("flaky", False) if last_result else False,
     }

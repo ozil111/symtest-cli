@@ -107,7 +107,7 @@ test_cases:
 | `args` | 否 | 命令参数列表 |
 | `description` | 否 | 测试用例描述 |
 | `timeout` | 否 | 超时秒数，默认 3600，设 `null` 无限制 |
-| `retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step |
+| `retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step。重试后通过会在结果中标记 `flaky: true` |
 | `tags` | 否 | 标签列表，用于批量过滤（如 `["smoke", "fast"]`） |
 | `resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
 | `expected.return_code` | 否 | 期望返回码 |
@@ -280,6 +280,9 @@ cli-test validate main_config.json
 
 # 指定工作目录
 cli-test validate test_cases.json --workspace /path/to/project
+
+# 输出 JSON 格式（适合 AI/脚本解析）
+cli-test validate test_cases.json --output-format json
 ```
 
 ### 校验内容
@@ -484,6 +487,69 @@ cli-test run test_cases.json --history-dir ./hist --regression-threshold 2.0
 
 # 输出 JUnit XML 报告（可供 Jenkins/GitLab CI 等工具解析）
 cli-test run test_cases.json --junit-xml report.xml
+
+# 只运行上次失败的用例（每次运行时覆盖式更新）
+cli-test run test_cases.json --last-failed
+
+# 比较失败时自动更新基线文件
+cli-test run test_cases.json --update-baseline
+```
+
+### 只运行上次失败的用例（--last-failed）
+
+`--last-failed` 自动过滤出上一次运行中状态为 `failed` 或 `timeout` 的用例，适合 AI 迭代修复场景：修复一轮代码后，只需验证上次失败的用例，无需全量重跑（有限元全量可能几小时）。
+
+**工作原理**：
+- 每次运行结束后，框架在 `<workspace>/.cli-test/last_run.json` 中记录每个用例的状态
+- 记录采用**覆盖式更新**：本次跑到的用例用新结果覆盖旧结果，没跑到的保留原状态
+- 这意味着修好的 case 在下一次显示中不再是"failed"
+- 如果文件不存在（首次运行），`--last-failed` 会提示并正常运行全部用例
+
+```bash
+# 第一次：全量运行 10 个用例，3 个失败
+cli-test run config.json
+
+# 修复代码后，只重跑那 3 个失败的
+cli-test run config.json --last-failed
+
+# 如果 3 个全过，再跑一次全量确认
+cli-test run config.json
+```
+
+**与 `-t` 的交互**：`--last-failed` 与 `-t`/`--tag` 可以同时使用，效果叠加（AND 关系）。
+
+### 自动更新基线文件（--update-baseline）
+
+在进行算法改进或参数调整后，你可能期望输出结果发生变化（且新结果更正确）。`--update-baseline` 会自动用实际产出覆盖基线文件，免去手动复制粘贴。
+
+```bash
+# 比较失败时，自动将 actual 文件复制覆盖 baseline，标记用例为通过
+cli-test run config.json --update-baseline
+```
+
+**行为**：
+- 文件比较失败时，`actual` 文件被复制到 `baseline` 路径
+- 该条断言视为**通过**，用例状态为 `passed`
+- 报告中显示 `Baseline Updated` 计数和更新的文件列表
+- 文本报告与 JSON 报告均会列出所有被更新的 baseline 路径
+
+> **注意**：`--update-baseline` 会静默覆盖文件。建议搭配版本控制（git）使用，以便回滚不需要的更改。
+
+### 配置校验 JSON 输出
+
+`validate` 命令新增 `--output-format json`，输出机器可读的 JSON 报告，适合 AI/脚本自动检查配置合法性：
+
+```bash
+cli-test validate config.json --output-format json
+```
+
+输出示例：
+```json
+{
+  "valid": false,
+  "errors": ["[main_config.json] case 'bad_case': missing required field 'expected'"],
+  "summary": {"files": 1, "cases": 3, "files_loaded": ["/project/main_config.json"]}
+}
 ```
 
 ### Python API
@@ -499,6 +565,8 @@ runner = JSONRunner(
     test_case_tag_filter=["smoke"],  # 可选，只运行包含指定标签的用例
     history_dir="./hist",            # 可选，启用历史记录与回归检测
     regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
+    update_baseline=False,           # 可选，比较失败时自动更新基线，默认 False
+    last_failed=False,               # 可选，只运行上次失败的用例，默认 False
 )
 success = runner.run_tests()
 
@@ -513,6 +581,8 @@ runner = ParallelJSONRunner(
     test_case_filter=["test_1"],
     history_dir="./hist",            # 可选，启用历史记录与智能调度
     regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
+    update_baseline=False,           # 可选
+    last_failed=False,               # 可选
 )
 success = runner.run_tests()
 
@@ -535,11 +605,42 @@ runner.run_tests()
 runner.results["total"]
 runner.results["passed"]
 runner.results["failed"]
+runner.results["updated"]   # 被 --update-baseline 更新的基线文件数
 
-# 详情
+# 详情 — 每个结果字典包含以下字段
 for detail in runner.results["details"]:
-    print(detail["name"], detail["status"], detail.get("message", ""))
+    print(detail["name"])                     # 用例名称
+    print(detail["status"])                   # "passed" / "failed" / "timeout"
+    print(detail.get("message", ""))          # 失败原因
+    print(detail.get("duration"))             # 耗时（秒）
+    print(detail.get("expected"))             # 期望断言（注册的验收标准）
+    print(detail.get("description"))          # 用例描述
+    print(detail.get("tags"))                 # 标签列表
+    print(detail.get("failure_kind"))         # 失败类型：return_code/output_contains/
+                                              #   output_matches/file_compare/timeout/
+                                              #   execution_error
+    print(detail.get("attempts", 1))          # 尝试次数（含重试）
+    print(detail.get("flaky", False))         # 是否重试后才通过
+    print(detail.get("attempt_history", []))  # 每次尝试的状态历史
+    print(detail.get("failed_step"))          # 步骤序列中的失败步骤号
+    print(detail.get("step_results", []))     # 每个步骤的详细结果
+    print(detail.get("compare_failures", [])) # 文件比较失败的结构化详情
+    print(detail.get("baseline_updated", [])) # 被更新的基线文件列表
 ```
+
+**结果字典关键字段说明**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `expected` | dict | 注册的期望断言（含 return_code、output_contains、compare_files 等），方便回查验收标准 |
+| `description` | str | 测试用例的描述文本 |
+| `failure_kind` | str | 失败类型枚举，AI/脚本可据此选择修复策略 |
+| `attempts` | int | 总尝试次数（含重试），`1` 表示一次通过 |
+| `flaky` | bool | 重试后才通过时为 `true` |
+| `attempt_history` | list | 每次尝试的 `{attempt, status, message, duration}` |
+| `step_results` | list | 步骤序列每个 step 的 `{step, name, status, message, duration, command}` |
+| `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`actual`/`baseline` 路径、容差参数） |
+| `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
 
 ## 占位符（变量替换）
 
@@ -833,7 +934,13 @@ test_cases:
           return_code: 0
 ```
 
-每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。失败时结果会标注失败步骤编号，如 "Failed at step 2/3"。
+每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。
+
+**失败输出瘦身**：当序列中某一步失败时，结果字典的 `output` 字段**仅包含失败步骤的输出**——不会拼接前面成功步骤的大量输出。这大幅减少了失败报告的体积，适合 AI 快速诊断失败的步骤。
+
+**步骤详情**：通过 `detail["step_results"]` 可查看每个步骤的独立状态（即使全部通过），方便了解整个序列的执行流程。
+
+**失败标记**：失败时结果中 `failed_step` 字段标注失败步骤编号，如 "Failed at step 2/3"。
 
 ### Case 级别 expected（顺序步骤）
 
@@ -1289,6 +1396,8 @@ Assertions.compare_files("actual.txt", "baseline.txt", file_type="text", workspa
 ```
 
 `compare_files` 会自动按扩展名识别类型（`.h5/.hdf5/.hdf`→h5、`.json`→json、`.csv/.tsv`→csv、`.xml/.html/.htm`→xml、`.txt/.log/.out/.py`→text、其余→binary），相对路径按 `workspace` 解析，额外参数透传给比较器。
+
+成功时返回结构化字典（含 `identical`、`actual`、`baseline`、`diff_summary`、`differences` 等字段），失败时抛出 `ValidationError(AssertionError)`，携带 `failure_kind` 和 `compare_failures` 列表。
 
 ## 运行框架自带测试
 

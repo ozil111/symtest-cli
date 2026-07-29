@@ -8,6 +8,7 @@ from .assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
 from .execution import execute_single_test_case
 from .history_store import load_history, update_case, check_regression, save_history
+from .last_run_store import update_last_run, get_last_failed_names
 
 logger = logging.getLogger("cli_test_framework.core.base_runner")
 
@@ -16,7 +17,9 @@ class BaseRunner(ABC):
                  test_case_filter: Optional[List[str]] = None,
                  test_case_tag_filter: Optional[List[str]] = None,
                  history_dir: Optional[str] = None,
-                 regression_threshold: float = 1.5):
+                 regression_threshold: float = 1.5,
+                 update_baseline: bool = False,
+                 last_failed: bool = False):
         if workspace:
             self.workspace = Path(workspace)
         else:
@@ -34,10 +37,13 @@ class BaseRunner(ABC):
         else:
             self.history_dir = None
         self.regression_threshold = regression_threshold
+        self.update_baseline = update_baseline
+        self.last_failed = last_failed
         self.results: Dict[str, Any] = {
             "total": 0,
             "passed": 0,
             "failed": 0,
+            "updated": 0,
             "details": []
         }
         self.assertions = Assertions()
@@ -65,7 +71,21 @@ class BaseRunner(ABC):
         #         pass
 
     def _apply_test_case_filter(self) -> None:
-        """根据 test_case_filter 和 test_case_tag_filter 过滤测试用例"""
+        """根据 test_case_filter / test_case_tag_filter / --last-failed 过滤测试用例"""
+        if self.last_failed and not self.test_case_filter:
+            ws = str(self.workspace) if self.workspace else str(Path.cwd())
+            failed_names = get_last_failed_names(ws)
+            if failed_names:
+                logger.info(
+                    "--last-failed: filtering to %d previously failed case(s): %s",
+                    len(failed_names), ", ".join(failed_names),
+                )
+                self.test_case_filter = (
+                    (self.test_case_filter or []) + failed_names
+                )
+            else:
+                logger.info("--last-failed: no previously failed cases found; running all.")
+
         if self.test_case_filter or self.test_case_tag_filter:
             original_count = len(self.test_cases)
             self.test_cases = [
@@ -104,14 +124,32 @@ class BaseRunner(ABC):
             for i, case in enumerate(self.test_cases, 1):
                 logger.info("Running test %d/%d: %s", i, self.results["total"], case.name)
                 result = self.run_single_test(case)
+                
+                # ── Echo expected / description / tags ──
+                result["expected"] = case.expected if case.expected else None
+                result["description"] = case.description or None
+                result["tags"] = case.tags or []
+                
                 self.results["details"].append(result)
                 duration = result.get("duration", 0)
                 if result["status"] == "passed":
                     self.results["passed"] += 1
-                    logger.info("✓ Test passed: %s (%.2fs)", case.name, duration)
+                    # Check for baseline updates
+                    if result.get("baseline_updated"):
+                        self.results["updated"] += 1
+                        logger.info("✓ Test passed (baseline updated): %s (%.2fs)", case.name, duration)
+                    elif result.get("flaky"):
+                        logger.info("✓ Test passed (flaky, %d attempts): %s (%.2fs)",
+                                    result.get("attempts", 1), case.name, duration)
+                    else:
+                        logger.info("✓ Test passed: %s (%.2fs)", case.name, duration)
                 else:
                     self.results["failed"] += 1
-                    logger.error("✗ Test failed: %s (%.2fs)", case.name, duration)
+                    if result.get("flaky"):
+                        logger.error("✗ Test failed (%d attempts): %s (%.2fs)",
+                                     result.get("attempts", 1), case.name, duration)
+                    else:
+                        logger.error("✗ Test failed: %s (%.2fs)", case.name, duration)
                     if result["message"]:
                         logger.error("  Error: %s", result["message"])
                     
@@ -123,10 +161,18 @@ class BaseRunner(ABC):
             # Update history & regression detection
             self._update_history()
 
+            # Save last-run state for --last-failed
+            self._save_last_run()
+
             return self.results["failed"] == 0
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
+
+    def _save_last_run(self) -> None:
+        """Persist per-case status for ``--last-failed`` support."""
+        ws = str(self.workspace) if self.workspace else str(Path.cwd())
+        update_last_run(ws, self.results["details"])
 
     def _update_history(self) -> None:
         """Update .symtest history with successful run results and check for regressions."""

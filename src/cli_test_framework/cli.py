@@ -80,6 +80,10 @@ Examples:
                            help='Set a variable for config placeholder substitution, '
                                 'e.g. --var solver=/path/to/solver '
                                 '(can be used multiple times)')
+    run_parser.add_argument('--last-failed', action='store_true',
+                           help='Run only test cases that failed in the previous run')
+    run_parser.add_argument('--update-baseline', action='store_true',
+                           help='On comparison failure, overwrite baseline files with actual output')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -91,6 +95,10 @@ Examples:
     tui_parser.add_argument(
         '--workspace', '-w', help='Working directory'
     )
+    tui_parser.add_argument(
+        '--update-baseline', action='store_true',
+        help='On comparison failure, overwrite baseline files with actual output'
+    )
 
     # ---- Validate command ----
     validate_parser = subparsers.add_parser(
@@ -101,6 +109,10 @@ Examples:
     )
     validate_parser.add_argument(
         '--workspace', '-w', help='Working directory'
+    )
+    validate_parser.add_argument(
+        '--output-format', choices=['text', 'json'], default='text',
+        help='Output format for validation results (default: text)'
     )
 
     # ---- Compare command ----
@@ -184,6 +196,8 @@ def run_tests(args):
     regression_threshold = getattr(args, 'regression_threshold', 1.5)
     var_list = getattr(args, 'var', [])
     variables = _parse_vars(var_list)
+    update_baseline = getattr(args, 'update_baseline', False)
+    last_failed = getattr(args, 'last_failed', False)
 
     try:
         if args.parallel:
@@ -199,6 +213,8 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    last_failed=last_failed,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -211,6 +227,8 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    last_failed=last_failed,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
@@ -226,6 +244,8 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    last_failed=last_failed,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = YAMLRunner(
@@ -236,6 +256,8 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    last_failed=last_failed,
                 )
             else:
                 logger.error("Unsupported configuration file format: %s", file_ext)
@@ -320,7 +342,8 @@ def run_tui(args):
     """Launch the TUI manager."""
     from .tui.app import run_tui as _run_tui
 
-    _run_tui(args.config_file, args.workspace)
+    update_baseline = getattr(args, 'update_baseline', False)
+    _run_tui(args.config_file, args.workspace, update_baseline=update_baseline)
 
 
 def run_validate(args):
@@ -337,23 +360,28 @@ def run_validate(args):
     logger.info("Validating configuration: %s", config_file)
     report = validate_config(config_file, args.workspace)
 
-    # Print summary
-    summary = report["summary"]
-    print(f"\n  [OK] Loaded {summary['cases']} test cases from {summary['files']} file(s)\n")
+    output_format = getattr(args, 'output_format', 'text')
 
-    if report["errors"]:
-        for err in report["errors"]:
-            print(f"  [FAIL] {err}")
-        print()
+    if output_format == 'json':
+        print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
-        print("  [OK] All required fields present")
-        print("  [OK] No circular imports detected")
+        # Print summary
+        summary = report["summary"]
+        print(f"\n  [OK] Loaded {summary['cases']} test cases from {summary['files']} file(s)\n")
 
-    if summary.get("files_loaded"):
-        print("\n  Files:")
-        for f in summary["files_loaded"]:
-            print(f"    - {f}")
-    print()
+        if report["errors"]:
+            for err in report["errors"]:
+                print(f"  [FAIL] {err}")
+            print()
+        else:
+            print("  [OK] All required fields present")
+            print("  [OK] No circular imports detected")
+
+        if summary.get("files_loaded"):
+            print("\n  Files:")
+            for f in summary["files_loaded"]:
+                print(f"    - {f}")
+        print()
 
     return report["valid"]
 
@@ -371,11 +399,13 @@ def main():
 
     if args.command == 'run':
         success = run_tests(args)
+        # 0 = all passed, 1 = test failures, 2 = config/framework errors
         sys.exit(0 if success else 1)
     elif args.command == 'tui':
         run_tui(args)
     elif args.command == 'validate':
         success = run_validate(args)
+        # 0 = valid, 1 = validation errors found
         sys.exit(0 if success else 1)
     elif args.command == 'compare':
         success = run_compare(args)
