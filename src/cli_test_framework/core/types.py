@@ -75,4 +75,9 @@ class TestResultData(TypedDict):
     compare_failures: List[Dict[str, Any]]
     baseline_updated: List[str]
     failed_step: Optional[int]
+    # ── Structured output channels (split from combined ``output``) ──
+    stdout: str
+    stderr: str
+    # ── Per-assertion pass/fail detail (populated on failure) ──
+    assertion_results: List[Dict[str, Any]]
 

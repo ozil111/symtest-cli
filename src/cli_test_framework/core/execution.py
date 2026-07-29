@@ -15,6 +15,11 @@ logger = logging.getLogger("cli_test_framework.core.execution")
 # Full output is still written to disk when output_dir is set.
 DEFAULT_OUTPUT_MAX_CHARS = 20000
 
+# Maximum number of differences retained per compare_failures entry in JSON output.
+# The text report already limits display to 5; this prevents large CSV/H5 diffs
+# from blowing up AI context windows.
+DEFAULT_MAX_DIFFERENCES = 50
+
 # Commands that are shell builtins (not real executables).
 # With shell=False, these must be wrapped via the platform shell.
 if os.name == 'nt':
@@ -46,6 +51,33 @@ def _trim_output(output: str, max_chars: int = DEFAULT_OUTPUT_MAX_CHARS) -> str:
         + f"\n\n[... {trimmed} chars truncated ...]\n\n"
         + output[-tail_size:]
     )
+
+
+def _trim_compare_failures(
+    compare_failures: List[Dict[str, Any]],
+    max_diffs: int = DEFAULT_MAX_DIFFERENCES,
+) -> List[Dict[str, Any]]:
+    """Truncate the ``differences`` list inside each compare_failure entry.
+
+    The text report already only shows the first 5 differences, but the JSON
+    output previously carried the full list — which could reach megabytes for
+    large CSV/H5 comparisons.  This function caps the retained differences so
+    that AI consumers get a representative sample without context-window blowup.
+    """
+    if not compare_failures:
+        return compare_failures
+    trimmed: List[Dict[str, Any]] = []
+    for cf in compare_failures:
+        diffs = cf.get("differences", [])
+        if len(diffs) > max_diffs:
+            cf_copy = dict(cf)
+            cf_copy["differences"] = diffs[:max_diffs]
+            cf_copy["differences_truncated"] = True
+            cf_copy["differences_total"] = len(diffs)
+            trimmed.append(cf_copy)
+        else:
+            trimmed.append(cf)
+    return trimmed
 
 
 def validate_result(
@@ -215,6 +247,8 @@ def _execute_command_once(
         "message": "",
         "command": full_command,
         "output": "",
+        "stdout": "",
+        "stderr": "",
         "return_code": None,
         "duration": 0.0,
         "expected": None,
@@ -228,6 +262,7 @@ def _execute_command_once(
         "compare_failures": [],
         "baseline_updated": [],
         "failed_step": None,
+        "assertion_results": [],
     }
 
     # Prepare environment variables
@@ -265,10 +300,14 @@ def _execute_command_once(
             result["failure_kind"] = "timeout"
             result["message"] = f"Timeout reached! Killed after {timeout_limit} seconds."
             result["output"] = _trim_output(raw_output, output_max_chars)
+            result["stdout"] = _trim_output(stdout or "", output_max_chars)
+            result["stderr"] = _trim_output(stderr or "", output_max_chars)
             result["return_code"] = None
         else:
             raw_output = stdout + stderr
             result["output"] = _trim_output(raw_output, output_max_chars)
+            result["stdout"] = _trim_output(stdout, output_max_chars)
+            result["stderr"] = _trim_output(stderr, output_max_chars)
             result["return_code"] = process.returncode
 
             validate_result(case["expected"], result, workspace, update_baseline=update_baseline)
@@ -276,8 +315,9 @@ def _execute_command_once(
     except ValidationError as exc:
         result["message"] = str(exc)
         result["failure_kind"] = exc.failure_kind
-        result["compare_failures"] = exc.compare_failures
+        result["compare_failures"] = _trim_compare_failures(exc.compare_failures)
         result["baseline_updated"] = exc.baseline_updated
+        result["assertion_results"] = exc.assertion_results
     except AssertionError as exc:
         # Legacy AssertionError catch for backward compatibility
         result["message"] = str(exc)
