@@ -20,6 +20,7 @@ src/cli_test_framework/commands/__init__.py
 src/cli_test_framework/commands/compare.py
 src/cli_test_framework/config/__init__.py
 src/cli_test_framework/config/config_io.py
+src/cli_test_framework/config/config_schema.py
 src/cli_test_framework/config/import_expander.py
 src/cli_test_framework/core/__init__.py
 src/cli_test_framework/core/assertions.py
@@ -30,6 +31,7 @@ src/cli_test_framework/core/history_store.py
 src/cli_test_framework/core/last_run_store.py
 src/cli_test_framework/core/parallel_runner.py
 src/cli_test_framework/core/process_worker.py
+src/cli_test_framework/core/sequence_state.py
 src/cli_test_framework/core/setup.py
 src/cli_test_framework/core/test_case.py
 src/cli_test_framework/core/types.py

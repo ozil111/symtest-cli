@@ -19,7 +19,8 @@ class BaseRunner(ABC):
                  history_dir: Optional[str] = None,
                  regression_threshold: float = 1.5,
                  update_baseline: bool = False,
-                 last_failed: bool = False):
+                 last_failed: bool = False,
+                 resume: bool = False):
         if workspace:
             self.workspace = Path(workspace)
         else:
@@ -39,6 +40,7 @@ class BaseRunner(ABC):
         self.regression_threshold = regression_threshold
         self.update_baseline = update_baseline
         self.last_failed = last_failed
+        self.resume = resume
         self.results: Dict[str, Any] = {
             "total": 0,
             "passed": 0,
@@ -217,6 +219,7 @@ class BaseRunner(ABC):
             steps=case.steps,
             workspace=str(self.workspace) if self.workspace else None,
             case_expected=case.expected if case.expected else None,
+            resume=self.resume,
         )
 
     @abstractmethod

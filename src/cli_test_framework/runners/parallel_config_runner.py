@@ -183,6 +183,8 @@ class ParallelConfigRunner(ParallelRunner):
             workspace=str(self.workspace) if self.workspace else None,
             print_prefix="[Worker]",
             case_expected=case.expected if case.expected else None,
+            update_baseline=self.update_baseline,
+            resume=self.resume,
         )
 
     def run_single_test(self, case: TestCase) -> Dict[str, Any]:

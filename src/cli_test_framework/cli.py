@@ -84,6 +84,9 @@ Examples:
                            help='Run only test cases that failed in the previous run')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
+    run_parser.add_argument('--resume', action='store_true',
+                           help='Resume sequence test cases from last failed step '
+                                '(trusts workspace artifacts are unchanged)')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -205,6 +208,7 @@ def run_tests(args):
     variables = _parse_vars(var_list)
     update_baseline = getattr(args, 'update_baseline', False)
     last_failed = getattr(args, 'last_failed', False)
+    resume = getattr(args, 'resume', False)
 
     try:
         if args.parallel:
@@ -222,6 +226,7 @@ def run_tests(args):
                     variables=variables,
                     update_baseline=update_baseline,
                     last_failed=last_failed,
+                    resume=resume,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -236,6 +241,7 @@ def run_tests(args):
                     variables=variables,
                     update_baseline=update_baseline,
                     last_failed=last_failed,
+                    resume=resume,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
@@ -253,6 +259,7 @@ def run_tests(args):
                     variables=variables,
                     update_baseline=update_baseline,
                     last_failed=last_failed,
+                    resume=resume,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = YAMLRunner(
@@ -265,6 +272,7 @@ def run_tests(args):
                     variables=variables,
                     update_baseline=update_baseline,
                     last_failed=last_failed,
+                    resume=resume,
                 )
             else:
                 logger.error("Unsupported configuration file format: %s", file_ext)

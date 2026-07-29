@@ -150,7 +150,9 @@ class ParallelRunner(BaseRunner):
                                     for s in case.steps
                                 ] if case.steps else None,
                             },
-                            str(self.workspace) if self.workspace else None
+                            str(self.workspace) if self.workspace else None,
+                            update_baseline=self.update_baseline,
+                            resume=self.resume,
                         ): (i, case) 
                         for i, case in enumerate(self.test_cases, 1)
                     }
@@ -187,6 +189,9 @@ class ParallelRunner(BaseRunner):
 
             # Update history & regression detection
             self._update_history()
+
+            # Save last-run state for --last-failed
+            self._save_last_run()
 
             return self.results["failed"] == 0
         finally:

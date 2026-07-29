@@ -491,6 +491,10 @@ cli-test run test_cases.json --junit-xml report.xml
 # 只运行上次失败的用例（每次运行时覆盖式更新）
 cli-test run test_cases.json --last-failed
 
+# 断点续跑：跳过已通过的步骤，从失败步骤继续
+cli-test run test_cases.json --resume
+cli-test run test_cases.json --resume -t BS-U_01
+
 # 比较失败时自动更新基线文件
 cli-test run test_cases.json --update-baseline
 ```
@@ -517,6 +521,37 @@ cli-test run config.json
 ```
 
 **与 `-t` 的交互**：`--last-failed` 与 `-t`/`--tag` 可以同时使用，效果叠加（AND 关系）。
+
+### 断点续跑（--resume）
+
+`--resume` 针对**顺序步骤测试（sequence）**，跳过上次运行中已通过的步骤，直接从失败步骤继续执行。适合耗时长的多步骤用例——例如有限元分析中 step 1-3 通过了（各耗时几十秒甚至分钟），只有 step 4 的断言失败，`--resume` 可以跳过 1-3、只重跑 step 4。
+
+**工作原理**：
+- 每个步骤通过后，框架在 `<workspace>/.cli-test/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
+- 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected 的 SHA256）与已保存状态比对
+- 哈希匹配 → 跳过已通过的步骤，从缓存重建 `combined_output`（确保 case 级 `expected` 断言能正常执行）
+- 用例全部通过 → 自动删除状态文件和缓存，避免残留影响后续运行
+- 哈希不匹配（配置有改动）→ 自动全量重跑，并丢弃旧状态
+
+**信任模型**：`--resume` **不校验工作区产物**（输入文件、前置步骤生成的文件等）。使用 `--resume` 即表示用户确认输入文件未被修改。如果怀疑工作区被污染，应不带 `--resume` 全量重跑。
+
+```bash
+# 首次全量运行，BS-U_01 的 step 4 失败（总耗时 72s）
+cli-test run config.json
+
+# 修复后只重跑 BS-U_01，跳过 step 1-3（仅耗时 ~0.14s）
+cli-test run config.json -t BS-U_01 --resume
+
+# 全部通过后，跑一次全量确认无回归
+cli-test run config.json
+```
+
+**与 `-t` 的交互**：`--resume` 通常与 `-t` 组合使用，先定位到单个失败用例再断点续跑。不带 `-t` 时，所有已存在状态的序列用例都会尝试续跑。
+
+**限制**：
+- 仅对序列步骤用例（`steps` 模式）生效，单命令模式忽略
+- 状态文件的配置哈希会因任何 step 的 command/args/expected 或 case 级 expected 变化而失效
+- 缓存输出主要用于重建 `combined_output`，报告中的 `output` 字段仍只包含失败步骤的输出
 
 ### 自动更新基线文件（--update-baseline）
 
@@ -567,6 +602,7 @@ runner = JSONRunner(
     regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
     update_baseline=False,           # 可选，比较失败时自动更新基线，默认 False
     last_failed=False,               # 可选，只运行上次失败的用例，默认 False
+    resume=False,                    # 可选，断点续跑序列用例，默认 False
 )
 success = runner.run_tests()
 
@@ -583,6 +619,7 @@ runner = ParallelJSONRunner(
     regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
     update_baseline=False,           # 可选
     last_failed=False,               # 可选
+    resume=False,                    # 可选，断点续跑序列用例
 )
 success = runner.run_tests()
 
@@ -941,6 +978,8 @@ test_cases:
 **步骤详情**：通过 `detail["step_results"]` 可查看每个步骤的独立状态（即使全部通过），方便了解整个序列的执行流程。
 
 **失败标记**：失败时结果中 `failed_step` 字段标注失败步骤编号，如 "Failed at step 2/3"。
+
+**断点续跑**：序列用例失败后，可通过 `--resume` 跳过已通过的步骤，直接从失败步骤继续执行，大幅节省长耗时用例的迭代成本。详见[断点续跑](#断点续跑resume)。
 
 ### Case 级别 expected（顺序步骤）
 
