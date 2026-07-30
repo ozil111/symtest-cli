@@ -8,7 +8,7 @@
 核心能力：
   - 支持 JSON 和 YAML 配置文件（自动按扩展名识别）
   - 全参数 CLI 透传：--test-target / --tag / --last-failed / --resume /
-    --update-baseline / --junit-xml / --workers
+    --update-baseline / --update-history / --junit-xml / --workers
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
   - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 退出码处理
@@ -31,6 +31,9 @@
 
   # 比较失败时自动更新基线文件
   python run_tests.py test_cases.json --update-baseline
+
+  # 清零历史耗时记录，重新建立回归基线
+  python run_tests.py test_cases.json --update-history
 
   # 输出 JUnit XML 供 Jenkins/GitLab CI 解析
   python run_tests.py test_cases.json --junit-xml report.xml
@@ -72,7 +75,7 @@ from cli_test_framework import write_junit_xml, setup_console_logging
 
 def _auto_create_runner(config_file, workspace, max_workers, execution_mode,
                         test_case_filter, test_case_tag_filter,
-                        update_baseline, last_failed, resume, history_dir,
+                        update_baseline, update_history, last_failed, resume, history_dir,
                         regression_threshold, variables, **extra_kwargs):
     """根据配置文件扩展名自动选择 JSON 或 YAML runner。"""
     ext = Path(config_file).suffix.lower()
@@ -84,6 +87,7 @@ def _auto_create_runner(config_file, workspace, max_workers, execution_mode,
         test_case_filter=test_case_filter,
         test_case_tag_filter=test_case_tag_filter,
         update_baseline=update_baseline,
+        update_history=update_history,
         last_failed=last_failed,
         resume=resume,
         history_dir=history_dir,
@@ -122,6 +126,7 @@ def main():
   python run_tests.py test_cases.json --last-failed
   python run_tests.py test_cases.json --resume -t BS-U_01
   python run_tests.py test_cases.json --update-baseline
+  python run_tests.py test_cases.json --update-history
   python run_tests.py test_cases.json --junit-xml report.xml --workers 4
         """,
     )
@@ -165,6 +170,12 @@ def main():
         action="store_true",
         default=False,
         help="比较失败时自动更新基线文件（建议搭配版本控制使用）",
+    )
+    parser.add_argument(
+        "--update-history",
+        action="store_true",
+        default=False,
+        help="清零本次运行涉及的 case 的历史耗时记录，重新建立回归基线",
     )
 
     # ---- 输出 ----
@@ -266,6 +277,7 @@ def main():
         test_case_filter=args.test_target,
         test_case_tag_filter=args.test_tag,
         update_baseline=args.update_baseline,
+        update_history=args.update_history,
         last_failed=args.last_failed,
         resume=args.resume,
         history_dir=args.history_dir,
