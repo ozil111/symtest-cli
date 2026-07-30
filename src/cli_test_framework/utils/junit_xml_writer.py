@@ -40,16 +40,19 @@ def write_junit_xml(
     suite_name = suite_name or "cli_tests"
     classname = classname or suite_name
 
-    # First pass: count failures/errors and total time
+    # First pass: count failures/errors/skipped and total time
     failures_count = 0
     errors_count = 0
+    skipped_count = 0
     for detail in details:
         duration = detail.get("duration", 0.0)
         total_time += duration
         status = detail.get("status", "failed")
 
-        if status == "passed":
+        if status in ("passed", "xfailed"):
             pass
+        elif status == "xpassed":
+            failures_count += 1
         elif status in ("timeout",):
             errors_count += 1
         elif status == "failed":
@@ -61,12 +64,16 @@ def write_junit_xml(
         else:
             errors_count += 1
 
+        if status == "xfailed":
+            skipped_count += 1
+
     # Build XML tree
     root = ET.Element("testsuite", {
         "name": suite_name,
         "tests": str(total),
         "failures": str(failures_count),
         "errors": str(errors_count),
+        "skipped": str(skipped_count),
         "time": f"{total_time:.3f}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "hostname": socket.gethostname(),
@@ -84,9 +91,22 @@ def write_junit_xml(
         message = str(detail.get("message", ""))
         output = str(detail.get("output", ""))
 
-        if status == "passed":
+        if status in ("passed",):
             # No child element = passed in JUnit convention
             pass
+        elif status == "xfailed":
+            # Expected failure → skipped in JUnit
+            reason = detail.get("xfail_reason", "") or ""
+            ET.SubElement(tc, "skipped", {
+                "message": _xml_escape(reason or "Expected failure"),
+            })
+        elif status == "xpassed":
+            # Unexpected pass → failure
+            full_text = f"UNEXPECTED PASS: marked as expected_failure but passed.\n{message}\n\n--- Command Output ---\n{output}" if output else f"UNEXPECTED PASS: marked as expected_failure but passed.\n{message}"
+            ET.SubElement(tc, "failure", {
+                "message": _xml_escape(message or "UNEXPECTED PASS (xpassed)"),
+                "type": "AssertionError",
+            }).text = _xml_escape(full_text)
         elif status in ("timeout",):
             ET.SubElement(tc, "error", {
                 "message": _xml_escape(message or "Test timed out"),

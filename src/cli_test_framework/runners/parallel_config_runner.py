@@ -10,7 +10,8 @@ import logging
 from typing import Optional, Dict, Any, Callable, BinaryIO
 
 from ..core.parallel_runner import ParallelRunner, AtomicSemaphore
-from ..core.config_loader import parse_test_cases, execute_sequence, substitute_placeholders
+from ..core.config_loader import parse_test_cases, execute_sequence
+from ..config.inheritance_expander import resolve_inheritance, apply_variables
 from ..core.test_case import TestCase
 from ..core.execution import execute_single_test_case
 from ..core.types import TestCaseData
@@ -126,7 +127,10 @@ class ParallelConfigRunner(ParallelRunner):
 
             # Expand import references (no-op if none present)
             config = expand_imports(config, self.config_path)
-            config = substitute_placeholders(config, self._variables)
+            # Resolve extends inheritance (no-op if none present)
+            config = resolve_inheritance(config)
+            # Per-case + global variable substitution
+            config = apply_variables(config, self._variables)
 
             self.load_setup_from_config(config)
             self.test_cases = parse_test_cases(
@@ -184,6 +188,7 @@ class ParallelConfigRunner(ParallelRunner):
             print_prefix="[Worker]",
             case_expected=case.expected if case.expected else None,
             update_baseline=self.update_baseline,
+            error_analysis=self.error_analysis,
             resume=self.resume,
         )
 
@@ -244,6 +249,7 @@ class ParallelConfigRunner(ParallelRunner):
                 str(self.workspace) if self.workspace else None,
                 env=task_env,
                 update_baseline=self.update_baseline,
+                error_analysis=self.error_analysis,
             )
 
             if result["output"].strip():

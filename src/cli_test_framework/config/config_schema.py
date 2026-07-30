@@ -81,34 +81,46 @@ CONFIG_SCHEMA: Dict[str, Any] = {
         },
         "compareSpec": {
             "type": "object",
-            "required": ["actual", "baseline"],
+            "required": [],
             "additionalProperties": True,
             "description": (
-                "One file comparison rule. Keys other than actual/baseline/type/"
-                "start_line/end_line/start_column/end_column are forwarded to the "
-                "comparator as kwargs (e.g. rtol, atol, encoding, tables, data_filter)."
+                "One file comparison rule. actual/baseline are required for built-in "
+                "file-type comparators (text/csv/json/xml/h5/binary). "
+                "They are optional for script or custom (plugin) comparator types. "
+                "Keys other than those listed below are forwarded to the comparator "
+                "as kwargs (e.g. rtol, atol, encoding, tables, data_filter, "
+                "pass_threshold, pass_pattern)."
             ),
             "properties": {
                 "actual": {
                     "type": "string",
-                    "description": "File produced by the test command (relative paths resolve against the workspace).",
+                    "description": "File produced by the test command. Optional when type is 'script' or a workspace plugin.",
                 },
                 "baseline": {
                     "type": "string",
-                    "description": "Golden/reference file (relative paths resolve against the workspace).",
+                    "description": "Golden/reference file. Optional when type is 'script' or a workspace plugin.",
                 },
                 "type": {
                     "type": "string",
                     "description": (
-                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary. "
-                        "Omit to auto-detect from the file extension. "
-                        "Custom registered comparator types are also allowed."
+                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary, script. "
+                        "Custom (workspace plugin) comparator types are also allowed. "
+                        "Omit to auto-detect from the actual file extension."
                     ),
                 },
                 "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
                 "end_line": {"type": "integer", "minimum": 1, "description": "Only compare up to this line (1-based)."},
                 "start_column": {"type": "integer", "minimum": 1, "description": "Only compare from this column (1-based)."},
                 "end_column": {"type": "integer", "minimum": 1, "description": "Only compare up to this column (1-based)."},
+                "script": {"type": "string", "description": "Path to the analysis script (script / custom comparator types)."},
+                "case_dir": {"type": "string", "description": "Working directory for the analysis script."},
+                "cwd": {"type": "string", "description": "Working directory for script execution (alias for case_dir)."},
+                "pass_threshold": {"type": "number", "description": "Numeric threshold below which the comparison is considered a pass."},
+                "pass_exit_code": {"type": "integer", "default": 0, "description": "Process exit code that indicates a pass (script comparator)."},
+                "pass_pattern": {"type": "string", "description": "Regex that must match stdout for a pass (script comparator)."},
+                "fail_pattern": {"type": "string", "description": "Regex that, if matched in stdout, forces a fail (script comparator)."},
+                "interpreter": {"type": "string", "description": "Python interpreter to use for running the script."},
+                "timeout": {"type": "number", "description": "Per-comparison timeout in seconds."},
             },
         },
         "resources": {
@@ -138,65 +150,167 @@ CONFIG_SCHEMA: Dict[str, Any] = {
             },
         },
         "singleCase": {
-            "type": "object",
-            "required": ["name", "command", "args", "expected"],
-            "additionalProperties": False,
-            "properties": {
-                "name": {"type": "string", "description": "Unique test case name."},
-                "command": {
-                    "type": "string",
-                    "description": (
-                        "Command to execute. May include leading arguments "
-                        "(e.g. 'python ./run.py'); the framework splits and "
-                        "path-resolves them."
-                    ),
+            "allOf": [
+                {
+                    "if": {"required": ["extends"]},
+                    "then": {"required": ["name"]},
+                    "else": {"required": ["name", "command", "args", "expected"]},
                 },
-                "args": {
-                    "type": "array",
-                    "items": {"type": ["string", "number", "boolean"]},
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "name": {"type": "string", "description": "Unique test case name."},
+                        "command": {
+                            "type": "string",
+                            "description": (
+                                "Command to execute. May include leading arguments "
+                                "(e.g. 'python ./run.py'); the framework splits and "
+                                "path-resolves them."
+                            ),
+                        },
+                        "args": {
+                            "type": "array",
+                            "items": {"type": ["string", "number", "boolean"]},
+                        },
+                        "expected": {"$ref": "#/$defs/expected"},
+                        "description": {"type": ["string", "null"]},
+                        "timeout": {
+                            "type": ["number", "null"],
+                            "description": "Timeout in seconds (default 3600); null = no limit.",
+                        },
+                        "retry_count": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Retries after the first failure; passing after retry marks the result flaky.",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for --tag filtering.",
+                        },
+                        "resources": {"$ref": "#/$defs/resources"},
+                        "expected_failure": {
+                            "type": "boolean",
+                            "description": (
+                                "Mark this case as an expected failure (xfail). "
+                                "When true, a failure counts as XFailed (not a suite failure); "
+                                "an unexpected pass counts as XPassed (suite failure)."
+                            ),
+                        },
+                        "xfail_reason": {
+                            "type": "string",
+                            "description": "Optional reason displayed in the report alongside XFailed results.",
+                        },
+                        "xfail_quiet": {
+                            "type": "boolean",
+                            "description": (
+                                "When true and the case is xfailed (expected failure confirmed), "
+                                "suppress the Command Output block in reports to reduce noise."
+                            ),
+                        },
+                        "abstract": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, this case is a template (base) and is not "
+                                "executed.  Other cases can extend it via 'extends'."
+                            ),
+                        },
+                        "extends": {
+                            "type": "string",
+                            "description": (
+                                "Name of the base test case to inherit from.  Fields "
+                                "from the base are deep-merged; the child's fields take "
+                                "precedence.  Supports chain inheritance with cycle detection."
+                            ),
+                        },
+                        "variables": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Per-case placeholder variables for {key} substitution. "
+                                "Merged from the ancestor chain (child overrides parent), "
+                                "then overlaid by global --var flags at run time."
+                            ),
+                        },
+                    },
                 },
-                "expected": {"$ref": "#/$defs/expected"},
-                "description": {"type": ["string", "null"]},
-                "timeout": {
-                    "type": ["number", "null"],
-                    "description": "Timeout in seconds (default 3600); null = no limit.",
-                },
-                "retry_count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tags for --tag filtering.",
-                },
-                "resources": {"$ref": "#/$defs/resources"},
-            },
+            ],
         },
         "sequenceCase": {
-            "type": "object",
-            "required": ["name", "steps"],
-            "additionalProperties": False,
-            "description": (
-                "Multi-step case: steps run in order with fail-fast semantics. "
-                "The case-level 'expected' is evaluated once after all steps pass."
-            ),
-            "properties": {
-                "name": {"type": "string"},
-                "steps": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"$ref": "#/$defs/step"},
+            "allOf": [
+                {
+                    "if": {"required": ["extends"]},
+                    "then": {"required": ["name"]},
+                    "else": {"required": ["name", "steps"]},
                 },
-                "expected": {
-                    "$ref": "#/$defs/expected",
-                    "description": "Optional case-level assertions (e.g. compare_files on produced files), evaluated after all steps pass.",
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": (
+                        "Multi-step case: steps run in order with fail-fast semantics. "
+                        "The case-level 'expected' is evaluated once after all steps pass."
+                    ),
+                    "properties": {
+                        "name": {"type": "string"},
+                        "steps": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"$ref": "#/$defs/step"},
+                        },
+                        "expected": {
+                            "$ref": "#/$defs/expected",
+                            "description": "Optional case-level assertions (e.g. compare_files on produced files), evaluated after all steps pass.",
+                        },
+                        "description": {"type": ["string", "null"]},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "resources": {"$ref": "#/$defs/resources"},
+                        "expected_failure": {
+                            "type": "boolean",
+                            "description": (
+                                "Mark this case as an expected failure (xfail). "
+                                "When true, a failure counts as XFailed (not a suite failure); "
+                                "an unexpected pass counts as XPassed (suite failure)."
+                            ),
+                        },
+                        "xfail_reason": {
+                            "type": "string",
+                            "description": "Optional reason displayed in the report alongside XFailed results.",
+                        },
+                        "xfail_quiet": {
+                            "type": "boolean",
+                            "description": (
+                                "When true and the case is xfailed (expected failure confirmed), "
+                                "suppress the Command Output block in reports to reduce noise."
+                            ),
+                        },
+                        "abstract": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, this case is a template (base) and is not "
+                                "executed.  Other cases can extend it via 'extends'."
+                            ),
+                        },
+                        "extends": {
+                            "type": "string",
+                            "description": (
+                                "Name of the base test case to inherit from.  Fields "
+                                "from the base are deep-merged; the child's fields take "
+                                "precedence.  Supports chain inheritance with cycle detection."
+                            ),
+                        },
+                        "variables": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Per-case placeholder variables for {key} substitution. "
+                                "Merged from the ancestor chain (child overrides parent), "
+                                "then overlaid by global --var flags at run time."
+                            ),
+                        },
+                    },
                 },
-                "description": {"type": ["string", "null"]},
-                "tags": {"type": "array", "items": {"type": "string"}},
-                "resources": {"$ref": "#/$defs/resources"},
-            },
+            ],
         },
         "importRef": {
             "type": "object",

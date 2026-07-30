@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from .import_expander import expand_imports, _load_raw_config
+from .inheritance_expander import resolve_inheritance
 
 logger = logging.getLogger("cli_test_framework.config.config_io")
 
@@ -49,6 +50,7 @@ def load_config(
 
     if expand:
         config = expand_imports(config, path)
+        config = resolve_inheritance(config)
 
     return config
 
@@ -215,6 +217,8 @@ def validate_config(
     - Required fields on every test case
     - Import target existence
     - Circular import detection
+    - extends target existence
+    - Circular extends inheritance detection
 
     Warning-level checks (reported in ``warnings``, do not affect ``valid``):
     - ``command`` executability (PATH lookup / path existence)
@@ -241,6 +245,8 @@ def validate_config(
         }
 
     # Collect all files and cases (walk the import tree)
+    all_cases: List[tuple] = []  # (case_dict, source_path)
+
     def _walk(current_path: Path, current_config: Dict[str, Any], visited: set) -> None:
         nonlocal total_cases
         canonical = str(current_path.resolve())
@@ -265,11 +271,67 @@ def validate_config(
                 except Exception as exc:
                     errors.append(f"Error loading {sub_path}: {exc}")
             else:
+                is_abstract = item.get("abstract", False)
+                has_extends = "extends" in item
+                source = str(current_path)
+
+                all_cases.append((item, source))
+
+                if is_abstract:
+                    # Abstract cases are templates — skip counting and field validation
+                    continue
+
                 total_cases += 1
-                errors.extend(_validate_required_fields(item, idx, str(current_path)))
-                warnings.extend(_validate_case_warnings(item, str(current_path), ws))
+                # extends cases inherit fields from parent; skip required-field checks
+                if not has_extends:
+                    errors.extend(_validate_required_fields(item, idx, source))
+                warnings.extend(_validate_case_warnings(item, source, ws))
 
     _walk(path, config, set())
+
+    # ── Inheritance validation (extends targets + cycle detection) ──
+    def _validate_inheritance() -> None:
+        """Check extends target existence and circular inheritance chains."""
+        names: Dict[str, Dict[str, Any]] = {}
+        for case_dict, source in all_cases:
+            name = case_dict.get("name")
+            if name:
+                if name in names:
+                    # Duplicate names are ambiguous for extends; flag as error
+                    errors.append(
+                        f"Duplicate case name '{name}' "
+                        f"(found in multiple config files; "
+                        f"extends references must be unambiguous)"
+                    )
+                names[name] = case_dict
+
+        for case_dict, source in all_cases:
+            extends_target = case_dict.get("extends")
+            if not extends_target:
+                continue
+            case_name = case_dict.get("name", "<unnamed>")
+            if extends_target not in names:
+                errors.append(
+                    f"[{source}] case '{case_name}': "
+                    f"extends target '{extends_target}' not found"
+                )
+
+        # Cycle detection: follow extends chain from each case
+        for name, case_dict in names.items():
+            visited_chain: List[str] = []
+            current = name
+            while current in names:
+                target = names[current].get("extends")
+                if not target:
+                    break
+                if target in visited_chain:
+                    chain = " -> ".join(visited_chain + [target])
+                    errors.append(f"Circular extends detected: {chain}")
+                    break
+                visited_chain.append(current)
+                current = target
+
+    _validate_inheritance()
 
     valid = len(errors) == 0
     return {

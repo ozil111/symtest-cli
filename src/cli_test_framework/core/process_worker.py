@@ -17,6 +17,7 @@ def _run_sequence_in_process(
     workspace: str = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     resume: bool = False,
 ) -> Dict[str, Any]:
     """Run a sequence test case with multiple steps (fail-fast) in a process worker."""
@@ -28,6 +29,7 @@ def _run_sequence_in_process(
         executor=execute_single_test_case,
         case_expected=case_data.get("expected"),
         update_baseline=update_baseline,
+        error_analysis=error_analysis,
         resume=resume,
     )
 
@@ -38,6 +40,7 @@ def run_test_in_process(
     workspace: str = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     resume: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -58,6 +61,7 @@ def run_test_in_process(
         return _run_sequence_in_process(
             test_index, case_data, workspace,
             update_baseline=update_baseline,
+            error_analysis=error_analysis,
             resume=resume,
         )
 
@@ -76,7 +80,7 @@ def run_test_in_process(
     command_preview = f"{case['command']} {' '.join(case['args'])}".strip()
     logger.info("  [Process Worker %d] Executing command: %s", test_index, command_preview)
 
-    result = execute_single_test_case(case, workspace)
+    result = execute_single_test_case(case, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
 
     if result["output"].strip():
         logger.debug("  [Process Worker %d] Command output for %s:", test_index, case["name"])

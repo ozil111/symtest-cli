@@ -132,6 +132,9 @@ def parse_test_cases(
                 description=case.get("description", ""),
                 resources=case.get("resources"),
                 tags=case.get("tags", []),
+                expected_failure=case.get("expected_failure", False),
+                xfail_reason=case.get("xfail_reason", ""),
+                xfail_quiet=case.get("xfail_quiet", False),
             ))
         else:
             # ── Single-command mode (backward-compatible) ──
@@ -155,6 +158,9 @@ def parse_test_cases(
                     resources=case.get("resources"),
                     tags=case.get("tags", []),
                     retry_count=case.get("retry_count", 0),
+                    expected_failure=case.get("expected_failure", False),
+                    xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
             else:
                 cases.append(TestCase(
@@ -167,6 +173,9 @@ def parse_test_cases(
                     resources=case.get("resources"),
                     tags=case.get("tags", []),
                     retry_count=case.get("retry_count", 0),
+                    expected_failure=case.get("expected_failure", False),
+                    xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
 
     return cases
@@ -197,6 +206,7 @@ def execute_sequence(
     executor: Any = None,
     case_expected: Optional[Dict[str, Any]] = None,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     resume: bool = False,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
@@ -352,7 +362,7 @@ def execute_sequence(
         )
         logger.info("  %sExecuting step %d/%d: %s", prefix, step_idx, len(steps), command_preview)
 
-        result = executor(step_case, workspace, update_baseline=update_baseline)
+        result = executor(step_case, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)
@@ -420,7 +430,7 @@ def execute_sequence(
                 "return_code": last_result["return_code"] if last_result else None,
                 "duration": total_duration,
             }
-            case_assertion_results = validate_result(case_expected, case_result, workspace)
+            case_assertion_results = validate_result(case_expected, case_result, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
         except AssertionError as exc:
             from .execution import _build_next_action_hint
 

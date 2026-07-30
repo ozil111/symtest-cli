@@ -254,7 +254,7 @@ class TestCompareContentTypeMismatch:
         comp = H5Comparator()
         content1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0])}}
         content2 = {"ds": {"type": "group", "keys": ["a"], "attrs": {}}}
-        identical, diffs = comp.compare_content(content1, content2)
+        identical, diffs, _ = comp.compare_content(content1, content2)
         assert not identical
         assert any("type" in d.position for d in diffs)
 
@@ -270,7 +270,7 @@ class TestCompareContentShapeDtype:
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (4,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0, 4.0])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any("shape" in d.position for d in diffs)
 
@@ -278,7 +278,7 @@ class TestCompareContentShapeDtype:
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "int32", "attrs": {}, "data": np.array([1, 2, 3])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any("dtype" in d.position for d in diffs)
 
@@ -294,7 +294,7 @@ class TestCompareContentTableMissing:
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0])}}
         c2 = {}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any(d.diff_type == "structure" and "ds" in d.position for d in diffs)
 
@@ -302,7 +302,7 @@ class TestCompareContentTableMissing:
         comp = H5Comparator()
         c1 = {}
         c2 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0, 3.0])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any(d.diff_type == "structure" for d in diffs)
 
@@ -318,7 +318,7 @@ class TestCompareContentGroupKeys:
         comp = H5Comparator()
         c1 = {"g": {"type": "group", "keys": ["a", "b"], "attrs": {}}}
         c2 = {"g": {"type": "group", "keys": ["a"], "attrs": {}}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any("keys" in d.position for d in diffs)
 
@@ -326,7 +326,7 @@ class TestCompareContentGroupKeys:
         comp = H5Comparator()
         c1 = {"g": {"type": "group", "keys": ["a"], "attrs": {}}}
         c2 = {"g": {"type": "group", "keys": ["a", "b"], "attrs": {}}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         assert any("keys" in d.position and d.diff_type == "structure" for d in diffs)
 
@@ -404,21 +404,21 @@ class TestCompareContentNumericData:
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert identical
 
     def test_numeric_data_within_tolerance(self):
         comp = H5Comparator(rtol=1e-3, atol=1e-6)
         c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0001, 2.0001])}}
-        identical, _ = comp.compare_content(c1, c2)
+        identical, _, _ = comp.compare_content(c1, c2)
         assert identical
 
     def test_numeric_data_outside_tolerance(self):
         comp = H5Comparator(rtol=1e-5, atol=1e-8)
         c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, 2.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.01, 2.0])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
 
 
@@ -435,7 +435,7 @@ class TestCompareContentStringData:
                       "data": np.array(["a", "b", "c"])}}
         c2 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "object", "attrs": {},
                       "data": np.array(["a", "b", "c"])}}
-        identical, _ = comp.compare_content(c1, c2)
+        identical, _, _ = comp.compare_content(c1, c2)
         assert identical
 
     def test_different_string_data_without_show_content_diff(self):
@@ -444,7 +444,7 @@ class TestCompareContentStringData:
                       "data": np.array(["a", "b"])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "object", "attrs": {},
                       "data": np.array(["a", "x"])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         # Without show_content_diff, reports a single summary diff
         assert len(diffs) == 1
@@ -456,7 +456,7 @@ class TestCompareContentStringData:
                       "data": np.array(["a", "b"])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "object", "attrs": {},
                       "data": np.array(["a", "x"])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
         # With show_content_diff, reports per-element differences (max 10)
         assert len(diffs) >= 1
@@ -477,7 +477,7 @@ class TestCompareContentWithFilter:
                       "data": np.array([1.0, 2.0, 10.0, 20.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (4,), "dtype": "float64", "attrs": {},
                       "data": np.array([1.0, 2.0, 10.0, 20.0])}}
-        identical, _ = comp.compare_content(c1, c2)
+        identical, _, _ = comp.compare_content(c1, c2)
         assert identical
 
     def test_filter_preserves_differences_in_passing_region(self):
@@ -486,7 +486,7 @@ class TestCompareContentWithFilter:
                       "data": np.array([1.0, 10.0, 20.0])}}
         c2 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {},
                       "data": np.array([1.0, 10.0, 99.0])}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
 
     def test_filter_excludes_all_mismatched_data(self):
@@ -499,7 +499,7 @@ class TestCompareContentWithFilter:
         # Values all <= 100, so filter keeps nothing → empty arrays → equal
         # Actually: combined_mask = mask1 & mask2. If all values <= 100, mask is all False,
         # so filtered arrays are empty, and np.allclose of empty arrays returns True.
-        identical, _ = comp.compare_content(c1, c2)
+        identical, _, _ = comp.compare_content(c1, c2)
         assert identical
 
 
@@ -514,7 +514,7 @@ class TestCompareContentStructureOnly:
         comp = H5Comparator(structure_only=True)
         c1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}}}
         c2 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert identical
         assert diffs == []
 
@@ -522,7 +522,7 @@ class TestCompareContentStructureOnly:
         comp = H5Comparator(structure_only=True)
         c1 = {"ds": {"type": "dataset", "shape": (3,), "dtype": "float64", "attrs": {}}}
         c2 = {"ds": {"type": "dataset", "shape": (4,), "dtype": "float64", "attrs": {}}}
-        identical, diffs = comp.compare_content(c1, c2)
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
 
 

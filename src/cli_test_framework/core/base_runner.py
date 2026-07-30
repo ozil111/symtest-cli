@@ -7,8 +7,9 @@ from .test_case import TestCase
 from .assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
 from .execution import execute_single_test_case
-from .history_store import load_history, update_case, check_regression, save_history
+from .history_store import load_history, update_case, check_regression, save_history, reset_cases
 from .last_run_store import update_last_run, get_last_failed_names
+from ..file_comparator.factory import ComparatorFactory
 
 logger = logging.getLogger("cli_test_framework.core.base_runner")
 
@@ -19,8 +20,11 @@ class BaseRunner(ABC):
                  history_dir: Optional[str] = None,
                  regression_threshold: float = 1.5,
                  update_baseline: bool = False,
+                 update_history: bool = False,
+                 error_analysis: bool = False,
                  last_failed: bool = False,
-                 resume: bool = False):
+                 resume: bool = False,
+                 plugin_dirs: Optional[List[str]] = None):
         if workspace:
             self.workspace = Path(workspace)
         else:
@@ -39,12 +43,23 @@ class BaseRunner(ABC):
             self.history_dir = None
         self.regression_threshold = regression_threshold
         self.update_baseline = update_baseline
+        self.update_history = update_history
+        self.error_analysis = error_analysis
         self.last_failed = last_failed
         self.resume = resume
+
+        # --- workspace plugin directories ---
+        resolved_plugin_dirs: List[str] = list(plugin_dirs) if plugin_dirs else []
+        default_plugin_dir = self.workspace / "comparators"
+        if default_plugin_dir.is_dir() and str(default_plugin_dir.resolve()) not in resolved_plugin_dirs:
+            resolved_plugin_dirs.append(str(default_plugin_dir.resolve()))
+        ComparatorFactory.set_plugin_dirs(resolved_plugin_dirs)
         self.results: Dict[str, Any] = {
             "total": 0,
             "passed": 0,
             "failed": 0,
+            "xfailed": 0,
+            "xpassed": 0,
             "updated": 0,
             "details": []
         }
@@ -127,6 +142,9 @@ class BaseRunner(ABC):
                 logger.info("Running test %d/%d: %s", i, self.results["total"], case.name)
                 result = self.run_single_test(case)
                 
+                # Apply xfail status mapping before counting
+                self._apply_xfail_status(result, case)
+
                 # ── Echo expected / description / tags ──
                 result["expected"] = case.expected if case.expected else None
                 result["description"] = case.description or None
@@ -135,7 +153,8 @@ class BaseRunner(ABC):
 
                 self.results["details"].append(result)
                 duration = result.get("duration", 0)
-                if result["status"] == "passed":
+                status = result["status"]
+                if status == "passed":
                     self.results["passed"] += 1
                     # Check for baseline updates
                     if result.get("baseline_updated"):
@@ -146,6 +165,20 @@ class BaseRunner(ABC):
                                     result.get("attempts", 1), case.name, duration)
                     else:
                         logger.info("✓ Test passed: %s (%.2fs)", case.name, duration)
+                elif status == "xfailed":
+                    self.results["xfailed"] += 1
+                    attempt_info = f" ({result.get('attempts', 1)} attempts)" if result.get("attempts", 1) > 1 else ""
+                    logger.info("✓ Test xfailed (expected)%s: %s (%.2fs)", attempt_info, case.name, duration)
+                    if result.get("message"):
+                        logger.info("  Reason: %s", result.get("xfail_reason", ""))
+                        logger.info("  Detail: %s", result["message"])
+                elif status == "xpassed":
+                    self.results["xpassed"] += 1
+                    self.results["failed"] += 1
+                    logger.error("✗ Test xpassed (unexpected!): %s (%.2fs)", case.name, duration)
+                    if result.get("message"):
+                        logger.error("  Error: %s", result["message"])
+                    logger.warning("  [XPass] Marked as expected_failure but passed — remove the xfail marker.")
                 else:
                     self.results["failed"] += 1
                     if result.get("flaky"):
@@ -158,8 +191,13 @@ class BaseRunner(ABC):
                     
             total_duration = time.time() - total_start_time
             logger.info("=" * 50)
-            logger.info("Test execution completed in %.2fs. Passed: %d, Failed: %d",
-                        total_duration, self.results["passed"], self.results["failed"])
+            logger.info(
+                "Test execution completed in %.2fs. "
+                "Passed: %d, Failed: %d, XFailed: %d, XPassed: %d",
+                total_duration,
+                self.results["passed"], self.results["failed"],
+                self.results["xfailed"], self.results["xpassed"],
+            )
 
             # Update history & regression detection
             self._update_history()
@@ -167,7 +205,8 @@ class BaseRunner(ABC):
             # Save last-run state for --last-failed
             self._save_last_run()
 
-            return self.results["failed"] == 0
+            # Exit-code rule: failed + xpassed > 0 → non-zero
+            return self.results["failed"] == 0 and self.results["xpassed"] == 0
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
@@ -189,6 +228,26 @@ class BaseRunner(ABC):
         else:
             hint["command"] = f'cli-test run "{config}" -t "{case_name}"'
 
+    def _apply_xfail_status(self, result: Dict[str, Any], case: "TestCase") -> None:
+        """Apply xfail (expected failure) status mapping to a test result.
+
+        When ``case.expected_failure`` is True:
+        - ``passed`` → ``xpassed`` (unexpected pass; counts as a suite failure)
+        - any non-passed status → ``xfailed`` (expected failure; not a failure)
+
+        The ``xfail_reason`` from the case is attached to the result dict so the
+        report can display it.
+        """
+        if not getattr(case, "expected_failure", False):
+            return
+        xfail_reason = getattr(case, "xfail_reason", "") or ""
+        result["xfail_reason"] = xfail_reason
+        result["xfail_quiet"] = getattr(case, "xfail_quiet", False)
+        if result.get("status") == "passed":
+            result["status"] = "xpassed"
+        else:
+            result["status"] = "xfailed"
+
     def _save_last_run(self) -> None:
         """Persist per-case status for ``--last-failed`` support."""
         ws = str(self.workspace) if self.workspace else str(Path.cwd())
@@ -199,6 +258,18 @@ class BaseRunner(ABC):
         if not self.history_dir:
             return
         history = load_history(self.history_dir)
+
+        if self.update_history:
+            run_names = {r["name"] for r in self.results["details"]}
+            cleared = reset_cases(history, run_names)
+            if cleared:
+                logger.info(
+                    "History reset: cleared %d case(s) before recording this run",
+                    cleared,
+                )
+                self.results["history_reset"] = True
+                self.results["history_cleared"] = cleared
+
         for result in self.results["details"]:
             # Only record successful cases in history; skip failed ones
             if result["status"] != "passed":

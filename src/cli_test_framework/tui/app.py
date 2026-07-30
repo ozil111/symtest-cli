@@ -35,12 +35,16 @@ class CaseManagerApp(App):
     """
 
     def __init__(self, config_file: str, workspace: Optional[str] = None,
-                 update_baseline: bool = False):
+                 update_baseline: bool = False,
+                 history_dir: Optional[str] = None,
+                 update_history: bool = False):
         super().__init__()
         self._config_file = config_file
         self._workspace = workspace
         self._controller = CaseController()
         self._controller.update_baseline = update_baseline
+        self._controller.history_dir = history_dir
+        self._controller.update_history = update_history
 
     def on_mount(self) -> None:
         try:
@@ -58,7 +62,9 @@ class CaseManagerApp(App):
 
 
 def run_tui(config_file: str, workspace: Optional[str] = None,
-            update_baseline: bool = False) -> None:
+            update_baseline: bool = False,
+            history_dir: Optional[str] = None,
+            update_history: bool = False) -> None:
     """Launch the TUI manager.
 
     Safe to call without installing textual — raises :exc:`ImportError`
@@ -77,5 +83,8 @@ def run_tui(config_file: str, workspace: Optional[str] = None,
         )
         sys.exit(1)
 
-    app = CaseManagerApp(config_file, workspace, update_baseline=update_baseline)
+    app = CaseManagerApp(config_file, workspace,
+                         update_baseline=update_baseline,
+                         history_dir=history_dir,
+                         update_history=update_history)
     app.run()
