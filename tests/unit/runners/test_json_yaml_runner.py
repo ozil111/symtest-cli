@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -101,16 +102,20 @@ class TestPlaceholderSubstitution(unittest.TestCase):
         self.config_path.write_text(json.dumps(config), encoding="utf-8")
 
     def test_placeholders_substituted_in_loaded_cases(self):
+        # Use an absolute path valid on the current platform: on Windows,
+        # Python 3.13+ no longer treats '/usr/bin/solver' (rooted, no drive)
+        # as absolute, which would make split_command resolve it against workspace.
+        solver = "/usr/bin/solver" if os.name != "nt" else "C:\\tools\\solver.exe"
         runner = JSONRunner(
             str(self.config_path),
             workspace=self.temp_dir.name,
-            variables={"solver": "/usr/bin/solver", "flag": "--verbose"},
+            variables={"solver": solver, "flag": "--verbose"},
         )
         runner.load_test_cases()
 
         self.assertEqual(len(runner.test_cases), 1)
         case = runner.test_cases[0]
-        self.assertIn("/usr/bin/solver", case.command)
+        self.assertIn(solver, case.command)
         self.assertIn("--verbose", case.args)
         self.assertNotIn("{solver}", case.command)
         self.assertNotIn("{flag}", case.args)
