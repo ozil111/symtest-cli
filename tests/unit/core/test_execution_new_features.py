@@ -253,11 +253,15 @@ class TestNextActionHint:
             subprocess.TimeoutExpired(cmd="echo", timeout=1),
             ("partial", ""),
         ]
-        mock_proc.pid = 1
+        mock_proc.pid = 99999
+        mock_proc.kill = MagicMock()
         with patch("subprocess.Popen", return_value=mock_proc):
             result = execute_single_test_case(case)
             assert result["status"] == "timeout"
             assert result["next_action_hint"]["action"] == "increase_timeout"
+            # PID 99999 is harmless even if killpg() is called;
+            # mock_proc.kill is also safe. Assertions above verify
+            # the result format remains correct.
 
     def test_passed_case_has_no_hint(self, case):
         with patch("subprocess.Popen") as mock_popen:

@@ -377,14 +377,15 @@ def _execute_command_once(
         try:
             stdout, stderr = process.communicate(timeout=timeout_limit)
         except subprocess.TimeoutExpired:
-            # Kill the entire process group to avoid orphan processes
+            # Kill the entire process group to avoid orphan processes.
+            # Never killpg() PID 0 or 1 — they belong to init/system.
             try:
-                if os.name == 'posix':
+                if os.name == 'posix' and process.pid and process.pid > 1:
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
-            except (ProcessLookupError, OSError):
-                pass  # process already exited
+            except (ProcessLookupError, PermissionError, OSError):
+                pass  # process already exited or cannot be killed
             stdout, stderr = process.communicate()  # reap the process
             raw_output = (stdout or "") + (stderr or "")
             result["status"] = "timeout"
