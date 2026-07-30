@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: cli-test-framework
-Version: 1.2.0
+Version: 1.2.2
 Summary: A powerful command line testing framework in Python with setup modules, parallel execution, and file comparison capabilities.
 Home-page: https://github.com/ozil111/cli-test-framework
 Author: Xiaotong Wang

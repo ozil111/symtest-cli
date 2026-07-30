@@ -1,0 +1,16 @@
+{
+  "test_cases": [
+    {
+      "name": "_X",
+      "abstract": true,
+      "extends": "_Y",
+      "expected": {}
+    },
+    {
+      "name": "_Y",
+      "abstract": true,
+      "extends": "_X",
+      "expected": {}
+    }
+  ]
+}

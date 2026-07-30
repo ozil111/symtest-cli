@@ -132,6 +132,9 @@ def parse_test_cases(
                 description=case.get("description", ""),
                 resources=case.get("resources"),
                 tags=case.get("tags", []),
+                expected_failure=case.get("expected_failure", False),
+                xfail_reason=case.get("xfail_reason", ""),
+                xfail_quiet=case.get("xfail_quiet", False),
             ))
         else:
             # ── Single-command mode (backward-compatible) ──
@@ -155,6 +158,9 @@ def parse_test_cases(
                     resources=case.get("resources"),
                     tags=case.get("tags", []),
                     retry_count=case.get("retry_count", 0),
+                    expected_failure=case.get("expected_failure", False),
+                    xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
             else:
                 cases.append(TestCase(
@@ -167,6 +173,9 @@ def parse_test_cases(
                     resources=case.get("resources"),
                     tags=case.get("tags", []),
                     retry_count=case.get("retry_count", 0),
+                    expected_failure=case.get("expected_failure", False),
+                    xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
 
     return cases
@@ -197,6 +206,8 @@ def execute_sequence(
     executor: Any = None,
     case_expected: Optional[Dict[str, Any]] = None,
     update_baseline: bool = False,
+    error_analysis: bool = False,
+    resume: bool = False,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -229,6 +240,13 @@ def execute_sequence(
     update_baseline:
         If True, overwrite baseline files on comparison failure in steps.
         Forwarded to ``execute_single_test_case`` for each step.
+    resume:
+        If True, attempt to skip already-passed steps by loading persisted
+        state from ``.cli-test/sequence_state/<case_name>.json``.  When the
+        config hash matches, previously passed steps are skipped and their
+        cached outputs are spliced into ``combined_output``.  When the full
+        case passes, the state file is deleted.  Uses a pure-trust model:
+        no artifact validation is performed.
     """
     if executor is None:
         executor = execute_single_test_case
@@ -239,11 +257,95 @@ def execute_sequence(
     last_result = None
     failed_step = None
     step_results: List[Dict[str, Any]] = []
+    case_assertion_results: List[Dict[str, Any]] = []
+    case_hint: Optional[Dict[str, Any]] = None
 
     prefix = f"{print_prefix} " if print_prefix else ""
 
+    # ── Resume: skip previously passed steps ──
+    start_step = 0
+    state = None
+    if resume and workspace:
+        from .sequence_state import (
+            compute_config_hash,
+            load_sequence_state,
+            load_step_output,
+            save_sequence_state,
+        )
+
+        config_hash = compute_config_hash(steps, case_expected)
+        state = load_sequence_state(workspace, case_name)
+
+        if state and state.get("config_hash") == config_hash:
+            saved_steps = state.get("steps", {})
+            for idx in sorted(int(k) for k in saved_steps.keys()):
+                if idx - 1 >= len(steps):
+                    break
+                sinfo = saved_steps[str(idx)]
+                if sinfo.get("status") != "passed":
+                    break  # stop at first unpassed step
+
+                # Reconstruct this step as "resumed"
+                cached = load_step_output(workspace, case_name, idx)
+                if cached is None:
+                    logger.warning(
+                        "  %sResume: cached output for step %d missing; "
+                        "restarting from step 1.",
+                        prefix, idx,
+                    )
+                    start_step = 0
+                    combined_output = ""
+                    total_duration = 0.0
+                    step_results.clear()
+                    break
+
+                step = steps[idx - 1]
+                command_str = (
+                    f"{_step_attr(step, 'command')} "
+                    f"{' '.join(_step_attr(step, 'args'))}".strip()
+                )
+                step_results.append({
+                    "step": idx,
+                    "name": f"{case_name} [step {idx}/{len(steps)}]",
+                    "status": "passed",
+                    "message": "",
+                    "duration": sinfo.get("duration", 0),
+                    "command": command_str,
+                    "resumed": True,
+                })
+                combined_output += cached
+                total_duration += sinfo.get("duration", 0)
+                start_step = idx  # next step to run
+
+            if start_step > 0:
+                logger.info(
+                    "  %sResume: skipping %d already-passed step(s), "
+                    "starting at step %d.",
+                    prefix, start_step, start_step + 1,
+                )
+        elif state and state.get("config_hash") != config_hash:
+            logger.info(
+                "  %sResume: config changed; discarding stale state "
+                "and running full sequence.",
+                prefix,
+            )
+        else:
+            logger.info(
+                "  %sResume: no saved state for '%s'; running full sequence.",
+                prefix, case_name,
+            )
+    elif resume and not workspace:
+        logger.warning(
+            "  %sResume: no workspace set; cannot load sequence state.",
+            prefix,
+        )
+
     for i, step in enumerate(steps):
-        step_name = f"{case_name} [step {i+1}/{len(steps)}]"
+        if i < start_step:
+            continue  # already resumed
+
+        step_idx = i + 1
+        step_name = f"{case_name} [step {step_idx}/{len(steps)}]"
         step_case: Dict[str, Any] = {
             "name": step_name,
             "command": _step_attr(step, "command"),
@@ -258,9 +360,9 @@ def execute_sequence(
         command_preview = (
             f"{step_case['command']} {' '.join(step_case['args'])}".strip()
         )
-        logger.info("  %sExecuting step %d/%d: %s", prefix, i+1, len(steps), command_preview)
+        logger.info("  %sExecuting step %d/%d: %s", prefix, step_idx, len(steps), command_preview)
 
-        result = executor(step_case, workspace, update_baseline=update_baseline)
+        result = executor(step_case, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)
@@ -268,7 +370,7 @@ def execute_sequence(
                 logger.debug("    %s", line)
 
         step_result = {
-            "step": i + 1,
+            "step": step_idx,
             "name": step_name,
             "status": result["status"],
             "message": result.get("message", ""),
@@ -283,10 +385,35 @@ def execute_sequence(
 
         if result["status"] != "passed":
             all_passed = False
-            failed_step = i + 1
+            failed_step = step_idx
             if result.get("message"):
-                logger.error("  %sError at step %d: %s", prefix, i+1, result["message"])
+                logger.error("  %sError at step %d: %s", prefix, step_idx, result["message"])
             break
+
+        # ── Persist step progress for resume ──
+        if resume and workspace:
+            from .sequence_state import (
+                compute_config_hash,
+                save_sequence_state,
+                save_step_output,
+            )
+
+            if state is None:
+                config_hash = compute_config_hash(steps, case_expected)
+                state = {
+                    "case": case_name,
+                    "config_hash": config_hash,
+                    "steps": {},
+                }
+
+            state["steps"][str(step_idx)] = {
+                "status": "passed",
+                "duration": result.get("duration", 0),
+            }
+            save_sequence_state(workspace, case_name, state)
+            save_step_output(
+                workspace, case_name, step_idx, result["output"],
+            )
 
     # ── Case-level assertions ──
     if all_passed and case_expected:
@@ -303,10 +430,16 @@ def execute_sequence(
                 "return_code": last_result["return_code"] if last_result else None,
                 "duration": total_duration,
             }
-            validate_result(case_expected, case_result, workspace)
+            case_assertion_results = validate_result(case_expected, case_result, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
         except AssertionError as exc:
+            from .execution import _build_next_action_hint
+
             all_passed = False
             failed_step = len(steps) + 1  # synthetic step number
+            case_assertion_results = getattr(exc, "assertion_results", [])
+            case_hint = _build_next_action_hint(
+                getattr(exc, "failure_kind", None), update_baseline=update_baseline,
+            )
             last_result = {
                 "name": case_name,
                 "status": "failed",
@@ -328,6 +461,13 @@ def execute_sequence(
             }
             step_results.append(step_result)
             logger.error("  %sCase-level assertion failed: %s", prefix, exc)
+
+    # ── Resume cleanup: delete state on full pass ──
+    if resume and workspace and all_passed:
+        from .sequence_state import delete_sequence_state
+
+        delete_sequence_state(workspace, case_name)
+        logger.info("  %sResume: full pass; sequence state cleaned up.", prefix)
 
     status = "passed" if all_passed else (last_result["status"] if last_result else "failed")
     message = ""
@@ -354,6 +494,24 @@ def execute_sequence(
     else:
         slim_output = ""
 
+    # ── assertion_results / next_action_hint resolution ──
+    # Case-level assertion data takes precedence; otherwise propagate the
+    # failed step's data so sequence results honor the same contract as
+    # single-command results.
+    if case_assertion_results:
+        assertion_results = case_assertion_results
+    elif not all_passed and last_result is not None:
+        assertion_results = last_result.get("assertion_results", [])
+    else:
+        assertion_results = []
+
+    if case_hint is not None:
+        next_action_hint = case_hint
+    elif not all_passed and last_result is not None:
+        next_action_hint = last_result.get("next_action_hint")
+    else:
+        next_action_hint = None
+
     command_summary = " -> ".join(
         f"{_step_attr(s, 'command')} {' '.join(_step_attr(s, 'args'))}".strip()
         for s in steps
@@ -373,4 +531,6 @@ def execute_sequence(
         "compare_failures": last_result.get("compare_failures", []) if last_result else [],
         "attempts": last_result.get("attempts", 1) if last_result else 1,
         "flaky": last_result.get("flaky", False) if last_result else False,
+        "assertion_results": assertion_results,
+        "next_action_hint": next_action_hint,
     }

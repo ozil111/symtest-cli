@@ -24,3 +24,7 @@ test_output.txt
 src/cli_test_framework/file_comparator/__pycache__/json_comparator.cpython-312.pyc
 /src/cli_test_framework/file_comparator/__pycache__
 .coverage
+case/
+/tests/fixtures/hourglass_stdout_sample.txt
+/tests/fixtures/hourglass_stdout_mismatch.txt
+/src/cli_test_framework.egg-info/SOURCES.txt

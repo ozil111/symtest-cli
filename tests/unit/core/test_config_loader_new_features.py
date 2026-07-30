@@ -115,6 +115,84 @@ class TestSequenceOutputSliming:
             assert result["step_results"][1]["status"] == "failed"
 
 
+class TestSequenceStructuredDiagnostics:
+    """Sequence results propagate assertion_results / next_action_hint."""
+
+    def test_failed_step_propagates_hint_and_assertions(self):
+        failed = _failed_result("s2")
+        failed["assertion_results"] = [
+            {"assertion": "return_code", "passed": False, "message": "rc mismatch"}
+        ]
+        failed["next_action_hint"] = {
+            "action": "update_expected", "command": None, "reason": "r",
+        }
+        steps = [
+            {"command": "e1", "args": ["a"], "expected": {"return_code": 0}},
+            {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
+        ]
+        with patch(
+            "cli_test_framework.core.config_loader.execute_single_test_case"
+        ) as executor:
+            executor.side_effect = [_passed_result("s1"), failed]
+            result = execute_sequence("case", steps)
+            assert result["status"] == "failed"
+            assert result["assertion_results"] == failed["assertion_results"]
+            assert result["next_action_hint"] == failed["next_action_hint"]
+
+    def test_case_level_failure_builds_hint(self):
+        steps = [
+            {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
+        ]
+        with patch(
+            "cli_test_framework.core.config_loader.execute_single_test_case"
+        ) as executor:
+            executor.side_effect = [_passed_result("s1")]
+            with patch(
+                "cli_test_framework.core.execution.validate_result"
+            ) as mock_validate:
+                mock_validate.side_effect = ValidationError(
+                    "compare failed",
+                    failure_kind="file_compare",
+                    compare_failures=[{"actual": "a.csv", "baseline": "b.csv"}],
+                    assertion_results=[{"assertion": "compare_files", "passed": False}],
+                )
+                result = execute_sequence(
+                    "case",
+                    steps,
+                    case_expected={"compare_files": [{"actual": "a.csv", "baseline": "b.csv"}]},
+                )
+            assert result["status"] == "failed"
+            assert result["assertion_results"] == [
+                {"assertion": "compare_files", "passed": False}
+            ]
+            assert result["next_action_hint"]["action"] == "update_baseline"
+
+    def test_passed_sequence_uses_case_level_assertion_results(self):
+        steps = [
+            {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
+        ]
+        with patch(
+            "cli_test_framework.core.config_loader.execute_single_test_case"
+        ) as executor:
+            executor.side_effect = [_passed_result("s1")]
+            with patch(
+                "cli_test_framework.core.execution.validate_result"
+            ) as mock_validate:
+                mock_validate.return_value = [
+                    {"assertion": "return_code", "passed": True}
+                ]
+                result = execute_sequence(
+                    "case",
+                    steps,
+                    case_expected={"return_code": 0},
+                )
+            assert result["status"] == "passed"
+            assert result["assertion_results"] == [
+                {"assertion": "return_code", "passed": True}
+            ]
+            assert result["next_action_hint"] is None
+
+
 class TestSequenceExpectedEcho:
     """Test that failure_kind and compare_failures are propagated from case-level failures."""
 

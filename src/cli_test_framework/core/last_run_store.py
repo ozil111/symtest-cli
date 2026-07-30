@@ -83,19 +83,27 @@ def get_last_failed_names(workspace: str) -> List[str]:
         return []
     return sorted(
         name for name, info in data.items()
-        if info.get("status") in ("failed", "timeout")
+        if info.get("status") in ("failed", "timeout", "xpassed")
     )
 
 
 def get_last_run_summary(workspace: str) -> Dict[str, int]:
-    """Return a summary counts dict: total, passed, failed."""
+    """Return a summary counts dict: total, passed, failed, xfailed, xpassed, timeout."""
     data = load_last_run(workspace)
-    summary = {"total": 0, "passed": 0, "failed": 0, "timeout": 0}
+    summary = {"total": 0, "passed": 0, "failed": 0, "xfailed": 0, "xpassed": 0, "timeout": 0}
     for info in data.values():
         st = info.get("status", "unknown")
         summary["total"] += 1
         if st == "passed":
             summary["passed"] += 1
-        elif st in ("failed", "timeout"):
+        elif st == "xfailed":
+            summary["xfailed"] += 1
+        elif st == "xpassed":
+            summary["xpassed"] += 1
+            summary["failed"] += 1  # xpassed IS a suite failure
+        elif st == "failed":
             summary["failed"] += 1
+        elif st == "timeout":
+            summary["timeout"] += 1
+            summary["failed"] += 1  # timeout counts in failure aggregate
     return summary

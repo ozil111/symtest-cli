@@ -166,7 +166,16 @@ def test_validate_result_compare_files_passes():
             _mini_result(),
             workspace=d,
         )
-        assert result is None  # no exception → pass
+        # no exception → pass; returns per-assertion detail
+        assert result == [
+            {
+                "assertion": "compare_files",
+                "passed": True,
+                "compare_failures": [],
+                "baseline_updated": [],
+                "message": "",
+            }
+        ]
 
 
 def test_validate_result_compare_files_fails():
@@ -224,7 +233,10 @@ def test_validate_result_no_compare_files_still_works():
         {"return_code": 0, "output_contains": ["hello"]},
         _mini_result(output="hello world", return_code=0),
     )
-    assert result is None
+    assert result == [
+        {"assertion": "return_code", "passed": True},
+        {"assertion": "output_contains", "passed": True, "text": "hello"},
+    ]
 
 
 def test_validate_result_compare_files_with_existing_assertions():
@@ -280,7 +292,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
     assert baseline_path == "ref.h5"
     assert file_type == "h5"
     assert workspace == "/ws"
-    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False}
+    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False, "error_analysis": False}
 
 
 def test_dispatch_omits_type_when_absent(monkeypatch):

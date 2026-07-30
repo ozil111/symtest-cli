@@ -63,11 +63,11 @@ class JsonComparator(TextComparator):
         @brief Compare JSON content using the specified comparison mode
         @param content1 dict or list: First JSON content to compare
         @param content2 dict or list: Second JSON content to compare
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         """
         # Quick check for exact equality
         if content1 == content2:
-            return True, []
+            return True, [], False
         
         # Different comparison modes
         differences = []
@@ -77,7 +77,7 @@ class JsonComparator(TextComparator):
             self._compare_json_exact(content1, content2, "", differences)
         
         identical = len(differences) == 0
-        return identical, differences
+        return identical, differences, False
 
     def _compare_json_exact(self, obj1, obj2, path, differences, max_diffs=10):
         """

@@ -15,6 +15,11 @@ logger = logging.getLogger("cli_test_framework.core.execution")
 # Full output is still written to disk when output_dir is set.
 DEFAULT_OUTPUT_MAX_CHARS = 20000
 
+# Maximum number of differences retained per compare_failures entry in JSON output.
+# The text report already limits display to 5; this prevents large CSV/H5 diffs
+# from blowing up AI context windows.
+DEFAULT_MAX_DIFFERENCES = 50
+
 # Commands that are shell builtins (not real executables).
 # With shell=False, these must be wrapped via the platform shell.
 if os.name == 'nt':
@@ -48,13 +53,122 @@ def _trim_output(output: str, max_chars: int = DEFAULT_OUTPUT_MAX_CHARS) -> str:
     )
 
 
+def _trim_compare_failures(
+    compare_failures: List[Dict[str, Any]],
+    max_diffs: int = DEFAULT_MAX_DIFFERENCES,
+) -> List[Dict[str, Any]]:
+    """Truncate the ``differences`` list inside each compare_failure entry.
+
+    The text report already only shows the first 5 differences, but the JSON
+    output previously carried the full list — which could reach megabytes for
+    large CSV/H5 comparisons.  This function caps the retained differences so
+    that AI consumers get a representative sample without context-window blowup.
+    """
+    if not compare_failures:
+        return compare_failures
+    trimmed: List[Dict[str, Any]] = []
+    for cf in compare_failures:
+        diffs = cf.get("differences", [])
+        if len(diffs) > max_diffs:
+            cf_copy = dict(cf)
+            cf_copy["differences"] = diffs[:max_diffs]
+            cf_copy["differences_truncated"] = True
+            cf_copy["differences_total"] = len(diffs)
+            trimmed.append(cf_copy)
+        else:
+            trimmed.append(cf)
+    return trimmed
+
+
+def _build_next_action_hint(
+    failure_kind: Optional[str],
+    *,
+    update_baseline: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Build a structured remediation hint for a failed test case.
+
+    The ``command`` field is left as ``None`` here because the execution layer
+    does not know the config file path; runners fill it in (see
+    ``BaseRunner._fill_hint_command``).
+
+    ``action`` vocabulary (stable, for AI consumers to branch on):
+    - ``update_baseline``  – file comparison failed; accept new output as baseline
+    - ``update_expected``  – an expectation assertion failed; fix program or config
+    - ``increase_timeout`` – the command timed out
+    - ``investigate``      – execution errors and everything else
+    """
+    if not failure_kind:
+        return None
+    if failure_kind == "file_compare":
+        if update_baseline:
+            return {
+                "action": "investigate",
+                "command": None,
+                "reason": (
+                    "File comparison failed even though --update-baseline was "
+                    "enabled; the actual output file may be missing or "
+                    "unreadable. Inspect compare_failures for details."
+                ),
+            }
+        return {
+            "action": "update_baseline",
+            "command": None,
+            "reason": (
+                "File comparison failed. If the new output is the intended "
+                "behavior, re-run with --update-baseline to accept it as the "
+                "new baseline; otherwise inspect compare_failures/diff_summary "
+                "and fix the program under test."
+            ),
+        }
+    if failure_kind in ("return_code", "output_contains", "output_matches"):
+        return {
+            "action": "update_expected",
+            "command": None,
+            "reason": (
+                f"Assertion '{failure_kind}' failed. If the new behavior is "
+                "intended, update the 'expected' block in the test config; "
+                "otherwise fix the program under test. Compare 'expected' "
+                "against 'stdout'/'stderr' and 'assertion_results' in this "
+                "result to locate the discrepancy."
+            ),
+        }
+    if failure_kind == "timeout":
+        return {
+            "action": "increase_timeout",
+            "command": None,
+            "reason": (
+                "The command timed out. Increase 'timeout' in the test "
+                "config or investigate why the program did not finish."
+            ),
+        }
+    if failure_kind == "execution_error":
+        return {
+            "action": "investigate",
+            "command": None,
+            "reason": (
+                "The command failed to execute. Check that it exists, that "
+                "arguments are valid, and that the environment is set up "
+                "correctly."
+            ),
+        }
+    return {
+        "action": "investigate",
+        "command": None,
+        "reason": (
+            "Investigate the failure using 'message', 'stdout'/'stderr' and "
+            "'expected' in this result."
+        ),
+    }
+
+
 def validate_result(
     expected: ExpectedResult,
     actual: TestResultData,
     workspace: Optional[str] = None,
     *,
     update_baseline: bool = False,
-) -> None:
+    error_analysis: bool = False,
+) -> List[Dict[str, Any]]:
     """
     Pure validation logic. Collects all assertion failures and raises
     ``ValidationError`` with structured data when any fail.
@@ -64,6 +178,9 @@ def validate_result(
     :param workspace: Working directory; used to resolve relative file paths in
                       ``compare_files`` assertions.
     :param update_baseline: If True, overwrite baseline files on comparison failure.
+    :returns: Per-assertion pass/fail detail (``assertion_results``) when all
+              assertions pass. On failure the same data is carried by the
+              raised ``ValidationError.assertion_results``.
     """
     assertions = Assertions()
     failure_messages: List[str] = []
@@ -121,7 +238,7 @@ def validate_result(
     # ── compare_files ──
     if "compare_files" in expected:
         for spec in expected["compare_files"]:
-            cf_result = _dispatch_file_compare(spec, workspace, assertions, update_baseline=update_baseline)
+            cf_result = _dispatch_file_compare(spec, workspace, assertions, update_baseline=update_baseline, error_analysis=error_analysis)
             assertion_results.append(cf_result)
             if cf_result.get("passed") is False:
                 if failure_kind is None:
@@ -140,6 +257,8 @@ def validate_result(
             assertion_results=assertion_results,
         )
 
+    return assertion_results
+
 
 def _dispatch_file_compare(
     spec: Dict[str, Any],
@@ -147,6 +266,7 @@ def _dispatch_file_compare(
     assertions: Assertions,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
 ) -> Dict[str, Any]:
     """Extract fields from a compare_files spec dict and delegate to Assertions.compare_files.
 
@@ -167,6 +287,7 @@ def _dispatch_file_compare(
             file_type=file_type,
             workspace=workspace,
             update_baseline=update_baseline,
+            error_analysis=error_analysis,
             **comparator_kwargs,
         )
         if cf_result.get("baseline_updated"):
@@ -200,6 +321,7 @@ def _execute_command_once(
     env: Optional[Dict[str, str]] = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
 ) -> TestResultData:
     """Execute a single command once (no retry logic)."""
@@ -215,6 +337,8 @@ def _execute_command_once(
         "message": "",
         "command": full_command,
         "output": "",
+        "stdout": "",
+        "stderr": "",
         "return_code": None,
         "duration": 0.0,
         "expected": None,
@@ -228,6 +352,8 @@ def _execute_command_once(
         "compare_failures": [],
         "baseline_updated": [],
         "failed_step": None,
+        "assertion_results": [],
+        "next_action_hint": None,
     }
 
     # Prepare environment variables
@@ -263,28 +389,43 @@ def _execute_command_once(
             raw_output = (stdout or "") + (stderr or "")
             result["status"] = "timeout"
             result["failure_kind"] = "timeout"
+            result["next_action_hint"] = _build_next_action_hint("timeout")
             result["message"] = f"Timeout reached! Killed after {timeout_limit} seconds."
             result["output"] = _trim_output(raw_output, output_max_chars)
+            result["stdout"] = _trim_output(stdout or "", output_max_chars)
+            result["stderr"] = _trim_output(stderr or "", output_max_chars)
             result["return_code"] = None
         else:
             raw_output = stdout + stderr
             result["output"] = _trim_output(raw_output, output_max_chars)
+            result["stdout"] = _trim_output(stdout, output_max_chars)
+            result["stderr"] = _trim_output(stderr, output_max_chars)
             result["return_code"] = process.returncode
 
-            validate_result(case["expected"], result, workspace, update_baseline=update_baseline)
+            result["assertion_results"] = validate_result(
+                case["expected"], result, workspace,
+                update_baseline=update_baseline,
+                error_analysis=error_analysis,
+            )
             result["status"] = "passed"
     except ValidationError as exc:
         result["message"] = str(exc)
         result["failure_kind"] = exc.failure_kind
-        result["compare_failures"] = exc.compare_failures
+        result["compare_failures"] = _trim_compare_failures(exc.compare_failures)
         result["baseline_updated"] = exc.baseline_updated
+        result["assertion_results"] = exc.assertion_results
+        result["next_action_hint"] = _build_next_action_hint(
+            exc.failure_kind, update_baseline=update_baseline,
+        )
     except AssertionError as exc:
         # Legacy AssertionError catch for backward compatibility
         result["message"] = str(exc)
         result["failure_kind"] = result["failure_kind"] or "unknown"
+        result["next_action_hint"] = _build_next_action_hint(result["failure_kind"])
     except Exception as exc:
         result["message"] = f"Execution error: {str(exc)}"
         result["failure_kind"] = "execution_error"
+        result["next_action_hint"] = _build_next_action_hint("execution_error")
     finally:
         result["duration"] = time.time() - start_time
 
@@ -297,6 +438,7 @@ def execute_single_test_case(
     env: Optional[Dict[str, str]] = None,
     *,
     update_baseline: bool = False,
+    error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
 ) -> TestResultData:
     """
@@ -323,6 +465,7 @@ def execute_single_test_case(
         result = _execute_command_once(
             case, workspace, env,
             update_baseline=update_baseline,
+            error_analysis=error_analysis,
             output_max_chars=output_max_chars,
         )
         total_duration += result["duration"]

@@ -103,6 +103,8 @@ class CaseController:
         self._dirty = False
         self._setup: Dict[str, Any] = {}
         self._update_baseline: bool = False
+        self._history_dir: Optional[str] = None
+        self._update_history: bool = False
 
     # -- properties ----------------------------------------------------------
 
@@ -137,6 +139,22 @@ class CaseController:
     @update_baseline.setter
     def update_baseline(self, value: bool) -> None:
         self._update_baseline = value
+
+    @property
+    def history_dir(self) -> Optional[str]:
+        return self._history_dir
+
+    @history_dir.setter
+    def history_dir(self, value: Optional[str]) -> None:
+        self._history_dir = value
+
+    @property
+    def update_history(self) -> bool:
+        return self._update_history
+
+    @update_history.setter
+    def update_history(self, value: bool) -> None:
+        self._update_history = value
 
     # -- load / save ---------------------------------------------------------
 
@@ -261,18 +279,40 @@ class CaseController:
         case = self._cases[index]
         if case.steps:
             # Sequence mode — use execute_sequence (consistent with Runner)
-            return execute_sequence(
+            result = execute_sequence(
                 case_name=case.name,
                 steps=case.steps,
                 workspace=self._workspace,
                 update_baseline=self._update_baseline,
             )
-        # Single-command mode — unified to_execution_dict()
-        return execute_single_test_case(
-            case.to_execution_dict(),
-            self._workspace,
-            update_baseline=self._update_baseline,
-        )
+        else:
+            # Single-command mode — unified to_execution_dict()
+            result = execute_single_test_case(
+                case.to_execution_dict(),
+                self._workspace,
+                update_baseline=self._update_baseline,
+            )
+        self._record_history(case.name, result)
+        return result
+
+    def _record_history(self, case_name: str, result: Dict[str, Any]) -> None:
+        """Per-case history recording with optional reset support."""
+        if not self._history_dir:
+            return
+        from pathlib import Path as _Path
+        from ...core.history_store import load_history, save_history, reset_cases, update_case
+
+        history_dir = str((_Path(self._workspace or ".") / self._history_dir).resolve())
+        history = load_history(history_dir)
+
+        if self._update_history:
+            cleared = reset_cases(history, {case_name})
+            if cleared:
+                logger.info("History reset: cleared '%s'", case_name)
+
+        if result.get("status") == "passed":
+            update_case(history, case_name, result.get("duration", 0))
+        save_history(history_dir, history)
 
     @staticmethod
     def create_empty_case(mode: str = "single") -> TestCase:

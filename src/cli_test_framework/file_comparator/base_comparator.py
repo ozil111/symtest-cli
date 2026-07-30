@@ -52,7 +52,7 @@ class BaseComparator(ABC):
         @brief Compare two content objects and return comparison details
         @param content1 object: First content object to compare
         @param content2 object: Second content object to compare
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         """
         pass
 
@@ -92,12 +92,14 @@ class BaseComparator(ABC):
             
             # Compare content
             self.logger.debug(f"Comparing content")
-            identical, differences = self.compare_content(content1, content2)
+            identical, differences, truncated = self.compare_content(content1, content2)
             
             # Update result
             result.identical = identical
             result.differences = differences
-            
+            result.truncated = truncated
+            result.error_stats = getattr(self, "_error_stats", None)
+
             return result
             
         except Exception as e:

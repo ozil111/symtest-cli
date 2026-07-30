@@ -84,6 +84,21 @@ Examples:
                            help='Run only test cases that failed in the previous run')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
+    run_parser.add_argument('--update-history', action='store_true',
+                           help='Clear .symtest runtime history for run-involved cases before '
+                                'recording this run (requires --history-dir)')
+    run_parser.add_argument('--resume', action='store_true',
+                           help='Resume sequence test cases from last failed step '
+                                '(trusts workspace artifacts are unchanged)')
+    run_parser.add_argument('--error-analysis', action='store_true',
+                           help='Enable streaming error statistics for numerical file comparisons '
+                                '(CSV/H5): total_numeric_cells, mismatched_cells, '
+                                'max_abs/rel_error, mean/rms_abs_error')
+    run_parser.add_argument('--plugin-dir', action='append', default=None,
+                           dest='plugin_dirs',
+                           help='Add a directory for workspace-level comparator plugins '
+                                '(can be used multiple times). '
+                                'The workspace/comparators/ directory is always auto-detected.')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -99,6 +114,15 @@ Examples:
         '--update-baseline', action='store_true',
         help='On comparison failure, overwrite baseline files with actual output'
     )
+    tui_parser.add_argument(
+        '--history-dir',
+        help='Directory for .symtest runtime history (enables regression detection per case)'
+    )
+    tui_parser.add_argument(
+        '--update-history', action='store_true',
+        help='Clear .symtest runtime history for run-involved cases before '
+             'recording this run (requires --history-dir)'
+    )
 
     # ---- Validate command ----
     validate_parser = subparsers.add_parser(
@@ -113,6 +137,13 @@ Examples:
     validate_parser.add_argument(
         '--output-format', choices=['text', 'json'], default='text',
         help='Output format for validation results (default: text)'
+    )
+
+    # ---- Schema command ----
+    subparsers.add_parser(
+        'schema',
+        help='Print the JSON Schema for test configuration files '
+             '(machine-readable contract for generating configs)',
     )
 
     # ---- Compare command ----
@@ -197,7 +228,11 @@ def run_tests(args):
     var_list = getattr(args, 'var', [])
     variables = _parse_vars(var_list)
     update_baseline = getattr(args, 'update_baseline', False)
+    update_history = getattr(args, 'update_history', False)
+    error_analysis = getattr(args, 'error_analysis', False)
     last_failed = getattr(args, 'last_failed', False)
+    resume = getattr(args, 'resume', False)
+    plugin_dirs = getattr(args, 'plugin_dirs', None)
 
     try:
         if args.parallel:
@@ -214,7 +249,11 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -228,7 +267,11 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
@@ -245,7 +288,11 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = YAMLRunner(
@@ -257,7 +304,11 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
                     last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format: %s", file_ext)
@@ -307,6 +358,13 @@ def _format_results_html(results, text_report):
     """Format test results as a basic HTML page."""
     escaped_report = text_report.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     pass_pct = (results['passed'] / max(results['total'], 1)) * 100
+    xfailed = results.get('xfailed', 0)
+    xpassed = results.get('xpassed', 0)
+    extras = ""
+    if xfailed:
+        extras += f" | XFailed: <span class=\"xfailed\">{xfailed}</span>"
+    if xpassed:
+        extras += f" | XPassed: <span class=\"xpassed\">{xpassed} (unexpected!)</span>"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -317,13 +375,15 @@ def _format_results_html(results, text_report):
   .summary {{ margin-bottom: 1em; }}
   .passed {{ color: green; }}
   .failed {{ color: red; }}
+  .xfailed {{ color: orange; }}
+  .xpassed {{ color: red; font-weight: bold; }}
   pre {{ background: #f5f5f5; padding: 1em; border-radius: 4px; }}
 </style>
 </head>
 <body>
 <h1>CLI Test Results</h1>
 <div class="summary">
-  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span></p>
+  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span>{extras}</p>
   <p>Pass rate: {pass_pct:.1f}%</p>
 </div>
 <pre>{escaped_report}</pre>
@@ -343,7 +403,12 @@ def run_tui(args):
     from .tui.app import run_tui as _run_tui
 
     update_baseline = getattr(args, 'update_baseline', False)
-    _run_tui(args.config_file, args.workspace, update_baseline=update_baseline)
+    history_dir = getattr(args, 'history_dir', None)
+    update_history = getattr(args, 'update_history', False)
+    _run_tui(args.config_file, args.workspace,
+             update_baseline=update_baseline,
+             history_dir=history_dir,
+             update_history=update_history)
 
 
 def run_validate(args):
@@ -377,6 +442,12 @@ def run_validate(args):
             print("  [OK] All required fields present")
             print("  [OK] No circular imports detected")
 
+        if report.get("warnings"):
+            print()
+            for warn in report["warnings"]:
+                print(f"  [WARN] {warn}")
+            print()
+
         if summary.get("files_loaded"):
             print("\n  Files:")
             for f in summary["files_loaded"]:
@@ -384,6 +455,13 @@ def run_validate(args):
         print()
 
     return report["valid"]
+
+
+def run_schema() -> None:
+    """Print the JSON Schema for test configuration files."""
+    from .config.config_schema import get_config_schema
+
+    print(json.dumps(get_config_schema(), indent=2, ensure_ascii=False))
 
 
 def main():
@@ -407,6 +485,9 @@ def main():
         success = run_validate(args)
         # 0 = valid, 1 = validation errors found
         sys.exit(0 if success else 1)
+    elif args.command == 'schema':
+        run_schema()
+        sys.exit(0)
     elif args.command == 'compare':
         success = run_compare(args)
         sys.exit(0 if success else 1)

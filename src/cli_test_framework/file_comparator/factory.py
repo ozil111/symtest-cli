@@ -9,11 +9,15 @@
 """
 
 import importlib
+import importlib.util
+import os
 import pkgutil
 import logging
 from pathlib import Path
 
 logger = logging.getLogger("cli_test_framework.file_comparator.factory")
+
+_ENV_VAR = "CLITEST_PLUGIN_DIRS"
 
 class ComparatorFactory:
     """
@@ -24,6 +28,7 @@ class ComparatorFactory:
     """
     _comparators = {}
     _initialized = False
+    _plugin_dirs = []
 
     @staticmethod
     def register_comparator(file_type, comparator_class):
@@ -60,6 +65,30 @@ class ComparatorFactory:
         return comparator_class(**kwargs)
 
     @staticmethod
+    def set_plugin_dirs(dirs):
+        """Persist workspace-level plugin directories and expose them via env var.
+
+        Thread-pool runners share ``_plugin_dirs`` in-process.  Process-pool
+        runners (``spawn``) pick up the plugin paths from ``CLITEST_PLUGIN_DIRS``
+        so that the lazy ``_load_comparators()`` in each worker discovers the
+        same workspace plugins.
+
+        :param dirs: Iterable of absolute or relative directory paths.
+        """
+        dirs = list(dirs) if dirs else []
+        deduped = []
+        seen = set()
+        for d in dirs:
+            resolved = str(Path(d).resolve())
+            if resolved not in seen:
+                deduped.append(resolved)
+                seen.add(resolved)
+        ComparatorFactory._plugin_dirs = deduped
+        os.environ[_ENV_VAR] = os.pathsep.join(deduped)
+        if ComparatorFactory._initialized:
+            ComparatorFactory._load_from_dirs(deduped)
+
+    @staticmethod
     def _load_comparators():
         """
         @brief Load and register all available comparators
@@ -83,7 +112,63 @@ class ComparatorFactory:
                 except ImportError as e:
                     logger.warning("Failed to import comparator module %s: %s", module_info.name, e)
 
+        # --- workspace & env-var plugin dirs ---
+        extra_dirs = list(ComparatorFactory._plugin_dirs)
+        env_val = os.environ.get(_ENV_VAR, "")
+        if env_val:
+            for p in env_val.split(os.pathsep):
+                p = p.strip()
+                if p and p not in extra_dirs:
+                    extra_dirs.append(p)
+        if extra_dirs:
+            ComparatorFactory._load_from_dirs(extra_dirs)
+
         ComparatorFactory._initialized = True
+
+    @staticmethod
+    def _load_from_dirs(dirs):
+        """Scan *directory* paths for ``*_comparator.py`` modules and auto-register them.
+
+        Uses ``importlib.util.spec_from_file_location`` so that files outside the
+        framework package tree can be loaded.
+        """
+        for dir_path in dirs:
+            d = Path(dir_path)
+            if not d.is_dir():
+                if os.path.isabs(dir_path):
+                    logger.debug("Plugin dir not found, skipped: %s", dir_path)
+                continue
+            for py_file in sorted(d.glob("*_comparator.py")):
+                mod_name = py_file.stem
+                # Skip base_comparator
+                if mod_name == "base_comparator":
+                    continue
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        f"cli_test_framework.plugins.{mod_name}",
+                        str(py_file),
+                    )
+                    if spec is None or spec.loader is None:
+                        logger.warning("Cannot load plugin spec for %s", py_file)
+                        continue
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if (isinstance(attr, type)
+                                and attr.__module__ == module.__name__
+                                and attr_name.endswith("Comparator")):
+                            type_name = attr_name.lower().replace("comparator", "")
+                            ComparatorFactory.register_comparator(type_name, attr)
+                            logger.info(
+                                "Registered workspace plugin '%s' -> %s from %s",
+                                type_name, attr_name, py_file,
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to load workspace plugin %s: %s", py_file, e,
+                    )
 
     @staticmethod
     def get_available_comparators():
@@ -94,4 +179,13 @@ class ComparatorFactory:
         if not ComparatorFactory._initialized:
             ComparatorFactory._load_comparators()
         return sorted(ComparatorFactory._comparators.keys())
+
+    @staticmethod
+    def reset():
+        """Reset all internal state (for testing)."""
+        ComparatorFactory._comparators = {}
+        ComparatorFactory._initialized = False
+        ComparatorFactory._plugin_dirs = []
+        if _ENV_VAR in os.environ:
+            del os.environ[_ENV_VAR]
 

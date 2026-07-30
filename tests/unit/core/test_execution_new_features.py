@@ -1,10 +1,13 @@
 """Tests for new execution features: retry history, flaky, output trimming."""
+import subprocess
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
 from cli_test_framework.core.execution import (
     execute_single_test_case,
+    validate_result,
+    _build_next_action_hint,
     _trim_output,
     DEFAULT_OUTPUT_MAX_CHARS,
 )
@@ -131,3 +134,186 @@ class TestOutputTrimming:
         trimmed = _trim_output(long_output)
         assert "line_0" in trimmed
         assert f"line_{len(lines)-1}" in trimmed
+
+
+class TestAssertionResults:
+    """assertion_results should be populated on both success and failure."""
+
+    @pytest.fixture
+    def case(self):
+        return {
+            "name": "test_case",
+            "command": "echo",
+            "args": ["hello"],
+            "expected": {"return_code": 0, "output_contains": ["hello", "world"]},
+            "description": None,
+            "timeout": None,
+            "resources": None,
+            "retry_count": 0,
+        }
+
+    def test_success_populates_assertion_results(self, case):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = MagicMock(
+                communicate=MagicMock(return_value=("hello world\n", "")),
+                returncode=0,
+                pid=1,
+            )
+            result = execute_single_test_case(case)
+            assert result["status"] == "passed"
+            ar = result["assertion_results"]
+            assert len(ar) == 3  # return_code + 2x output_contains
+            assert all(entry["passed"] for entry in ar)
+            assert ar[0]["assertion"] == "return_code"
+            assert [e["assertion"] for e in ar[1:]] == ["output_contains"] * 2
+
+    def test_failure_marks_individual_assertions(self, case):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = MagicMock(
+                communicate=MagicMock(return_value=("hello\n", "")),
+                returncode=0,
+                pid=1,
+            )
+            result = execute_single_test_case(case)
+            assert result["status"] == "failed"
+            ar = result["assertion_results"]
+            # return_code passed, 'hello' found, 'world' missing
+            assert ar[0]["passed"] is True
+            assert ar[1]["passed"] is True
+            assert ar[2]["passed"] is False
+            assert ar[2]["text"] == "world"
+            assert "message" in ar[2]
+
+    def test_validate_result_returns_assertion_results_on_success(self):
+        mini = {
+            "name": "t", "status": "failed", "message": "", "command": "c",
+            "output": "abc", "return_code": 0, "duration": 0.0,
+        }
+        ar = validate_result(
+            {"return_code": 0, "output_contains": ["abc"]}, mini,
+        )
+        assert ar == [
+            {"assertion": "return_code", "passed": True},
+            {"assertion": "output_contains", "passed": True, "text": "abc"},
+        ]
+
+
+class TestNextActionHint:
+    """Failed results carry a structured next_action_hint."""
+
+    @pytest.fixture
+    def case(self):
+        return {
+            "name": "hint_case",
+            "command": "echo",
+            "args": ["x"],
+            "expected": {"return_code": 0},
+            "description": None,
+            "timeout": None,
+            "resources": None,
+            "retry_count": 0,
+        }
+
+    def test_hint_mapping(self):
+        assert _build_next_action_hint(None) is None
+        assert _build_next_action_hint("file_compare")["action"] == "update_baseline"
+        assert _build_next_action_hint("file_compare", update_baseline=True)["action"] == "investigate"
+        assert _build_next_action_hint("return_code")["action"] == "update_expected"
+        assert _build_next_action_hint("output_contains")["action"] == "update_expected"
+        assert _build_next_action_hint("output_matches")["action"] == "update_expected"
+        assert _build_next_action_hint("timeout")["action"] == "increase_timeout"
+        assert _build_next_action_hint("execution_error")["action"] == "investigate"
+        assert _build_next_action_hint("something_else")["action"] == "investigate"
+
+    def test_assertion_failure_attaches_hint(self, case):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = MagicMock(
+                communicate=MagicMock(return_value=("", "")),
+                returncode=3,
+                pid=1,
+            )
+            result = execute_single_test_case(case)
+            assert result["status"] == "failed"
+            hint = result["next_action_hint"]
+            assert hint["action"] == "update_expected"
+            assert hint["command"] is None  # filled by the runner layer
+            assert hint["reason"]
+
+    def test_execution_error_attaches_hint(self, case):
+        with patch("subprocess.Popen", side_effect=FileNotFoundError("no such cmd")):
+            result = execute_single_test_case(case)
+            assert result["status"] == "failed"
+            assert result["failure_kind"] == "execution_error"
+            assert result["next_action_hint"]["action"] == "investigate"
+
+    def test_timeout_attaches_hint(self, case):
+        case["timeout"] = 1
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="echo", timeout=1),
+            ("partial", ""),
+        ]
+        mock_proc.pid = 1
+        with patch("subprocess.Popen", return_value=mock_proc):
+            result = execute_single_test_case(case)
+            assert result["status"] == "timeout"
+            assert result["next_action_hint"]["action"] == "increase_timeout"
+
+    def test_passed_case_has_no_hint(self, case):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = MagicMock(
+                communicate=MagicMock(return_value=("", "")),
+                returncode=0,
+                pid=1,
+            )
+            result = execute_single_test_case(case)
+            assert result["status"] == "passed"
+            assert result["next_action_hint"] is None
+
+
+class TestRunnerHintCommandFilling:
+    """Runners fill the concrete cli-test command into next_action_hint."""
+
+    def _make_failed_result(self, action):
+        return {
+            "name": "case_a",
+            "status": "failed",
+            "next_action_hint": {"action": action, "command": None, "reason": "r"},
+        }
+
+    def test_update_baseline_command(self):
+        from cli_test_framework.runners.json_runner import JSONRunner
+
+        runner = JSONRunner(config_file="cfg.json")
+        result = self._make_failed_result("update_baseline")
+        runner._fill_hint_command(result, "case_a")
+        cmd = result["next_action_hint"]["command"]
+        assert cmd == (
+            f'cli-test run "{runner.config_path}" --update-baseline -t "case_a"'
+        )
+
+    def test_rerun_command_for_other_actions(self):
+        from cli_test_framework.runners.json_runner import JSONRunner
+
+        runner = JSONRunner(config_file="cfg.json")
+        result = self._make_failed_result("update_expected")
+        runner._fill_hint_command(result, "case_a")
+        cmd = result["next_action_hint"]["command"]
+        assert cmd == f'cli-test run "{runner.config_path}" -t "case_a"'
+
+    def test_existing_command_not_overwritten(self):
+        from cli_test_framework.runners.json_runner import JSONRunner
+
+        runner = JSONRunner(config_file="cfg.json")
+        result = self._make_failed_result("update_baseline")
+        result["next_action_hint"]["command"] = "custom"
+        runner._fill_hint_command(result, "case_a")
+        assert result["next_action_hint"]["command"] == "custom"
+
+    def test_no_hint_is_noop(self):
+        from cli_test_framework.runners.json_runner import JSONRunner
+
+        runner = JSONRunner(config_file="cfg.json")
+        result = {"name": "ok", "status": "passed", "next_action_hint": None}
+        runner._fill_hint_command(result, "ok")  # should not raise
+        assert result["next_action_hint"] is None
