@@ -44,6 +44,7 @@ src/cli_test_framework/file_comparator/factory.py
 src/cli_test_framework/file_comparator/h5_comparator.py
 src/cli_test_framework/file_comparator/json_comparator.py
 src/cli_test_framework/file_comparator/result.py
+src/cli_test_framework/file_comparator/script_comparator.py
 src/cli_test_framework/file_comparator/text_comparator.py
 src/cli_test_framework/file_comparator/xml_comparator.py
 src/cli_test_framework/runners/__init__.py
@@ -95,8 +96,12 @@ tests/e2e/__pycache__/test_user_flows.cpython-312-pytest-9.0.3.pyc
 tests/e2e/__pycache__/test_user_flows.cpython-39-pytest-8.3.4.pyc
 tests/fixtures/circular_config_a.json
 tests/fixtures/circular_config_b.json
+tests/fixtures/hourglass_stdout_mismatch.txt
+tests/fixtures/hourglass_stdout_sample.txt
 tests/fixtures/main_config.json
 tests/fixtures/missing_fields.json
+tests/fixtures/mock_fail_script.py
+tests/fixtures/mock_pass_script.py
 tests/fixtures/setup_main.json
 tests/fixtures/setup_sub.json
 tests/fixtures/sub_json_tests.yaml
@@ -197,8 +202,14 @@ tests/unit/core/__pycache__/test_setup.cpython-39-pytest-8.3.4.pyc
 tests/unit/core/__pycache__/test_validation_error.cpython-312-pytest-9.0.3.pyc
 tests/unit/core/__pycache__/test_xfail.cpython-312-pytest-9.0.3.pyc
 tests/unit/file_comparator/test_error_analysis.py
+tests/unit/file_comparator/test_hourglass_tangent_comparator.py
+tests/unit/file_comparator/test_script_comparator.py
+tests/unit/file_comparator/test_workspace_plugins.py
 tests/unit/file_comparator/__pycache__/__init__.cpython-312.pyc
 tests/unit/file_comparator/__pycache__/test_error_analysis.cpython-312-pytest-9.0.3.pyc
+tests/unit/file_comparator/__pycache__/test_hourglass_tangent_comparator.cpython-312-pytest-9.0.3.pyc
+tests/unit/file_comparator/__pycache__/test_script_comparator.cpython-312-pytest-9.0.3.pyc
+tests/unit/file_comparator/__pycache__/test_workspace_plugins.cpython-312-pytest-9.0.3.pyc
 tests/unit/runners/test_json_yaml_runner.py
 tests/unit/runners/test_test_case_filter.py
 tests/unit/runners/test_test_case_tag_filter.py
