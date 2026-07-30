@@ -32,4 +32,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        run: python tests/run_all.py --extra "-q --ignore=tests/unit/tui"
+        run: python tests/run_all.py
