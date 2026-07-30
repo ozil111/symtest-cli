@@ -66,6 +66,17 @@ def update_case(history: dict, name: str, duration: float) -> None:
         }
 
 
+def reset_cases(history: dict, case_names: set) -> int:
+    """Remove given case names from history. Returns count of removed entries."""
+    cases = history.get("cases", {})
+    cleared = 0
+    for name in case_names:
+        if name in cases:
+            del cases[name]
+            cleared += 1
+    return cleared
+
+
 def check_regression(
     history: dict, name: str, duration: float, threshold: float = 1.5
 ) -> Optional[str]:

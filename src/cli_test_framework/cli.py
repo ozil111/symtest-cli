@@ -84,6 +84,9 @@ Examples:
                            help='Run only test cases that failed in the previous run')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
+    run_parser.add_argument('--update-history', action='store_true',
+                           help='Clear .symtest runtime history for run-involved cases before '
+                                'recording this run (requires --history-dir)')
     run_parser.add_argument('--resume', action='store_true',
                            help='Resume sequence test cases from last failed step '
                                 '(trusts workspace artifacts are unchanged)')
@@ -110,6 +113,15 @@ Examples:
     tui_parser.add_argument(
         '--update-baseline', action='store_true',
         help='On comparison failure, overwrite baseline files with actual output'
+    )
+    tui_parser.add_argument(
+        '--history-dir',
+        help='Directory for .symtest runtime history (enables regression detection per case)'
+    )
+    tui_parser.add_argument(
+        '--update-history', action='store_true',
+        help='Clear .symtest runtime history for run-involved cases before '
+             'recording this run (requires --history-dir)'
     )
 
     # ---- Validate command ----
@@ -216,6 +228,7 @@ def run_tests(args):
     var_list = getattr(args, 'var', [])
     variables = _parse_vars(var_list)
     update_baseline = getattr(args, 'update_baseline', False)
+    update_history = getattr(args, 'update_history', False)
     error_analysis = getattr(args, 'error_analysis', False)
     last_failed = getattr(args, 'last_failed', False)
     resume = getattr(args, 'resume', False)
@@ -236,6 +249,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
@@ -253,6 +267,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
@@ -273,6 +288,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
@@ -288,6 +304,7 @@ def run_tests(args):
                     regression_threshold=regression_threshold,
                     variables=variables,
                     update_baseline=update_baseline,
+                    update_history=update_history,
                     error_analysis=error_analysis,
                     last_failed=last_failed,
                     resume=resume,
@@ -386,7 +403,12 @@ def run_tui(args):
     from .tui.app import run_tui as _run_tui
 
     update_baseline = getattr(args, 'update_baseline', False)
-    _run_tui(args.config_file, args.workspace, update_baseline=update_baseline)
+    history_dir = getattr(args, 'history_dir', None)
+    update_history = getattr(args, 'update_history', False)
+    _run_tui(args.config_file, args.workspace,
+             update_baseline=update_baseline,
+             history_dir=history_dir,
+             update_history=update_history)
 
 
 def run_validate(args):

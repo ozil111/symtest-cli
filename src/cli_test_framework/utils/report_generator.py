@@ -34,6 +34,8 @@ class ReportGenerator:
             report += f"XPassed: {xpassed} (unexpected!)\n"
         if self.results.get("updated", 0) > 0:
             report += f"Baseline Updated: {self.results['updated']}\n"
+        if self.results.get("history_reset"):
+            report += f"History Reset: {self.results.get('history_cleared', 0)} case(s) cleared\n"
         total_duration = sum(d.get('duration', 0) for d in self.results['details'])
         report += f"Total Duration: {total_duration:.2f}s\n\n"
 

@@ -1400,6 +1400,26 @@ success = runner.run_tests()
 
 不传 `--history-dir` 时行为与之前完全一致，不创建任何额外文件。
 
+### 清零历史记录（--update-history）
+
+当算法重构或环境变化导致历史耗时数据不再有代表性时，`--update-history`
+会清除本次运行涉及的 case 在 `.symtest` 中的历史记录，让本次运行成为
+新的回归检测基线。
+
+```bash
+# 清除历史后本次运行成为新基线（需搭配 --history-dir）
+cli-test run config.json --history-dir ./hist --update-history
+```
+
+**行为**：
+- 清除 `.symtest` 中**本次运行涉及的 case** 的历史条目
+- 未参与本次运行的 case 的历史数据保留不动
+- 本次运行的回归检测不会产生误报（无历史基线可比）
+- 本次通过 case 的耗时会被记录为全新起点
+- 报告中显示 `History Reset` 计数
+
+> **注意**：需搭配 `--history-dir` 使用。清零范围仅限本次运行的 case，不影响其他 case 的历史数据。
+
 ## JUnit XML 报告
 
 通过 `--junit-xml` 可在运行测试的同时输出 JUnit 格式的 XML 报告，兼容 Jenkins、GitLab CI、CircleCI 等 CI 工具。

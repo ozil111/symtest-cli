@@ -7,7 +7,7 @@ from .test_case import TestCase
 from .assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
 from .execution import execute_single_test_case
-from .history_store import load_history, update_case, check_regression, save_history
+from .history_store import load_history, update_case, check_regression, save_history, reset_cases
 from .last_run_store import update_last_run, get_last_failed_names
 from ..file_comparator.factory import ComparatorFactory
 
@@ -20,6 +20,7 @@ class BaseRunner(ABC):
                  history_dir: Optional[str] = None,
                  regression_threshold: float = 1.5,
                  update_baseline: bool = False,
+                 update_history: bool = False,
                  error_analysis: bool = False,
                  last_failed: bool = False,
                  resume: bool = False,
@@ -42,6 +43,7 @@ class BaseRunner(ABC):
             self.history_dir = None
         self.regression_threshold = regression_threshold
         self.update_baseline = update_baseline
+        self.update_history = update_history
         self.error_analysis = error_analysis
         self.last_failed = last_failed
         self.resume = resume
@@ -256,6 +258,18 @@ class BaseRunner(ABC):
         if not self.history_dir:
             return
         history = load_history(self.history_dir)
+
+        if self.update_history:
+            run_names = {r["name"] for r in self.results["details"]}
+            cleared = reset_cases(history, run_names)
+            if cleared:
+                logger.info(
+                    "History reset: cleared %d case(s) before recording this run",
+                    cleared,
+                )
+                self.results["history_reset"] = True
+                self.results["history_cleared"] = cleared
+
         for result in self.results["details"]:
             # Only record successful cases in history; skip failed ones
             if result["status"] != "passed":
