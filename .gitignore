@@ -24,6 +24,4 @@ test_output.txt
 /.codebuddy/rules
 .coverage
 case/
-/tests/fixtures/hourglass_stdout_sample.txt
-/tests/fixtures/hourglass_stdout_mismatch.txt
 *.egg-info/

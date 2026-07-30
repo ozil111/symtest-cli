@@ -1,0 +1,35 @@
+======================================================================
+WP3 HOURGLASS ANALYSIS: HG-M2_D2_A1e-3
+  description: high-stretch test
+  matrix generation step: 2
+======================================================================
+
+[1] Native K (HG-M2_D2_A1e-3_STIF2.mtx):
+    BC-penalty entries           = 144 / 576
+    penalty-overwritten DOFs     = 24 / 24
+    directly observed entries    = 432 / 576
+    recovered ||K||_F            = 5.000000e+05
+
+[2] UEL log: 3 calls
+    seq= 1  kstep=1 kinc=1  lflags=[1, 1, 1]  ||amatrx||=5.0000e+05
+    seq= 2  kstep=2 kinc=1  lflags=[1, 1, 3]  ||amatrx||=5.0000e+05
+    seq= 3  kstep=2 kinc=2  lflags=[1, 1, 1]  ||amatrx||=5.0000e+05
+
+[3] Matrix generation call #2 (lflags=[1, 1, 3]):
+    ||K_uel||_F                         = 5.050000e+05
+    observed-entry error (432 entries) = 5.000000e-02
+    recovered-full-matrix error         = 5.000000e-02
+    max|ΔK| (observed)                  = 1.000000e+02
+    UEL asymmetry ||K-K^T||/||K||       = 1.500e-05
+
+======================================================================
+SUMMARY
+======================================================================
+  Case: HG-M2_D2_A1e-3
+  Matrix generation call: #2
+  Recovered-full relative error: 5.000000e-02
+  K_AA relative error: 1.23e-02 (+/- 0.00e+00)
+  K_HH relative error: 3.45e-03 (+/- 0.00e+00)
+  Native ||K||_F          = 5.000000e+05
+  UEL ||K||_F             = 5.050000e+05
+  RESULT: MISMATCH — sub-10% full tangent error
