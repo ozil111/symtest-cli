@@ -270,5 +270,93 @@ class TestConfigSchema:
         from cli_test_framework.config.config_schema import get_config_schema
 
         defs = get_config_schema()["$defs"]
-        assert defs["singleCase"]["required"] == ["name", "command", "args", "expected"]
+        # singleCase now uses allOf with if/then for conditional required
+        # (extends present → only name required; else → name, command, args, expected)
+        single_allof = defs["singleCase"]["allOf"]
+        else_section = single_allof[0]["else"]
+        assert else_section["required"] == ["name", "command", "args", "expected"]
         assert defs["step"]["required"] == ["command", "args", "expected"]
+
+        # sequenceCase also uses allOf
+        seq_allof = defs["sequenceCase"]["allOf"]
+        seq_else = seq_allof[0]["else"]
+        assert seq_else["required"] == ["name", "steps"]
+
+
+class TestValidateInheritance:
+    """validate_config should detect extends-related errors."""
+
+    def _write_config(self, tmpdir, config):
+        path = Path(tmpdir) / "config.json"
+        save_config(config, path)
+        return path
+
+    def test_extends_target_not_found_reported(self):
+        """extends to a nonexistent case is an error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, {
+                "test_cases": [
+                    {"name": "orphan", "extends": "nonexistent"},
+                ]
+            })
+            result = validate_config(path)
+            assert result["valid"] is False
+            assert any("extends target" in err and "not found" in err
+                       for err in result["errors"])
+
+    def test_circular_extends_reported(self):
+        """Circular extends chain is an error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, {
+                "test_cases": [
+                    {"name": "A", "extends": "B"},
+                    {"name": "B", "extends": "A"},
+                ]
+            })
+            result = validate_config(path)
+            assert result["valid"] is False
+            assert any("Circular extends" in err for err in result["errors"])
+
+    def test_valid_inheritance_does_not_count_abstract(self):
+        """Abstract cases are not counted in case summary."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, {
+                "test_cases": [
+                    {"name": "_base", "abstract": True, "command": "echo",
+                     "args": ["a"], "expected": {}},
+                    {"name": "child1", "extends": "_base"},
+                    {"name": "child2", "extends": "_base"},
+                ]
+            })
+            result = validate_config(path, workspace=tmpdir)
+            assert result["valid"] is True
+            assert result["summary"]["cases"] == 2  # only children
+
+    def test_extends_case_skips_required_field_checks(self):
+        """Cases with extends should not be flagged for missing required fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, {
+                "test_cases": [
+                    {"name": "_base", "abstract": True, "command": "echo",
+                     "args": ["a"], "expected": {}},
+                    {"name": "child", "extends": "_base"},
+                    # child has no command/args/expected but inherits them
+                ]
+            })
+            result = validate_config(path, workspace=tmpdir)
+            assert result["valid"] is True
+
+    def test_duplicate_case_name_reported(self):
+        """Duplicate case names across files should be flagged (ambiguous extends)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_config(tmpdir, {
+                "test_cases": [
+                    {"name": "same", "command": "echo", "args": ["1"],
+                     "expected": {}},
+                    {"name": "same", "command": "echo", "args": ["2"],
+                     "expected": {}},
+                ]
+            })
+            result = validate_config(path, workspace=tmpdir)
+            assert result["valid"] is False
+            assert any("Duplicate case name" in err for err in result["errors"])

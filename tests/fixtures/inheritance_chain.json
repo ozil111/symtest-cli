@@ -1,0 +1,37 @@
+{
+  "test_cases": [
+    {
+      "name": "_A",
+      "abstract": true,
+      "command": "python",
+      "args": ["-c"],
+      "expected": {},
+      "variables": {
+        "a": "1",
+        "shared": "from_a"
+      }
+    },
+    {
+      "name": "_B",
+      "abstract": true,
+      "extends": "_A",
+      "expected": {
+        "output_contains": ["step_b"]
+      },
+      "variables": {
+        "b": "2",
+        "shared": "from_b"
+      }
+    },
+    {
+      "name": "C_concrete",
+      "extends": "_B",
+      "description": "Chain inheritance: C extends B extends A",
+      "variables": {
+        "c": "3",
+        "shared": "from_c"
+      },
+      "args": ["print('{a} {b} {c}')"]
+    }
+  ]
+}

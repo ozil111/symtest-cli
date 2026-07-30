@@ -5,6 +5,7 @@
 - [安装](#安装)
 - [测试用例定义](#测试用例定义)
 - [配置拆分机制](#配置拆分机制)
+- [配置继承](#配置继承)
 - [配置校验](#配置校验)
 - [TUI 交互式管理器](#tui-交互式管理器)
 - [运行测试](#运行测试)
@@ -321,6 +322,132 @@ test_cases:
 1. 先用 `validate` 命令确认现有配置无问题（见[配置校验](#配置校验)）
 2. 逐步将大文件中的部分用例移到子文件，用 `import` 引用
 3. 内联用例与 import 引用可在同一个 `test_cases` 数组中混合使用
+
+## 配置继承
+
+当多个测试用例结构高度相似（仅路径、参数等少量不同），可以用 `extends` + `abstract` + `variables` 消除重复配置。
+
+### 语法
+
+用例支持三个继承相关的新字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `abstract` | `boolean` | 设为 `true` 时为模板（基类），不参与执行 |
+| `extends` | `string` | 继承目标用例的 `name`，支持链式继承 |
+| `variables` | `object` | 用例级占位符变量，用于 `{key}` 替换 |
+
+### 基本用法
+
+```json
+{
+  "test_cases": [
+    {
+      "name": "_base_echo",
+      "abstract": true,
+      "command": "echo",
+      "args": ["{msg}"],
+      "expected": {
+        "output_contains": ["{msg}"]
+      },
+      "variables": {
+        "msg": "hello"
+      }
+    },
+    {
+      "name": "test_hello",
+      "extends": "_base_echo"
+    },
+    {
+      "name": "test_world",
+      "extends": "_base_echo",
+      "variables": {
+        "msg": "world"
+      }
+    }
+  ]
+}
+```
+
+展开后 `test_hello` 继承基类的全部字段（`command`、`args`、`expected`），占位符 `{msg}` 被 `variables.msg` 替换为 `"hello"`。`test_world` 覆盖 `variables.msg` 为 `"world"`。
+
+### 合并规则
+
+继承采用 **dict 深合并、list 整体替换** 策略：
+
+- **dict 字段**（如 `expected`、`variables`）：递归合并，子类字段覆盖父类同名 key
+- **list 字段**（如 `args`、`steps`、`tags`）：子类整列表替换父类，不追加
+
+```json
+{
+  "name": "_base",
+  "abstract": true,
+  "expected": {
+    "return_code": 0,
+    "output_contains": ["base"]
+  },
+  "tags": ["a", "b"],
+  "extends": "_base",
+  "expected": {
+    "output_contains": ["child"]
+  },
+  "tags": ["c"]
+}
+```
+
+合并结果：`expected.return_code` = `0`（来自父类），`expected.output_contains` = `["child"]`（子类整列表替换），`tags` = `["c"]`（整列表替换）。
+
+`abstract` 字段取子类自身值（默认 `false`），不会从父类继承，防止子类意外成为抽象模板。
+
+### 链式继承
+
+支持多层继承（A → B → C）：
+
+```json
+{
+  "name": "_A", "abstract": true,
+  "command": "python", "args": ["-c"], "expected": {},
+  "variables": {"a": "1"}
+}
+{
+  "name": "_B", "abstract": true, "extends": "_A",
+  "expected": {"output_contains": ["b"]},
+  "variables": {"b": "2"}
+}
+{
+  "name": "C", "extends": "_B",
+  "variables": {"c": "3"},
+  "args": ["print('{a} {b} {c}')"]
+}
+```
+
+加载时自动检测循环继承并报错。
+
+### 变量替换优先级
+
+占位符替换分为两层：
+
+1. **用例级 `variables`**：从继承链一路深合并（子类覆盖父类），先应用到合并后的用例内容
+2. **全局 `--var`**：通过 CLI 传入（`--var KEY=VALUE`），在用例级变量之后叠加，**同名 key 全局优先级更高**
+
+```bash
+cli-test run config.json --var solver=/path/to/solver
+```
+
+`setup` 区块仅使用全局 `--var` 替换（无用例级变量）。
+
+### validate 检查
+
+`cli-test validate` 对继承配置做额外校验：
+
+- `extends` 目标是否存在
+- 是否形成循环继承链
+- `abstract` 用例不计入可执行用例数
+- `extends` 用例跳过必填字段检查（内容来自父类）
+
+### TUI 编辑限制
+
+> **注意**：TUI 目前不支持编辑继承用例。继承后的展开用例在 TUI 中可正常查看和运行，但请直接编辑 JSON/YAML 源文件来进行修改。
 
 ## 配置校验
 
