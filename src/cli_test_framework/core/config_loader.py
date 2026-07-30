@@ -134,6 +134,7 @@ def parse_test_cases(
                 tags=case.get("tags", []),
                 expected_failure=case.get("expected_failure", False),
                 xfail_reason=case.get("xfail_reason", ""),
+                xfail_quiet=case.get("xfail_quiet", False),
             ))
         else:
             # ── Single-command mode (backward-compatible) ──
@@ -159,6 +160,7 @@ def parse_test_cases(
                     retry_count=case.get("retry_count", 0),
                     expected_failure=case.get("expected_failure", False),
                     xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
             else:
                 cases.append(TestCase(
@@ -173,6 +175,7 @@ def parse_test_cases(
                     retry_count=case.get("retry_count", 0),
                     expected_failure=case.get("expected_failure", False),
                     xfail_reason=case.get("xfail_reason", ""),
+                    xfail_quiet=case.get("xfail_quiet", False),
                 ))
 
     return cases

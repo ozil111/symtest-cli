@@ -40,6 +40,7 @@ class TestCaseData(TypedDict, total=False):
     retry_count: int
     expected_failure: bool
     xfail_reason: Optional[str]
+    xfail_quiet: bool
 
 
 class SetupConfig(TypedDict):

@@ -99,3 +99,35 @@ def test_exit_code_nonzero_on_both(runner):
     runner.results["failed"] = 2
     runner.results["xpassed"] = 1
     assert not (runner.results["failed"] == 0 and runner.results["xpassed"] == 0)
+
+
+# ── xfail_quiet ──
+
+def test_xfail_quiet_defaults_to_false():
+    """xfail_quiet 默认应为 False（向后兼容）"""
+    case = TestCase(name="t", expected_failure=True, xfail_reason="reason")
+    assert case.xfail_quiet is False
+
+
+def test_xfail_quiet_when_true_attached_to_result(runner):
+    """xfail_quiet=True 时应传递到 result dict"""
+    case = TestCase(name="t", expected_failure=True, xfail_quiet=True)
+    result = {"status": "failed"}
+    runner._apply_xfail_status(result, case)
+    assert result["xfail_quiet"] is True
+
+
+def test_xfail_quiet_when_false_attached_to_result(runner):
+    """xfail_quiet=False 时也应传递到 result dict"""
+    case = TestCase(name="t", expected_failure=True, xfail_quiet=False)
+    result = {"status": "failed"}
+    runner._apply_xfail_status(result, case)
+    assert result["xfail_quiet"] is False
+
+
+def test_no_xfail_quiet_not_present_without_expected_failure(runner):
+    """非 xfail 用例的 result 中不应有 xfail_quiet"""
+    case = TestCase(name="t", expected_failure=False)
+    result = {"status": "passed"}
+    runner._apply_xfail_status(result, case)
+    assert "xfail_quiet" not in result

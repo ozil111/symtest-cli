@@ -165,7 +165,12 @@ class ReportGenerator:
                         report += f"  - {bu}\n"
 
                 # 添加命令的完整输出（这是最重要的部分）
-                if failed_test.get('output'):
+                # 当 xfail_quiet 为 True 且状态为 xfailed 时，跳过 Command Output
+                is_xfail_quiet = (
+                    failed_test.get('status') == 'xfailed'
+                    and failed_test.get('xfail_quiet')
+                )
+                if failed_test.get('output') and not is_xfail_quiet:
                     report += f"\nCommand Output:\n"
                     report += "=" * 30 + "\n"
                     report += f"{failed_test['output']}\n"

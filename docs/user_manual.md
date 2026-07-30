@@ -111,6 +111,7 @@ test_cases:
     args: ["should_fail"]
     expected_failure: true
     xfail_reason: "Bug #42 尚未修复"
+    xfail_quiet: true
     expected:
       return_code: 1
 ```
@@ -121,7 +122,7 @@ test_cases:
 
 | 场景 | 状态 | 退出码影响 | 说明 |
 |---|---|---|---|
-| xfail 标记 + 确实失败 | `xfailed` | 不计数为失败 | 报告展示 `xfail_reason`，详情照常输出 |
+| xfail 标记 + 确实失败 | `xfailed` | 不计数为失败 | 报告展示 `xfail_reason`，详情照常输出（可通过 `xfail_quiet` 抑制 Command Output） |
 | xfail 标记 + 意外通过 | `xpassed` | **计入失败** | 报告高亮提示"移除 xfail 标记" |
 
 这与 pytest 的 xfail 语义一致。搭配 `--last-failed` 时，xfailed 不会进入重跑集，xpassed 会进入。
@@ -133,6 +134,20 @@ test_cases:
     "args": ["--input", "bug_case.dat"],
     "expected_failure": true,
     "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
+    "expected": { "return_code": 1 }
+}
+```
+
+当 xfailed 用例的输出非常冗长（如数百行求解器日志）且重复出现，干扰报告阅读时，可添加 `xfail_quiet: true` 让报告 **只保留原因和命令，不输出 Command Output**。其余元信息（Description、Expected、Command、Return Code、Error Message、Compare Failures、Step Results 等）照常展示：
+
+```json
+{
+    "name": "已知Bug（静默模式）",
+    "command": "solver",
+    "args": ["--input", "bug_case.dat"],
+    "expected_failure": true,
+    "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
+    "xfail_quiet": true,
     "expected": { "return_code": 1 }
 }
 ```
@@ -151,6 +166,7 @@ test_cases:
 | `resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
 | `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
+| `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |

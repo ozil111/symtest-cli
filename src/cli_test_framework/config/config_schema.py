@@ -196,6 +196,13 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                     "type": "string",
                     "description": "Optional reason displayed in the report alongside XFailed results.",
                 },
+                "xfail_quiet": {
+                    "type": "boolean",
+                    "description": (
+                        "When true and the case is xfailed (expected failure confirmed), "
+                        "suppress the Command Output block in reports to reduce noise."
+                    ),
+                },
             },
         },
         "sequenceCase": {
@@ -231,6 +238,13 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                 "xfail_reason": {
                     "type": "string",
                     "description": "Optional reason displayed in the report alongside XFailed results.",
+                },
+                "xfail_quiet": {
+                    "type": "boolean",
+                    "description": (
+                        "When true and the case is xfailed (expected failure confirmed), "
+                        "suppress the Command Output block in reports to reduce noise."
+                    ),
                 },
             },
         },

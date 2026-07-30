@@ -240,6 +240,7 @@ class BaseRunner(ABC):
             return
         xfail_reason = getattr(case, "xfail_reason", "") or ""
         result["xfail_reason"] = xfail_reason
+        result["xfail_quiet"] = getattr(case, "xfail_quiet", False)
         if result.get("status") == "passed":
             result["status"] = "xpassed"
         else:

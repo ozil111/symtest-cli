@@ -26,6 +26,7 @@ class TestCase:
     retry_count: int = 0
     expected_failure: bool = False
     xfail_reason: str = ""
+    xfail_quiet: bool = False
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert test case to dictionary format"""
@@ -42,6 +43,8 @@ class TestCase:
         if self.expected_failure:
             result["expected_failure"] = self.expected_failure
             result["xfail_reason"] = self.xfail_reason
+            if self.xfail_quiet:
+                result["xfail_quiet"] = self.xfail_quiet
         if self.steps is not None:
             result["steps"] = [
                 {
