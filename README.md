@@ -1,213 +1,257 @@
 # CLI Test Framework
 
-A lightweight automated testing framework for command-line applications. Define test cases in JSON/YAML, run all validations with a single command.
+[中文](README_cn.md) | English
 
-Particularly suited for scientific computing — deep HDF5 support with regex table matching, data filtering, and tolerance-based comparison, making simulation result verification effortless.
+A feature-focused automated testing framework for command-line applications.
+It is built for regression suites that need more than an exit-code check:
+multi-step commands, numerical result comparison, large configuration sets,
+parallel execution, and CI-ready reports.
 
-## Why this exists
+The project grew out of finite-element solver development, where a single test
+may run several programs, produce HDF5 or CSV results, compare them with
+tolerances, and track execution time across revisions.
 
-This project was created from a real need: regression testing finite-element software.
+## What it solves
 
-In solver-style projects, checking the exit code is not enough. A test often needs to run multiple commands, generate numerical result files, compare HDF5/CSV outputs with tolerances, and make sure old cases do not become slower over time.
+CLI Test Framework keeps the execution workflow and its acceptance criteria in
+one JSON or YAML configuration:
 
-CLI Test Framework was built for that workflow.
+- **Execute workflows** — single commands or fail-fast step sequences, with
+  timeouts, retries, variables, tags, and expected-failure support.
+- **Verify results** — return codes, output text and regular expressions, plus
+  text, JSON, CSV, XML, HDF5, binary, and custom-script file comparisons.
+- **Manage large suites** — split configurations with `import`, reuse templates
+  with `extends`, filter by name or tag, and inspect cases across files in the
+  optional TUI.
+- **Iterate and integrate** — parallel execution, `--last-failed`, step-level
+  `--resume`, runtime history, structured reports, and JUnit XML output.
 
-## Highlights
+The emphasis is practical: features are added to solve test workflows that
+occur in real CLI and scientific-computing projects.
 
-- **Golden File Assertion** — `compare_files` embedded in test `expected`, compares output files against baselines with tolerance
-- **Parallel Execution** — Multi-thread / multi-process, 3-5x speedup
-- **Resource-Aware Scheduling** — Automatic CPU core management, prevents solver thread runaway
-- **Sequence Steps** — Multi-step execution within a single test case, fail-fast
-- **Setup Module** — Auto-configure environment variables before tests, auto-cleanup after
-- **File Comparison** — Text / JSON / CSV / XML / HDF5 / Binary, with CLI and embedded assertion support
-- **Filtered Execution** — Run specific test cases by name or tag
-- **JUnit XML Output** — `--junit-xml` for GitLab CI / Jenkins / CircleCI test report panels
+## Installation
 
-## Quick Start
+Python 3.9 or newer is required.
 
 ```bash
 pip install cli-test-framework
 ```
 
-### 30-Second Setup
+YAML and the TUI are optional:
 
-1. Create `test_cases.json`:
+```bash
+pip install "cli-test-framework[yaml]"
+pip install "cli-test-framework[tui]"
+pip install "cli-test-framework[all]"
+```
+
+The default installation includes HDF5 and numerical comparison support.
+
+## Quick start
+
+Create `test_cases.json`:
 
 ```json
 {
-    "test_cases": [
-        {
-            "name": "hello",
-            "command": "echo",
-            "args": ["Hello World"],
-            "tags": ["smoke"],
-            "expected": {
-                "return_code": 0,
-                "output_contains": ["Hello World"]
-            }
-        }
-    ]
+  "test_cases": [
+    {
+      "name": "hello",
+      "command": "echo",
+      "args": ["Hello World"],
+      "tags": ["smoke"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Hello World"]
+      }
+    }
+  ]
 }
 ```
 
-2. Run:
+Run it:
 
 ```bash
 cli-test run test_cases.json
 ```
 
-### Golden File Comparison in Tests
+Validate a configuration without executing it:
 
-Run a simulation, then compare its output file against a reference:
-
-```json
-{
-    "test_cases": [
-        {
-            "name": "FEA displacement check",
-            "command": "my_solver",
-            "args": ["--input", "case1.dat", "--output", "out.h5"],
-            "expected": {
-                "return_code": 0,
-                "compare_files": [
-                    {
-                        "actual": "out.h5",
-                        "baseline": "ref/golden.h5",
-                        "rtol": 1e-5,
-                        "atol": 1e-8,
-                        "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
-                    }
-                ]
-            }
-        }
-    ]
-}
+```bash
+cli-test validate test_cases.json
 ```
 
-- `actual` – file produced by the command
-- `baseline` – reference file to compare against
-- `type` – comparator type (auto-detected from extension if omitted: `.h5`→h5, `.json`→json, `.csv`→csv, `.xml`→xml, `.txt`→text)
-- all other keys are forwarded as comparator parameters (`rtol`, `atol`, `tables`, `table_regex`, `data_filter`, `encoding`, `structure_only`, `delimiter`, `compare_mode`, `key_field`, etc.)
+## Numerical golden-file testing
 
-Multiple files and mixed assertion types coexist naturally:
+File comparisons can be part of a test's acceptance criteria. Comparator
+parameters such as tolerances, table selection, filters, and encodings are
+declared next to the command:
 
 ```json
 {
-    "expected": {
+  "test_cases": [
+    {
+      "name": "FEA displacement check",
+      "command": "my_solver",
+      "args": ["--input", "case1.dat", "--output", "out.h5"],
+      "expected": {
         "return_code": 0,
         "output_contains": ["simulation finished"],
         "compare_files": [
-            {"actual": "out.h5", "baseline": "ref/disp.h5", "rtol": 1e-5},
-            {"actual": "report.csv", "baseline": "ref/expected.csv", "rtol": 1e-6}
+          {
+            "actual": "out.h5",
+            "baseline": "ref/golden.h5",
+            "rtol": 1e-5,
+            "atol": 1e-8,
+            "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
+          },
+          {
+            "actual": "summary.csv",
+            "baseline": "ref/summary.csv",
+            "rtol": 1e-6
+          }
         ]
+      }
     }
+  ]
 }
 ```
 
-### Parallel Execution
+The comparator type is inferred from the extension when `type` is omitted.
+Built-in types are `text`, `json`, `csv`, `xml`, `h5`, `binary`, and `script`.
+Workspace comparators can be added without changing the framework.
+
+To intentionally accept changed outputs, use `--update-baseline`. Because this
+can overwrite reference files, interactive runs require typing `yes`;
+non-interactive runs must explicitly add `--yes`:
+
+```bash
+cli-test run test_cases.json --update-baseline
+cli-test run test_cases.json --update-baseline --yes   # automation / CI
+```
+
+Keep baselines under version control and review every update.
+
+## Multi-step and iterative workflows
+
+A case may contain an ordered `steps` list. Execution stops at the first failed
+step. For long workflows, `--resume` reuses saved state and skips steps that
+already passed:
+
+```bash
+cli-test run solver_tests.json
+cli-test run solver_tests.json --last-failed
+cli-test run solver_tests.json -t long_case --resume
+```
+
+`--resume` deliberately trusts that workspace artifacts have not changed
+between runs.
+
+## Large test suites and the optional TUI
+
+Large suites can be divided into sub-configurations:
+
+```json
+{
+  "test_cases": [
+    {"import": "cases/text_tests.json", "tags": ["text"]},
+    {"import": "cases/h5_tests.json", "tags": ["h5", "regression"]}
+  ]
+}
+```
+
+The optional TUI provides one searchable view across imported files. It is
+intended as an aid for locating cases and reviewing scenario coverage in large
+projects, rather than a requirement for normal test execution.
+
+```bash
+cli-test tui main_config.json
+```
+
+## Parallel execution and resources
 
 ```bash
 cli-test run test_cases.json --parallel --workers 4
+cli-test run test_cases.json --parallel --execution-mode process
 ```
 
-### Run Specific Cases
+Thread mode currently supports CPU-token allocation, solver thread environment
+variables, and longest-processing-time-first scheduling using estimates or
+runtime history. Process mode provides execution isolation but does not yet use
+the resource scheduler. Memory enforcement, priority semantics, and broader
+resource scheduling remain active areas of development.
+
+## CI and reports
 
 ```bash
-# By name
-cli-test run test_cases.json -t test_1 -t test_2
-
-# By tag
-cli-test run test_cases.json --tag smoke
-
-# Combine name and tag (AND logic)
-cli-test run test_cases.json -t test_1 --tag smoke
+cli-test run test_cases.json \
+  --parallel --workers 4 \
+  --junit-xml report.xml
 ```
 
-### JUnit XML (CI Integration)
+The current suite contains 750 unit, integration, and end-to-end tests with 83%
+line coverage. CI exercises Windows and Linux across Python 3.9 through 3.13.
 
-```bash
-cli-test run test_cases.json --junit-xml report.xml
-```
-
-In GitLab CI:
-
-```yaml
-# .gitlab-ci.yml
-artifacts:
-  reports:
-    junit: report.xml
-```
-
-### Python API
+## Python API
 
 ```python
 from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
 
-# Sequential
-runner = JSONRunner(config_file="test_cases.json")
-success = runner.run_tests()
+runner = ParallelJSONRunner(
+    config_file="test_cases.json",
+    max_workers=4,
+    execution_mode="thread",
+    history_dir="./hist",
+    variables={"solver": "/opt/solver/bin/solver"},
+)
 
-# Parallel
-runner = ParallelJSONRunner(config_file="test_cases.json", max_workers=4, execution_mode="thread")
 success = runner.run_tests()
+for detail in runner.results["details"]:
+    print(detail["name"], detail["status"], detail.get("duration"))
 ```
 
-### File Comparison (Standalone CLI)
+## Standalone file comparison
 
 ```bash
 compare-files result1.h5 result2.h5 --h5-table-regex "output_.*" --h5-rtol 1e-5
+compare-files data1.csv data2.csv --csv-rtol 1e-4 --csv-data-filter ">1e-6"
+compare-files data1.json data2.json --json-compare-mode key-based --json-key-field id
 ```
 
-📖 **Full Documentation**: [docs/user_manual.md](docs/user_manual_en.md)
+## AI-assisted TDD, as a side benefit
 
-## Changelog
+The same configuration can serve as a machine-readable acceptance contract.
+Structured validation failures, comparison details, and targeted reruns work
+well in an AI-assisted TDD loop:
 
-### 0.9.0
+```text
+define acceptance criteria
+    → run the relevant cases
+    → inspect the structured failure
+    → change the implementation
+    → rerun with --last-failed
+    → run the full regression suite
+```
 
-- **Tag filtering**: New `tags` field in test case definitions for categorization. Use `--tag` CLI option or `test_case_tag_filter` Python API to batch-filter test cases. Acts as OR within tags, AND with name filtering.
+This is a useful consequence of explicit tests and structured results, not a
+requirement for using the framework.
 
-### 0.8.0
+## Documentation
 
-- **JUnit XML output**: New `--junit-xml <filepath>` CLI option writes JUnit-format XML reports that integrate directly with GitLab CI, Jenkins, CircleCI, and other CI tools. Supports `passed` / `failed` / `timeout` / `error` status mapping. Zero extra dependencies — built with `xml.etree.ElementTree`.
+- [User manual](docs/user_manual_en.md)
+- [Design document](docs/design_en.md)
+- [Plugin examples](examples/plugins/README.md)
 
-### 0.7.0
+## Development
 
-- **Unified logging system**: All diagnostic output (executor, runner, scheduler, setup) now uses Python's standard `logging` module under the `cli_test_framework` namespace. Library users can suppress output entirely via `logging.getLogger("cli_test_framework").setLevel(logging.WARNING)`. Removes the previous ad-hoc `print()` + `_print_lock` pattern — `logging` is inherently thread-safe.
-- **Default handler**: A `StreamHandler` at INFO level is installed on first import, so CLI behavior is unchanged. Use `--verbose` / `--debug` to enable DEBUG-level output.
-- **Public API**: `get_logger(name)` exposed via `cli_test_framework.get_logger` for consistent logger creation in extensions.
-
-### 0.6.0
-
-- **Golden file assertion**: `compare_files` is now a first-class assertion in test `expected` — compare output files against baselines directly in your test definitions, with full tolerance and parameter support. The `file_comparator` subsystem is now integrated into the assertion pipeline, completing the closed loop from command execution to result verification.
-
-### 0.5.2
-
-- Runtime history tracking (`--history-dir`): persist per-case execution time in `.symtest`, enable smart scheduling & regression detection
-- Regression warning: alert when a case runs slower than historical average × threshold (`--regression-threshold`, default 1.5)
-- Smart scheduling: parallel runner prioritizes historical `avg_duration` over config `estimated_time` for task ordering
-- Per-case duration now shown in test result output
-
-### 0.5.1
-- Run specific test cases by name (`-t` / `test_case_filter`)
-
-### 0.5.0
-- Steps feature: sequential multi-command execution within a single test case, fail-fast
-
-### 0.4.2
-- Resource-aware scheduling: auto-detect CPU cores, semaphore-based core allocation
-- Auto-inject `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC` to prevent solver thread runaway
-- Per-test `timeout` support to prevent hanging
-
-### 0.4.1
-- Multi-thread / multi-process parallel execution, 3-5x speedup
-
-## Contributing
-
-Before submitting a PR, please make sure all tests pass:
+Install the package with all optional and test dependencies:
 
 ```bash
-python tests\run_all.py
+pip install -e ".[dev]"
+python -m pytest tests/unit tests/integration tests/e2e
 ```
+
+Bug fixes, comparator plugins, documentation improvements, and reports from
+real-world test workflows are welcome.
 
 ## License
 

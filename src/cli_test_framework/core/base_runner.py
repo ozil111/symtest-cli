@@ -7,7 +7,9 @@ from .test_case import TestCase
 from .assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
 from .execution import execute_single_test_case
-from .history_store import load_history, update_case, check_regression, save_history
+from .history_store import load_history, update_case, check_regression, save_history, reset_cases
+from .last_run_store import update_last_run, get_last_failed_names
+from ..file_comparator.factory import ComparatorFactory
 
 logger = logging.getLogger("cli_test_framework.core.base_runner")
 
@@ -16,7 +18,13 @@ class BaseRunner(ABC):
                  test_case_filter: Optional[List[str]] = None,
                  test_case_tag_filter: Optional[List[str]] = None,
                  history_dir: Optional[str] = None,
-                 regression_threshold: float = 1.5):
+                 regression_threshold: float = 1.5,
+                 update_baseline: bool = False,
+                 update_history: bool = False,
+                 error_analysis: bool = False,
+                 last_failed: bool = False,
+                 resume: bool = False,
+                 plugin_dirs: Optional[List[str]] = None):
         if workspace:
             self.workspace = Path(workspace)
         else:
@@ -34,10 +42,25 @@ class BaseRunner(ABC):
         else:
             self.history_dir = None
         self.regression_threshold = regression_threshold
+        self.update_baseline = update_baseline
+        self.update_history = update_history
+        self.error_analysis = error_analysis
+        self.last_failed = last_failed
+        self.resume = resume
+
+        # --- workspace plugin directories ---
+        resolved_plugin_dirs: List[str] = list(plugin_dirs) if plugin_dirs else []
+        default_plugin_dir = self.workspace / "comparators"
+        if default_plugin_dir.is_dir() and str(default_plugin_dir.resolve()) not in resolved_plugin_dirs:
+            resolved_plugin_dirs.append(str(default_plugin_dir.resolve()))
+        ComparatorFactory.set_plugin_dirs(resolved_plugin_dirs)
         self.results: Dict[str, Any] = {
             "total": 0,
             "passed": 0,
             "failed": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "updated": 0,
             "details": []
         }
         self.assertions = Assertions()
@@ -65,7 +88,21 @@ class BaseRunner(ABC):
         #         pass
 
     def _apply_test_case_filter(self) -> None:
-        """根据 test_case_filter 和 test_case_tag_filter 过滤测试用例"""
+        """根据 test_case_filter / test_case_tag_filter / --last-failed 过滤测试用例"""
+        if self.last_failed and not self.test_case_filter:
+            ws = str(self.workspace) if self.workspace else str(Path.cwd())
+            failed_names = get_last_failed_names(ws)
+            if failed_names:
+                logger.info(
+                    "--last-failed: filtering to %d previously failed case(s): %s",
+                    len(failed_names), ", ".join(failed_names),
+                )
+                self.test_case_filter = (
+                    (self.test_case_filter or []) + failed_names
+                )
+            else:
+                logger.info("--last-failed: no previously failed cases found; running all.")
+
         if self.test_case_filter or self.test_case_tag_filter:
             original_count = len(self.test_cases)
             self.test_cases = [
@@ -104,36 +141,139 @@ class BaseRunner(ABC):
             for i, case in enumerate(self.test_cases, 1):
                 logger.info("Running test %d/%d: %s", i, self.results["total"], case.name)
                 result = self.run_single_test(case)
+                
+                # Apply xfail status mapping before counting
+                self._apply_xfail_status(result, case)
+
+                # ── Echo expected / description / tags ──
+                result["expected"] = case.expected if case.expected else None
+                result["description"] = case.description or None
+                result["tags"] = case.tags or []
+                self._fill_hint_command(result, case.name)
+
                 self.results["details"].append(result)
                 duration = result.get("duration", 0)
-                if result["status"] == "passed":
+                status = result["status"]
+                if status == "passed":
                     self.results["passed"] += 1
-                    logger.info("✓ Test passed: %s (%.2fs)", case.name, duration)
+                    # Check for baseline updates
+                    if result.get("baseline_updated"):
+                        self.results["updated"] += 1
+                        logger.info("✓ Test passed (baseline updated): %s (%.2fs)", case.name, duration)
+                    elif result.get("flaky"):
+                        logger.info("✓ Test passed (flaky, %d attempts): %s (%.2fs)",
+                                    result.get("attempts", 1), case.name, duration)
+                    else:
+                        logger.info("✓ Test passed: %s (%.2fs)", case.name, duration)
+                elif status == "xfailed":
+                    self.results["xfailed"] += 1
+                    attempt_info = f" ({result.get('attempts', 1)} attempts)" if result.get("attempts", 1) > 1 else ""
+                    logger.info("✓ Test xfailed (expected)%s: %s (%.2fs)", attempt_info, case.name, duration)
+                    if result.get("message"):
+                        logger.info("  Reason: %s", result.get("xfail_reason", ""))
+                        logger.info("  Detail: %s", result["message"])
+                elif status == "xpassed":
+                    self.results["xpassed"] += 1
+                    self.results["failed"] += 1
+                    logger.error("✗ Test xpassed (unexpected!): %s (%.2fs)", case.name, duration)
+                    if result.get("message"):
+                        logger.error("  Error: %s", result["message"])
+                    logger.warning("  [XPass] Marked as expected_failure but passed — remove the xfail marker.")
                 else:
                     self.results["failed"] += 1
-                    logger.error("✗ Test failed: %s (%.2fs)", case.name, duration)
+                    if result.get("flaky"):
+                        logger.error("✗ Test failed (%d attempts): %s (%.2fs)",
+                                     result.get("attempts", 1), case.name, duration)
+                    else:
+                        logger.error("✗ Test failed: %s (%.2fs)", case.name, duration)
                     if result["message"]:
                         logger.error("  Error: %s", result["message"])
                     
             total_duration = time.time() - total_start_time
             logger.info("=" * 50)
-            logger.info("Test execution completed in %.2fs. Passed: %d, Failed: %d",
-                        total_duration, self.results["passed"], self.results["failed"])
+            logger.info(
+                "Test execution completed in %.2fs. "
+                "Passed: %d, Failed: %d, XFailed: %d, XPassed: %d",
+                total_duration,
+                self.results["passed"], self.results["failed"],
+                self.results["xfailed"], self.results["xpassed"],
+            )
 
             # Update history & regression detection
             self._update_history()
 
-            return self.results["failed"] == 0
+            # Save last-run state for --last-failed
+            self._save_last_run()
+
+            # Exit-code rule: failed + xpassed > 0 → non-zero
+            return self.results["failed"] == 0 and self.results["xpassed"] == 0
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
 
+    def _fill_hint_command(self, result: Dict[str, Any], case_name: str) -> None:
+        """Fill in the concrete CLI command inside ``next_action_hint``.
+
+        The execution layer attaches the hint with ``command=None`` because it
+        does not know the config file path; the runner does.
+        """
+        hint = result.get("next_action_hint")
+        if not hint or hint.get("command"):
+            return
+        config = str(self.config_path)
+        if hint.get("action") == "update_baseline":
+            hint["command"] = (
+                f'cli-test run "{config}" --update-baseline -t "{case_name}"'
+            )
+        else:
+            hint["command"] = f'cli-test run "{config}" -t "{case_name}"'
+
+    def _apply_xfail_status(self, result: Dict[str, Any], case: "TestCase") -> None:
+        """Apply xfail (expected failure) status mapping to a test result.
+
+        When ``case.expected_failure`` is True:
+        - ``passed`` → ``xpassed`` (unexpected pass; counts as a suite failure)
+        - any non-passed status → ``xfailed`` (expected failure; not a failure)
+
+        The ``xfail_reason`` from the case is attached to the result dict so the
+        report can display it.
+        """
+        if not getattr(case, "expected_failure", False):
+            return
+        xfail_reason = getattr(case, "xfail_reason", "") or ""
+        result["xfail_reason"] = xfail_reason
+        result["xfail_quiet"] = getattr(case, "xfail_quiet", False)
+        if result.get("status") == "passed":
+            result["status"] = "xpassed"
+        else:
+            result["status"] = "xfailed"
+
+    def _save_last_run(self) -> None:
+        """Persist per-case status for ``--last-failed`` support."""
+        ws = str(self.workspace) if self.workspace else str(Path.cwd())
+        update_last_run(ws, self.results["details"])
+
     def _update_history(self) -> None:
-        """Update .symtest history with current run results and check for regressions."""
+        """Update .symtest history with successful run results and check for regressions."""
         if not self.history_dir:
             return
         history = load_history(self.history_dir)
+
+        if self.update_history:
+            run_names = {r["name"] for r in self.results["details"]}
+            cleared = reset_cases(history, run_names)
+            if cleared:
+                logger.info(
+                    "History reset: cleared %d case(s) before recording this run",
+                    cleared,
+                )
+                self.results["history_reset"] = True
+                self.results["history_cleared"] = cleared
+
         for result in self.results["details"]:
+            # Only record successful cases in history; skip failed ones
+            if result["status"] != "passed":
+                continue
             duration = result.get("duration", 0)
             # Check regression BEFORE updating (compare against old avg)
             warning = check_regression(history, result["name"], duration, self.regression_threshold)
@@ -149,6 +289,8 @@ class BaseRunner(ABC):
             case_name=case.name,
             steps=case.steps,
             workspace=str(self.workspace) if self.workspace else None,
+            case_expected=case.expected if case.expected else None,
+            resume=self.resume,
         )
 
     @abstractmethod

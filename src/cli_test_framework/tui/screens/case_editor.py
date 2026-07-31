@@ -90,6 +90,8 @@ class CaseEditorScreen(Screen):
                 TextArea("", id="case-description"),
                 Label("Timeout (seconds):", id="timeout-label"),
                 Input(placeholder="", id="case-timeout"),
+                Label("Retry count:", id="retry-label"),
+                Input(placeholder="0", id="case-retry-count"),
                 ExpectedEditor(id="expected-editor"),
                 StepsEditor(id="steps-editor"),
                 id="editor-fields",
@@ -127,6 +129,7 @@ class CaseEditorScreen(Screen):
         self.query_one("#case-tags", Input).value = ",".join(tc.tags) if tc.tags else ""
         self.query_one("#case-description", TextArea).text = tc.description or ""
         self.query_one("#case-timeout", Input).value = str(tc.timeout) if tc.timeout else ""
+        self.query_one("#case-retry-count", Input).value = str(tc.retry_count) if tc.retry_count else ""
 
         self.query_one("#expected-editor", ExpectedEditor).load(tc.expected or {})
 
@@ -147,16 +150,23 @@ class CaseEditorScreen(Screen):
         timeout_text = self.query_one("#case-timeout", Input).value.strip()
         timeout = float(timeout_text) if timeout_text else None
 
+        retry_text = self.query_one("#case-retry-count", Input).value.strip()
+        retry_count = int(retry_text) if retry_text else 0
+
         description = self.query_one("#case-description", TextArea).text.strip()
 
         if self._is_sequence:
             steps = self.query_one("#steps-editor", StepsEditor).to_steps()
+            expected = self.query_one("#expected-editor", ExpectedEditor).to_dict()
             return TestCase(
                 name=name,
                 steps=steps,
+                expected=expected,
                 description=description or "",
+                timeout=timeout,
                 resources=self._case.resources if self._case else None,
                 tags=tags,
+                retry_count=retry_count,
             )
         else:
             command = self.query_one("#case-command", Input).value.strip()
@@ -173,6 +183,7 @@ class CaseEditorScreen(Screen):
                 timeout=timeout,
                 resources=self._case.resources if self._case else None,
                 tags=tags,
+                retry_count=retry_count,
             )
 
     def _update_mode_visibility(self) -> None:
@@ -194,7 +205,7 @@ class CaseEditorScreen(Screen):
             args_label.display = False
             cmd_input.display = False
             args_input.display = False
-            expected.display = False
+            expected.display = True
             steps.display = True
             switch_btn.label = "Switch to Single"
         else:

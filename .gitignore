@@ -20,7 +20,8 @@ dist_package
 
 build
 test_output.txt
+/tests/test_report.txt
 /.codebuddy/rules
-src/cli_test_framework/file_comparator/__pycache__/json_comparator.cpython-312.pyc
-/src/cli_test_framework/file_comparator/__pycache__
 .coverage
+case/
+*.egg-info/

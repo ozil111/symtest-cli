@@ -286,16 +286,21 @@ class TestTestCaseStepDataclass(unittest.TestCase):
     def test_test_case_to_dict_with_steps(self):
         steps = [
             TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
+            TestCaseStep(command="echo", args=["b"], expected={"return_code": 0}, retry_count=2),
         ]
-        case = TestCase(name="seq", steps=steps)
+        case = TestCase(name="seq", steps=steps, retry_count=3)
         d = case.to_dict()
         self.assertIn("steps", d)
         self.assertEqual(d["steps"][0]["command"], "echo")
+        self.assertEqual(d["steps"][0]["retry_count"], 0)
+        self.assertEqual(d["steps"][1]["retry_count"], 2)
+        self.assertEqual(d["retry_count"], 3)
 
     def test_test_case_to_dict_without_steps(self):
-        case = TestCase(name="s", command="echo", args=["x"], expected={"return_code": 0})
+        case = TestCase(name="s", command="echo", args=["x"], expected={"return_code": 0}, retry_count=5)
         d = case.to_dict()
         self.assertNotIn("steps", d)
+        self.assertEqual(d["retry_count"], 5)
 
 
 if __name__ == "__main__":

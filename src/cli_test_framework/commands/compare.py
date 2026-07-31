@@ -49,6 +49,11 @@ def parse_arguments():
                          help="CSV field delimiter (default: comma)")
     csv_group.add_argument("--csv-quotechar", default='"',
                          help="Character used for quoting fields in CSV (default: double quote)")
+    csv_group.add_argument("--csv-data-filter", type=str,
+                         help="Data filter to apply before comparison. "
+                              "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
+                              "Filters out numeric cells that do not meet the criteria "
+                              "from BOTH files before comparison.")
 
     # JSON comparison options
     json_group = parser.add_argument_group('JSON comparison options')
@@ -159,6 +164,8 @@ def run_comparison(args, logger=None):
         comparator_kwargs["atol"] = args.csv_atol
         comparator_kwargs["delimiter"] = args.csv_delimiter
         comparator_kwargs["quotechar"] = args.csv_quotechar
+        if args.csv_data_filter:
+            comparator_kwargs["data_filter"] = args.csv_data_filter
 
     if file_type == "h5":
         if args.h5_table:

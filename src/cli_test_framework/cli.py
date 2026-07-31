@@ -34,10 +34,43 @@ def _parse_vars(var_list):
     return variables
 
 
+def _confirm_baseline_update(args) -> bool:
+    """Require an explicit confirmation before baseline files may be replaced.
+
+    Interactive CLI users type ``yes``. Automation must pass ``--yes`` so a
+    non-interactive process never hangs while waiting for input.
+    """
+    if not getattr(args, 'update_baseline', False):
+        return True
+    if getattr(args, 'yes', False):
+        return True
+
+    if not sys.stdin.isatty():
+        logger.error(
+            "--update-baseline can overwrite reference files. "
+            "Re-run with --yes in non-interactive environments."
+        )
+        return False
+
+    try:
+        response = input(
+            "WARNING: --update-baseline may overwrite reference files when "
+            "comparisons fail.\nType 'yes' to continue: "
+        )
+    except (EOFError, KeyboardInterrupt):
+        logger.warning("Baseline update cancelled.")
+        return False
+
+    if response.strip().lower() != "yes":
+        logger.warning("Baseline update cancelled.")
+        return False
+    return True
+
+
 def create_parser():
     """Create and configure the argument parser"""
     parser = argparse.ArgumentParser(
-        description="CLI Testing Framework - A powerful tool for testing command-line applications",
+        description="Regression testing for command-line applications and scientific workflows",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -80,6 +113,28 @@ Examples:
                            help='Set a variable for config placeholder substitution, '
                                 'e.g. --var solver=/path/to/solver '
                                 '(can be used multiple times)')
+    run_parser.add_argument('--last-failed', action='store_true',
+                           help='Run only test cases that failed in the previous run')
+    run_parser.add_argument('--update-baseline', action='store_true',
+                           help='On comparison failure, overwrite baseline files with actual output')
+    run_parser.add_argument('--yes', '-y', action='store_true',
+                           help='Confirm potentially destructive actions without prompting '
+                                '(required with --update-baseline in non-interactive environments)')
+    run_parser.add_argument('--update-history', action='store_true',
+                           help='Clear .symtest runtime history for run-involved cases before '
+                                'recording this run (requires --history-dir)')
+    run_parser.add_argument('--resume', action='store_true',
+                           help='Resume sequence test cases from last failed step '
+                                '(trusts workspace artifacts are unchanged)')
+    run_parser.add_argument('--error-analysis', action='store_true',
+                           help='Enable streaming error statistics for numerical file comparisons '
+                                '(CSV/H5): total_numeric_cells, mismatched_cells, '
+                                'max_abs/rel_error, mean/rms_abs_error')
+    run_parser.add_argument('--plugin-dir', action='append', default=None,
+                           dest='plugin_dirs',
+                           help='Add a directory for workspace-level comparator plugins '
+                                '(can be used multiple times). '
+                                'The workspace/comparators/ directory is always auto-detected.')
 
     # ---- TUI command ----
     tui_parser = subparsers.add_parser(
@@ -91,6 +146,23 @@ Examples:
     tui_parser.add_argument(
         '--workspace', '-w', help='Working directory'
     )
+    tui_parser.add_argument(
+        '--update-baseline', action='store_true',
+        help='On comparison failure, overwrite baseline files with actual output'
+    )
+    tui_parser.add_argument(
+        '--yes', '-y', action='store_true',
+        help='Confirm baseline updates without prompting'
+    )
+    tui_parser.add_argument(
+        '--history-dir',
+        help='Directory for .symtest runtime history (enables regression detection per case)'
+    )
+    tui_parser.add_argument(
+        '--update-history', action='store_true',
+        help='Clear .symtest runtime history for run-involved cases before '
+             'recording this run (requires --history-dir)'
+    )
 
     # ---- Validate command ----
     validate_parser = subparsers.add_parser(
@@ -101,6 +173,17 @@ Examples:
     )
     validate_parser.add_argument(
         '--workspace', '-w', help='Working directory'
+    )
+    validate_parser.add_argument(
+        '--output-format', choices=['text', 'json'], default='text',
+        help='Output format for validation results (default: text)'
+    )
+
+    # ---- Schema command ----
+    subparsers.add_parser(
+        'schema',
+        help='Print the JSON Schema for test configuration files '
+             '(machine-readable contract for generating configs)',
     )
 
     # ---- Compare command ----
@@ -131,6 +214,11 @@ Examples:
     csv_group.add_argument('--csv-delimiter', default=',', help='CSV field delimiter (default: comma)')
     csv_group.add_argument('--csv-quotechar', default='"',
                           help='Character used for quoting fields in CSV (default: double quote)')
+    csv_group.add_argument('--csv-data-filter', type=str,
+                          help='Data filter to apply before comparison. '
+                               "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
+                               'Filters out numeric cells that do not meet the criteria '
+                               'from BOTH files before comparison.')
 
     # JSON comparison options
     json_group = compare_parser.add_argument_group('JSON comparison options')
@@ -170,6 +258,9 @@ def run_tests(args):
         logger.error("Configuration file not found: %s", config_file)
         return False
 
+    if not _confirm_baseline_update(args):
+        return False
+
     # Determine file type
     file_ext = config_file.suffix.lower()
 
@@ -179,6 +270,12 @@ def run_tests(args):
     regression_threshold = getattr(args, 'regression_threshold', 1.5)
     var_list = getattr(args, 'var', [])
     variables = _parse_vars(var_list)
+    update_baseline = getattr(args, 'update_baseline', False)
+    update_history = getattr(args, 'update_history', False)
+    error_analysis = getattr(args, 'error_analysis', False)
+    last_failed = getattr(args, 'last_failed', False)
+    resume = getattr(args, 'resume', False)
+    plugin_dirs = getattr(args, 'plugin_dirs', None)
 
     try:
         if args.parallel:
@@ -194,6 +291,12 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
+                    last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -206,6 +309,12 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
+                    last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
@@ -221,6 +330,12 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
+                    last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = YAMLRunner(
@@ -231,6 +346,12 @@ def run_tests(args):
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
+                    update_baseline=update_baseline,
+                    update_history=update_history,
+                    error_analysis=error_analysis,
+                    last_failed=last_failed,
+                    resume=resume,
+                    plugin_dirs=plugin_dirs,
                 )
             else:
                 logger.error("Unsupported configuration file format: %s", file_ext)
@@ -280,6 +401,13 @@ def _format_results_html(results, text_report):
     """Format test results as a basic HTML page."""
     escaped_report = text_report.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     pass_pct = (results['passed'] / max(results['total'], 1)) * 100
+    xfailed = results.get('xfailed', 0)
+    xpassed = results.get('xpassed', 0)
+    extras = ""
+    if xfailed:
+        extras += f" | XFailed: <span class=\"xfailed\">{xfailed}</span>"
+    if xpassed:
+        extras += f" | XPassed: <span class=\"xpassed\">{xpassed} (unexpected!)</span>"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -290,13 +418,15 @@ def _format_results_html(results, text_report):
   .summary {{ margin-bottom: 1em; }}
   .passed {{ color: green; }}
   .failed {{ color: red; }}
+  .xfailed {{ color: orange; }}
+  .xpassed {{ color: red; font-weight: bold; }}
   pre {{ background: #f5f5f5; padding: 1em; border-radius: 4px; }}
 </style>
 </head>
 <body>
 <h1>CLI Test Results</h1>
 <div class="summary">
-  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span></p>
+  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span>{extras}</p>
   <p>Pass rate: {pass_pct:.1f}%</p>
 </div>
 <pre>{escaped_report}</pre>
@@ -315,7 +445,17 @@ def run_tui(args):
     """Launch the TUI manager."""
     from .tui.app import run_tui as _run_tui
 
-    _run_tui(args.config_file, args.workspace)
+    if not _confirm_baseline_update(args):
+        return False
+
+    update_baseline = getattr(args, 'update_baseline', False)
+    history_dir = getattr(args, 'history_dir', None)
+    update_history = getattr(args, 'update_history', False)
+    _run_tui(args.config_file, args.workspace,
+             update_baseline=update_baseline,
+             history_dir=history_dir,
+             update_history=update_history)
+    return True
 
 
 def run_validate(args):
@@ -332,25 +472,43 @@ def run_validate(args):
     logger.info("Validating configuration: %s", config_file)
     report = validate_config(config_file, args.workspace)
 
-    # Print summary
-    summary = report["summary"]
-    print(f"\n  [OK] Loaded {summary['cases']} test cases from {summary['files']} file(s)\n")
+    output_format = getattr(args, 'output_format', 'text')
 
-    if report["errors"]:
-        for err in report["errors"]:
-            print(f"  [FAIL] {err}")
-        print()
+    if output_format == 'json':
+        print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
-        print("  [OK] All required fields present")
-        print("  [OK] No circular imports detected")
+        # Print summary
+        summary = report["summary"]
+        print(f"\n  [OK] Loaded {summary['cases']} test cases from {summary['files']} file(s)\n")
 
-    if summary.get("files_loaded"):
-        print("\n  Files:")
-        for f in summary["files_loaded"]:
-            print(f"    - {f}")
-    print()
+        if report["errors"]:
+            for err in report["errors"]:
+                print(f"  [FAIL] {err}")
+            print()
+        else:
+            print("  [OK] All required fields present")
+            print("  [OK] No circular imports detected")
+
+        if report.get("warnings"):
+            print()
+            for warn in report["warnings"]:
+                print(f"  [WARN] {warn}")
+            print()
+
+        if summary.get("files_loaded"):
+            print("\n  Files:")
+            for f in summary["files_loaded"]:
+                print(f"    - {f}")
+        print()
 
     return report["valid"]
+
+
+def run_schema() -> None:
+    """Print the JSON Schema for test configuration files."""
+    from .config.config_schema import get_config_schema
+
+    print(json.dumps(get_config_schema(), indent=2, ensure_ascii=False))
 
 
 def main():
@@ -366,12 +524,19 @@ def main():
 
     if args.command == 'run':
         success = run_tests(args)
+        # 0 = all passed, 1 = test failures, 2 = config/framework errors
         sys.exit(0 if success else 1)
     elif args.command == 'tui':
-        run_tui(args)
+        success = run_tui(args)
+        if success is False:
+            sys.exit(1)
     elif args.command == 'validate':
         success = run_validate(args)
+        # 0 = valid, 1 = validation errors found
         sys.exit(0 if success else 1)
+    elif args.command == 'schema':
+        run_schema()
+        sys.exit(0)
     elif args.command == 'compare':
         success = run_compare(args)
         sys.exit(0 if success else 1)

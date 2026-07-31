@@ -27,7 +27,7 @@ class ResourceRequirements(TypedDict, total=False):
     cpu_cores: int  # number of CPU cores required by this task
 
 
-class TestCaseData(TypedDict):
+class TestCaseData(TypedDict, total=False):
     """Input data shape for a test case after解析/路径处理."""
 
     name: str
@@ -37,6 +37,10 @@ class TestCaseData(TypedDict):
     description: Optional[str]
     timeout: Optional[float]
     resources: Optional[ResourceRequirements]
+    retry_count: int
+    expected_failure: bool
+    xfail_reason: Optional[str]
+    xfail_quiet: bool
 
 
 class SetupConfig(TypedDict):
@@ -56,10 +60,33 @@ class TestResultData(TypedDict):
     """Normalized result produced by executing a single test case."""
 
     name: str
-    status: str  # 'passed', 'failed'
+    status: str  # 'passed', 'failed', 'timeout'
     message: str
     command: str
     output: str
     return_code: Optional[int]
     duration: float
+    # ── New fields (optional, backward-compatible) ──
+    expected: Optional[Dict[str, Any]]
+    description: Optional[str]
+    tags: List[str]
+    failure_kind: Optional[str]  # 'return_code' | 'output_contains' | 'output_matches' | 'file_compare' | 'timeout' | 'execution_error'
+    attempts: int
+    flaky: bool
+    attempt_history: List[Dict[str, Any]]
+    step_results: List[Dict[str, Any]]
+    compare_failures: List[Dict[str, Any]]
+    baseline_updated: List[str]
+    failed_step: Optional[int]
+    # ── Structured output channels (split from combined ``output``) ──
+    stdout: str
+    stderr: str
+    # ── Per-assertion pass/fail detail (populated on both pass and failure) ──
+    assertion_results: List[Dict[str, Any]]
+    xfail_reason: Optional[str]
+    # ── Structured remediation suggestion (populated on failure) ──
+    # Dict with: action ('update_baseline' | 'update_expected' | 'increase_timeout'
+    # | 'investigate'), command (concrete cli-test command, filled by runners),
+    # reason (human/AI-readable explanation).
+    next_action_hint: Optional[Dict[str, Any]]
 

@@ -81,6 +81,7 @@ class ParallelRunner(BaseRunner):
     def __init__(self, config_file: str, workspace: Optional[str] = None, 
                  max_workers: Optional[int] = None, 
                  execution_mode: str = "thread",
+                 error_analysis: bool = False,
                  **kwargs):
         """
         初始化并行运行器
@@ -96,6 +97,7 @@ class ParallelRunner(BaseRunner):
         super().__init__(config_file, workspace, **kwargs)
         self.max_workers = max_workers
         self.execution_mode = execution_mode
+        self.error_analysis = error_analysis
         self.lock = threading.Lock()  # 用于线程安全的结果更新
         
     def run_tests(self) -> bool:
@@ -138,17 +140,22 @@ class ParallelRunner(BaseRunner):
                                 "expected": case.expected,
                                 "timeout": case.timeout,
                                 "resources": case.resources,
+                                "retry_count": case.retry_count,
                                 "steps": [
                                     {
                                         "command": s.command,
                                         "args": s.args,
                                         "expected": s.expected,
                                         "timeout": s.timeout,
+                                        "retry_count": s.retry_count,
                                     }
                                     for s in case.steps
                                 ] if case.steps else None,
                             },
-                            str(self.workspace) if self.workspace else None
+                            str(self.workspace) if self.workspace else None,
+                            update_baseline=self.update_baseline,
+                            error_analysis=self.error_analysis,
+                            resume=self.resume,
                         ): (i, case) 
                         for i, case in enumerate(self.test_cases, 1)
                     }
@@ -180,13 +187,23 @@ class ParallelRunner(BaseRunner):
             execution_time = end_time - start_time
             
             logger.info("=" * 50)
-            logger.info("Parallel test execution completed in %.2f seconds", execution_time)
-            logger.info("Passed: %d, Failed: %d", self.results["passed"], self.results["failed"])
+            logger.info(
+                "Parallel test execution completed in %.2f seconds", execution_time,
+            )
+            logger.info(
+                "Passed: %d, Failed: %d, XFailed: %d, XPassed: %d",
+                self.results["passed"], self.results["failed"],
+                self.results["xfailed"], self.results["xpassed"],
+            )
 
             # Update history & regression detection
             self._update_history()
 
-            return self.results["failed"] == 0
+            # Save last-run state for --last-failed
+            self._save_last_run()
+
+            # Exit-code rule: failed + xpassed > 0 → non-zero
+            return self.results["failed"] == 0 and self.results["xpassed"] == 0
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
@@ -200,11 +217,28 @@ class ParallelRunner(BaseRunner):
     def _update_results(self, result: Dict[str, Any], test_index: int, case: TestCase) -> None:
         """线程安全地更新测试结果"""
         with self.lock:
+            # Apply xfail status mapping before counting
+            self._apply_xfail_status(result, case)
+
+            self._fill_hint_command(result, case.name)
             self.results["details"].append(result)
             duration = result.get("duration", 0)
-            if result["status"] == "passed":
+            status = result["status"]
+            if status == "passed":
                 self.results["passed"] += 1
                 logger.info("✓ Test %d passed: %s (%.2fs)", test_index, case.name, duration)
+            elif status == "xfailed":
+                self.results["xfailed"] += 1
+                logger.info("✓ Test %d xfailed (expected): %s (%.2fs)", test_index, case.name, duration)
+                if result.get("message"):
+                    logger.info("  Detail: %s", result["message"])
+            elif status == "xpassed":
+                self.results["xpassed"] += 1
+                self.results["failed"] += 1
+                logger.error("✗ Test %d xpassed (unexpected!): %s (%.2fs)", test_index, case.name, duration)
+                if result.get("message"):
+                    logger.error("  Error: %s", result["message"])
+                logger.warning("  [XPass] Marked as expected_failure but passed — remove the xfail marker.")
             else:
                 self.results["failed"] += 1
                 logger.error("✗ Test %d failed: %s (%.2fs)", test_index, case.name, duration)

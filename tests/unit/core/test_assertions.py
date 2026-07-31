@@ -54,13 +54,15 @@ def test_detect_file_type_unknown_extension():
 def test_compare_files_identical_text():
     with tempfile.TemporaryDirectory() as d:
         a, b = _write_two(d, "a.txt", "b.txt", "hello\nworld\n")
-        assert Assertions.compare_files(a, b, file_type="text") is True
+        result = Assertions.compare_files(a, b, file_type="text")
+        assert result["identical"] is True
 
 
 def test_compare_files_identical_auto_detect():
     with tempfile.TemporaryDirectory() as d:
         a, b = _write_two(d, "a.txt", "b.txt", "same\n")
-        assert Assertions.compare_files(a, b) is True  # auto from .txt
+        result = Assertions.compare_files(a, b)  # auto from .txt
+        assert result["identical"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -107,12 +109,10 @@ def test_compare_files_resolves_relative_paths():
     with tempfile.TemporaryDirectory() as d:
         _write_two(d, "actual.txt", "baseline.txt", "same\n")
         # relative paths
-        assert (
-            Assertions.compare_files(
-                "actual.txt", "baseline.txt", workspace=d, file_type="text"
-            )
-            is True
+        result = Assertions.compare_files(
+            "actual.txt", "baseline.txt", workspace=d, file_type="text"
         )
+        assert result["identical"] is True
 
 
 def test_compare_files_does_not_override_absolute_paths():
@@ -124,10 +124,8 @@ def test_compare_files_does_not_override_absolute_paths():
         with open(b, "w") as f:
             f.write("same\n")
         # workspace is passed but paths are already absolute
-        assert (
-            Assertions.compare_files(a, b, workspace="/nonexistent", file_type="text")
-            is True
-        )
+        result = Assertions.compare_files(a, b, workspace="/nonexistent", file_type="text")
+        assert result["identical"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +137,8 @@ def test_compare_files_passes_kwargs_to_comparator():
     with tempfile.TemporaryDirectory() as d:
         a, b = _write_two(d, "a.txt", "b.txt", "same\n")
         # rtol / atol are H5-specific; TextComparator ignores unknown kwargs
-        assert Assertions.compare_files(a, b, file_type="text", rtol=1e-5, atol=1e-8)
+        result = Assertions.compare_files(a, b, file_type="text", rtol=1e-5, atol=1e-8)
+        assert result["identical"]
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +166,16 @@ def test_validate_result_compare_files_passes():
             _mini_result(),
             workspace=d,
         )
-        assert result is None  # no exception → pass
+        # no exception → pass; returns per-assertion detail
+        assert result == [
+            {
+                "assertion": "compare_files",
+                "passed": True,
+                "compare_failures": [],
+                "baseline_updated": [],
+                "message": "",
+            }
+        ]
 
 
 def test_validate_result_compare_files_fails():
@@ -225,7 +233,10 @@ def test_validate_result_no_compare_files_still_works():
         {"return_code": 0, "output_contains": ["hello"]},
         _mini_result(output="hello world", return_code=0),
     )
-    assert result is None
+    assert result == [
+        {"assertion": "return_code", "passed": True},
+        {"assertion": "output_contains", "passed": True, "text": "hello"},
+    ]
 
 
 def test_validate_result_compare_files_with_existing_assertions():
@@ -256,7 +267,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
 
     def fake_compare_files(_self, actual_path, baseline_path, file_type, workspace, **kwargs):
         calls.append((actual_path, baseline_path, file_type, workspace, kwargs))
-        return True
+        return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
         "cli_test_framework.core.execution.Assertions.compare_files",
@@ -281,7 +292,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
     assert baseline_path == "ref.h5"
     assert file_type == "h5"
     assert workspace == "/ws"
-    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0"}
+    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False, "error_analysis": False}
 
 
 def test_dispatch_omits_type_when_absent(monkeypatch):
@@ -289,7 +300,7 @@ def test_dispatch_omits_type_when_absent(monkeypatch):
 
     def fake_compare_files(_self, actual_path, baseline_path, file_type, workspace=None, **kwargs):
         calls.append((actual_path, baseline_path, file_type))
-        return True
+        return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
         "cli_test_framework.core.execution.Assertions.compare_files",
@@ -318,3 +329,83 @@ def _write_two(tmpdir, name_a, name_b, content_a, content_b=None):
     with open(pb, "w") as f:
         f.write(content_b)
     return pa, pb
+
+
+# ---------------------------------------------------------------------------
+# Assertions.compare_files – start_line / end_line / start_column / end_column
+# ---------------------------------------------------------------------------
+
+
+def test_compare_files_passes_start_line_to_comparator():
+    """start_line is extracted from kwargs, 1-based→0-based, passed to
+    comparator.compare_files() as method-level param."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _write_two(d, "a.txt", "b.txt", "line1\nline2\nline3\n")
+        # start_line=2 (1-based) → line index 1 (0-based) → skip "line1"
+        result = Assertions.compare_files(a, b, file_type="text", start_line=2)
+        assert result["identical"] is True
+
+
+def test_compare_files_passes_start_line_and_end_line():
+    with tempfile.TemporaryDirectory() as d:
+        a = os.path.join(d, "a.txt")
+        b = os.path.join(d, "b.txt")
+        content_a = "line1\nline2\nline3\nline4\n"
+        content_b = "line1\ndifferent\nline3\nline4\n"
+        with open(a, "w") as f:
+            f.write(content_a)
+        with open(b, "w") as f:
+            f.write(content_b)
+        # line 2 differs but start_line=3, end_line=4 → only compare 3-4
+        result = Assertions.compare_files(
+            a, b, file_type="text", start_line=3, end_line=4
+        )
+        assert result["identical"] is True
+
+
+def test_compare_files_start_line_detects_diff_in_range():
+    with tempfile.TemporaryDirectory() as d:
+        a = os.path.join(d, "a.txt")
+        b = os.path.join(d, "b.txt")
+        with open(a, "w") as f:
+            f.write("A1\nB1\nC1\n")
+        with open(b, "w") as f:
+            f.write("A2\nB2\nC2\n")
+        # Only compare line 1 → should differ
+        with pytest.raises(AssertionError, match="File comparison failed"):
+            Assertions.compare_files(
+                a, b, file_type="text", start_line=1, end_line=1
+            )
+
+
+def test_compare_files_start_column_and_end_column():
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _write_two(d, "a.txt", "b.txt", "abcdef\n")
+        # start_column=3, end_column=4 → only compare "cd" (indices 2-3)
+        result = Assertions.compare_files(
+            a, b, file_type="text", start_column=3, end_column=4
+        )
+        assert result["identical"] is True
+
+
+def test_compare_files_start_line_default_1_becomes_0():
+    """start_line=1 (default 1-based) → 0-based index 0 → entire file."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _write_two(d, "a.txt", "b.txt", "same\n")
+        result = Assertions.compare_files(
+            a, b, file_type="text", start_line=1
+        )
+        assert result["identical"] is True
+
+
+def test_compare_files_range_params_not_leak_to_constructor():
+    """start_line, end_line, start_column, end_column must NOT be passed
+    to ComparatorFactory.create_comparator() (the constructor)."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _write_two(d, "a.txt", "b.txt", "content\n")
+        # If start_line leaks to constructor, TextComparator would fail.
+        result = Assertions.compare_files(
+            a, b, file_type="text",
+            start_line=1, end_line=1, start_column=1, end_column=1,
+        )
+        assert result["identical"] is True

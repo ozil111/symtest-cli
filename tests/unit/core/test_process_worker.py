@@ -104,3 +104,40 @@ def test_run_sequence_in_process_stops_on_first_failure():
     assert "Failed at step 2/3" in result["message"]
     assert execute.call_count == 2
 
+
+def test_single_case_retry_count_is_passed_through():
+    """``retry_count`` from the serialized case dict must reach
+    the ``TestCaseData`` that is handed to ``execute_single_test_case``."""
+    case = {
+        "name": "flaky",
+        "command": "tool",
+        "args": [],
+        "expected": {"return_code": 0},
+        "retry_count": 3,
+    }
+
+    with patch.object(process_worker, "execute_single_test_case") as execute:
+        execute.return_value = passed_result("flaky")
+        process_worker.run_test_in_process(5, case, "workspace")
+
+    execute.assert_called_once()
+    call_case = execute.call_args[0][0]
+    assert call_case["retry_count"] == 3
+
+
+def test_single_case_default_retry_count():
+    """When ``retry_count`` is absent, it should default to 0."""
+    case = {
+        "name": "stable",
+        "command": "tool",
+        "args": [],
+        "expected": {"return_code": 0},
+    }
+
+    with patch.object(process_worker, "execute_single_test_case") as execute:
+        execute.return_value = passed_result("stable")
+        process_worker.run_test_in_process(6, case, "workspace")
+
+    call_case = execute.call_args[0][0]
+    assert call_case["retry_count"] == 0
+

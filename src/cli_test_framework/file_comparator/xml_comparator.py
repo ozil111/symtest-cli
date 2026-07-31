@@ -49,7 +49,7 @@ class XmlComparator(TextComparator):
         @brief Compare XML content structurally
         @param content1 ET.Element: First XML element to compare
         @param content2 ET.Element: Second XML element to compare
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         @details Performs structural comparison of XML elements, including tags,
                  attributes, text content, and child elements
         """
@@ -58,13 +58,13 @@ class XmlComparator(TextComparator):
         xml_str2 = ET.tostring(content2, encoding='unicode')
         
         if xml_str1 == xml_str2:
-            return True, []
+            return True, [], False
             
         # Use a recursive function to find differences in XML structures
         differences = []
         self._compare_elements(content1, content2, "", differences)
         
-        return False, differences
+        return False, differences, False
     
     def _compare_elements(self, elem1, elem2, path, differences, max_diffs=10):
         """

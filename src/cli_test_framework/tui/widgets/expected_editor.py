@@ -61,7 +61,7 @@ class ExpectedEditor(Vertical):
         yield Static("output_matches (regex):", classes="label")
         yield Input(placeholder=".*", id="expected-output-matches")
         yield Static(
-            "compare_files (one JSON per line: {actual, baseline, type}):",
+            "compare_files (one JSON per line: {actual, baseline, type, start_line?, end_line?, start_column?, end_column?}):",
             classes="label",
         )
         yield TextArea("", id="expected-compare-files")

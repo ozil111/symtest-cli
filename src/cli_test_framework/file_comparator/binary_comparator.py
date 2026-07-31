@@ -81,7 +81,7 @@ class BinaryComparator(BaseComparator):
         @brief Compare binary content efficiently
         @param content1 bytes: First binary content to compare
         @param content2 bytes: Second binary content to compare
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         @details Performs efficient byte-level comparison of binary content.
                  Reports differences with hex context and limits the number
                  of differences to avoid overwhelming output.
@@ -96,14 +96,17 @@ class BinaryComparator(BaseComparator):
                 diff_type="size"
             )]
             identical = False
+            truncated = False
         elif content1 == content2:
             differences = []
             identical = True
+            truncated = False
         else:
             identical = False
             differences = []
             offset = 0
             max_differences = 10  # Limit number of differences reported
+            truncated = False
         
             for i in range(0, len(content1), self.chunk_size):
                 chunk1 = content1[i:i+self.chunk_size]
@@ -135,15 +138,10 @@ class BinaryComparator(BaseComparator):
                             break
                             
                     if len(differences) >= max_differences:
-                        differences.append(Difference(
-                            position=None,
-                            expected=None,
-                            actual=None,
-                            diff_type=f"more differences not shown"
-                        ))
+                        truncated = True
                         break
         
-        return identical, differences
+        return identical, differences, truncated
 
     def _compute_similarity(self, a: bytes, b: bytes) -> float:
         """
@@ -259,17 +257,18 @@ class BinaryComparator(BaseComparator):
                 self.logger.debug("Reading full content for similarity calculation")
                 content1 = self.read_content(file1, start_line, end_line, start_column, end_column)
                 content2 = self.read_content(file2, start_line, end_line, start_column, end_column)
-                identical, differences = self.compare_content(content1, content2)
+                identical, differences, truncated = self.compare_content(content1, content2)
                 result.similarity = self._compute_similarity(content1, content2)
             else:
                 # Chunk-based streaming comparison for O(1) memory usage
                 self.logger.debug("Using chunk-based streaming comparison")
-                identical, differences = self._compare_files_streaming(
+                identical, differences, truncated = self._compare_files_streaming(
                     file1_path, file2_path, start_line, end_line
                 )
             
             result.identical = identical
             result.differences = differences
+            result.truncated = truncated
             return result
         except Exception as e:
             self.logger.error(f"Error during comparison: {str(e)}")
@@ -284,12 +283,13 @@ class BinaryComparator(BaseComparator):
         @param file2_path Path: Path to the second binary file
         @param start_offset int: Starting byte offset
         @param end_offset int: Ending byte offset (None for end of file)
-        @return tuple: (bool, list) - (identical, differences)
+        @return tuple: (bool, list, bool) - (identical, differences, truncated)
         @details This method compares files chunk by chunk without loading entire files
                  into memory, achieving O(1) memory complexity.
         """
         differences = []
         max_differences = 10  # Limit number of differences reported
+        truncated = False
         
         try:
             with open(file1_path, 'rb') as f1, open(file2_path, 'rb') as f2:
@@ -366,13 +366,8 @@ class BinaryComparator(BaseComparator):
                                 # Stop after finding first difference in chunk
                                 # or if we've reached max differences
                                 if len(differences) >= max_differences:
-                                    differences.append(Difference(
-                                        position=None,
-                                        expected=None,
-                                        actual=None,
-                                        diff_type="more differences not shown"
-                                    ))
-                                    return False, differences
+                                    truncated = True
+                                    return False, differences, truncated
                                 break
                     
                     current_offset += len(chunk1)
@@ -383,7 +378,7 @@ class BinaryComparator(BaseComparator):
                         break
                 
                 identical = len(differences) == 0
-                return identical, differences
+                return identical, differences, truncated
                 
         except FileNotFoundError as e:
             raise ValueError(f"File not found: {e}")

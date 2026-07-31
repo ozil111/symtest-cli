@@ -74,6 +74,8 @@ class StepsEditor(Vertical):
         yield TextArea('{"return_code": 0}', id="step-expected")
         yield Static("Timeout (seconds):", classes="label")
         yield Input(placeholder="", id="step-timeout")
+        yield Static("Retry count:", classes="label")
+        yield Input(placeholder="0", id="step-retry-count")
         yield Horizontal(
             Button("Save Step", id="step-save", variant="primary"),
             Button("Cancel", id="step-cancel"),
@@ -114,6 +116,7 @@ class StepsEditor(Vertical):
             if len(exp_preview) > 40:
                 exp_preview = exp_preview[:37] + "..."
             timeout_str = f", timeout={step.timeout}s" if step.timeout else ""
+            retry_str = f", retry={step.retry_count}" if step.retry_count else ""
 
             row = Horizontal(
                 Static(f"[Step {i+1}/{len(self._steps)}]"),
@@ -136,6 +139,7 @@ class StepsEditor(Vertical):
         self.query_one("#step-args", Input).value = ""
         self.query_one("#step-expected", TextArea).text = '{"return_code": 0}'
         self.query_one("#step-timeout", Input).value = ""
+        self.query_one("#step-retry-count", Input).value = ""
         status = self.query_one("#step-editor-status", Static)
         status.update("")
 
@@ -148,6 +152,7 @@ class StepsEditor(Vertical):
             step.expected, ensure_ascii=False
         )
         self.query_one("#step-timeout", Input).value = str(step.timeout) if step.timeout else ""
+        self.query_one("#step-retry-count", Input).value = str(step.retry_count) if step.retry_count else ""
         status = self.query_one("#step-editor-status", Static)
         status.update(f"Editing Step {idx+1}")
 
@@ -169,7 +174,12 @@ class StepsEditor(Vertical):
         timeout_text = self.query_one("#step-timeout", Input).value.strip()
         timeout = float(timeout_text) if timeout_text else None
 
-        new_step = TestCaseStep(command=cmd, args=args, expected=expected, timeout=timeout)
+        retry_text = self.query_one("#step-retry-count", Input).value.strip()
+        retry_count = int(retry_text) if retry_text else 0
+
+        new_step = TestCaseStep(
+            command=cmd, args=args, expected=expected, timeout=timeout, retry_count=retry_count,
+        )
 
         if self._editing_idx >= 0:
             self._steps[self._editing_idx] = new_step

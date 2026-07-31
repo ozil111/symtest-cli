@@ -13,12 +13,13 @@ from cli_test_framework.tui.widgets.steps_editor import StepsEditor
 from cli_test_framework.tui.widgets.expected_editor import ExpectedEditor
 
 
-def _step(cmd="echo", args=None, expected=None, timeout=None):
+def _step(cmd="echo", args=None, expected=None, timeout=None, retry_count=0):
     return TestCaseStep(
         command=cmd,
         args=args or [],
         expected=expected or {},
         timeout=timeout,
+        retry_count=retry_count,
     )
 
 
@@ -73,6 +74,18 @@ class TestStepsEditorData:
         editor.load([_step("sleep", timeout=10.0)])
         result = editor.to_steps()
         assert result[0].timeout == 10.0
+
+    def test_steps_with_retry_count(self):
+        editor = StepsEditor()
+        editor.load([_step("flaky", retry_count=3)])
+        result = editor.to_steps()
+        assert result[0].retry_count == 3
+
+    def test_steps_default_retry_count(self):
+        editor = StepsEditor()
+        editor.load([_step("stable")])
+        result = editor.to_steps()
+        assert result[0].retry_count == 0
 
     def test_steps_with_empty_args(self):
         editor = StepsEditor()
