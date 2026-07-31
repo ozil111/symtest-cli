@@ -7,8 +7,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli_test_framework.file_comparator.binary_comparator import BinaryComparator
-from cli_test_framework.file_comparator.result import Difference
+from symtest.file_comparator.binary_comparator import BinaryComparator
+from symtest.file_comparator.result import Difference
 
 
 # =============================================================================

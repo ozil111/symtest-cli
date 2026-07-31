@@ -37,7 +37,7 @@ def create_demo_files():
 
 def run_comparison(file1, file2, filter_expr=None):
     """Run comparison with optional filter"""
-    cmd = [sys.executable, "-m", "src.cli_test_framework.commands.compare", "--file-type", "h5"]
+    cmd = [sys.executable, "-m", "src.symtest.commands.compare", "--file-type", "h5"]
 
     if filter_expr:
         cmd.extend(["--h5-data-filter", filter_expr])

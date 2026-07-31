@@ -3,7 +3,7 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from cli_test_framework.utils.junit_xml_writer import write_junit_xml, _xml_escape
+from symtest.utils.junit_xml_writer import write_junit_xml, _xml_escape
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,8 @@ import os
 import sys
 import tempfile
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.parallel_json_runner import ParallelJSONRunner
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.parallel_json_runner import ParallelJSONRunner
 
 
 def build_config(temp_dir):

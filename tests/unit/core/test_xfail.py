@@ -1,8 +1,8 @@
 """Unit tests for xfail four-state model and _apply_xfail_status."""
 import pytest
 
-from cli_test_framework.core.test_case import TestCase
-from cli_test_framework.core.base_runner import BaseRunner
+from symtest.core.test_case import TestCase
+from symtest.core.base_runner import BaseRunner
 
 
 class MockBaseRunner(BaseRunner):

@@ -1,4 +1,4 @@
-from cli_test_framework.utils.report_generator import ReportGenerator
+from symtest.utils.report_generator import ReportGenerator
 
 
 def test_generate_report_summarizes_passed_and_failed_results():

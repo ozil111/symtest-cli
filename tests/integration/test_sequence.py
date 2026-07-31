@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.yaml_runner import YAMLRunner
-from cli_test_framework.core.test_case import TestCase, TestCaseStep
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.yaml_runner import YAMLRunner
+from symtest.core.test_case import TestCase, TestCaseStep
 
 
 class TestSequenceLoadJSON(unittest.TestCase):

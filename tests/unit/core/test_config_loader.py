@@ -1,10 +1,10 @@
-"""Unit tests for cli_test_framework.core.config_loader — substitute_placeholders, parse_test_cases."""
+"""Unit tests for symtest.core.config_loader — substitute_placeholders, parse_test_cases."""
 
 from unittest.mock import patch
 
 import pytest
 
-from cli_test_framework.core.config_loader import (
+from symtest.core.config_loader import (
     substitute_placeholders,
     parse_test_cases,
     execute_sequence,
@@ -327,7 +327,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["one"]}
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -349,7 +349,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["MISSING_TEXT"]}
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "hello world\n")
             result = execute_sequence(
@@ -369,7 +369,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["SHOULD_NOT_RUN"]}
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -392,7 +392,7 @@ class TestExecuteSequenceCaseExpected:
         ]
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -409,7 +409,7 @@ class TestExecuteSequenceCaseExpected:
         ]
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -431,7 +431,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["MISSING"]}
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -457,7 +457,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"return_code": 0}
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -479,11 +479,11 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "cli_test_framework.core.execution.validate_result"
+                "symtest.core.execution.validate_result"
             ) as mock_validate:
                 result = execute_sequence(
                     case_name="case-compare-files",
@@ -506,11 +506,11 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "cli_test_framework.core.config_loader.execute_single_test_case"
+            "symtest.core.config_loader.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "cli_test_framework.core.execution.validate_result",
+                "symtest.core.execution.validate_result",
                 side_effect=AssertionError("Files differ"),
             ):
                 result = execute_sequence(

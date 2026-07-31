@@ -7,7 +7,7 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.core.history_store import (
+from symtest.core.history_store import (
     SYMTEST_FILENAME,
     check_regression,
     ensure_symtest,

@@ -6,8 +6,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.utils.report_generator import ReportGenerator
+from symtest.runners.json_runner import JSONRunner
+from symtest.utils.report_generator import ReportGenerator
 
 
 def main():

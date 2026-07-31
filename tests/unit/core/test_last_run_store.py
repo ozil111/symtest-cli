@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.core.last_run_store import (
+from symtest.core.last_run_store import (
     load_last_run,
     save_last_run,
     update_last_run,

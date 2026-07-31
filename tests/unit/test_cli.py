@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cli_test_framework import cli
+from symtest import cli
 
 
 class DummyRunner:
@@ -455,7 +455,7 @@ class TestRunValidate:
         config.write_text('{"test_cases": [{"name": "t1", "command": "echo"}]}')
 
         monkeypatch.setattr(
-            "cli_test_framework.config.config_io.validate_config",
+            "symtest.config.config_io.validate_config",
             lambda cf, ws: {
                 "valid": True,
                 "summary": {"cases": 1, "files": 1, "files_loaded": ["config.json"]},
@@ -474,7 +474,7 @@ class TestRunValidate:
         config.write_text('{}')
 
         monkeypatch.setattr(
-            "cli_test_framework.config.config_io.validate_config",
+            "symtest.config.config_io.validate_config",
             lambda cf, ws: {
                 "valid": False,
                 "summary": {"cases": 0, "files": 0},
@@ -492,7 +492,7 @@ class TestRunValidate:
         config.write_text('{}')
 
         monkeypatch.setattr(
-            "cli_test_framework.config.config_io.validate_config",
+            "symtest.config.config_io.validate_config",
             lambda cf, ws: {
                 "valid": True,
                 "summary": {"cases": 1, "files": 1},
@@ -520,7 +520,7 @@ class TestRunValidate:
             return {"valid": True, "summary": {"cases": 0, "files": 0}, "errors": []}
 
         monkeypatch.setattr(
-            "cli_test_framework.config.config_io.validate_config",
+            "symtest.config.config_io.validate_config",
             fake_validate,
         )
 
@@ -541,7 +541,7 @@ class TestRunSchema:
         cli.run_schema()
         captured = capsys.readouterr()
         schema = json.loads(captured.out)
-        assert schema["title"] == "cli-test configuration"
+        assert schema["title"] == "symtest configuration"
         assert "$defs" in schema
         assert schema["$schema"].startswith("https://json-schema.org/")
 
@@ -552,7 +552,7 @@ class TestRunSchema:
             called.append("schema")
 
         monkeypatch.setattr(cli, "run_schema", fake_schema)
-        monkeypatch.setattr("sys.argv", ["cli-test", "schema"])
+        monkeypatch.setattr("sys.argv", ["symtest", "schema"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -575,7 +575,7 @@ class TestRunCompare:
 
     def test_success(self, monkeypatch):
         monkeypatch.setattr(
-            "cli_test_framework.commands.compare.run_comparison",
+            "symtest.commands.compare.run_comparison",
             lambda args: 0,
         )
         args = Namespace(file1="a.txt", file2="b.txt")
@@ -584,7 +584,7 @@ class TestRunCompare:
 
     def test_failure(self, monkeypatch):
         monkeypatch.setattr(
-            "cli_test_framework.commands.compare.run_comparison",
+            "symtest.commands.compare.run_comparison",
             lambda args: 1,
         )
         args = Namespace(file1="a.txt", file2="b.txt")
@@ -593,7 +593,7 @@ class TestRunCompare:
 
     def test_exit_code_nonzero(self, monkeypatch):
         monkeypatch.setattr(
-            "cli_test_framework.commands.compare.run_comparison",
+            "symtest.commands.compare.run_comparison",
             lambda args: 2,
         )
         args = Namespace(file1="a.txt", file2="b.txt")
@@ -617,7 +617,7 @@ class TestMainDispatch:
             return True
 
         monkeypatch.setattr(cli, "run_tests", fake_run)
-        monkeypatch.setattr("sys.argv", ["cli-test", "run", "cases.json"])
+        monkeypatch.setattr("sys.argv", ["symtest", "run", "cases.json"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -629,7 +629,7 @@ class TestMainDispatch:
             return False
 
         monkeypatch.setattr(cli, "run_tests", fake_run)
-        monkeypatch.setattr("sys.argv", ["cli-test", "run", "cases.json"])
+        monkeypatch.setattr("sys.argv", ["symtest", "run", "cases.json"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -642,7 +642,7 @@ class TestMainDispatch:
             called.append("tui")
 
         monkeypatch.setattr(cli, "run_tui", fake_tui)
-        monkeypatch.setattr("sys.argv", ["cli-test", "tui", "cases.json"])
+        monkeypatch.setattr("sys.argv", ["symtest", "tui", "cases.json"])
 
         cli.main()
         assert "tui" in called
@@ -652,7 +652,7 @@ class TestMainDispatch:
             return True
 
         monkeypatch.setattr(cli, "run_validate", fake_validate)
-        monkeypatch.setattr("sys.argv", ["cli-test", "validate", "config.json"])
+        monkeypatch.setattr("sys.argv", ["symtest", "validate", "config.json"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -663,7 +663,7 @@ class TestMainDispatch:
             return False
 
         monkeypatch.setattr(cli, "run_validate", fake_validate)
-        monkeypatch.setattr("sys.argv", ["cli-test", "validate", "config.json"])
+        monkeypatch.setattr("sys.argv", ["symtest", "validate", "config.json"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -674,7 +674,7 @@ class TestMainDispatch:
             return True
 
         monkeypatch.setattr(cli, "run_compare", fake_compare)
-        monkeypatch.setattr("sys.argv", ["cli-test", "compare", "a.txt", "b.txt"])
+        monkeypatch.setattr("sys.argv", ["symtest", "compare", "a.txt", "b.txt"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -685,7 +685,7 @@ class TestMainDispatch:
             return False
 
         monkeypatch.setattr(cli, "run_compare", fake_compare)
-        monkeypatch.setattr("sys.argv", ["cli-test", "compare", "a.txt", "b.txt"])
+        monkeypatch.setattr("sys.argv", ["symtest", "compare", "a.txt", "b.txt"])
 
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -693,7 +693,7 @@ class TestMainDispatch:
 
 
 def test_main_exits_nonzero_without_command(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["cli-test"])
+    monkeypatch.setattr("sys.argv", ["symtest"])
 
     with pytest.raises(SystemExit) as exc:
         cli.main()

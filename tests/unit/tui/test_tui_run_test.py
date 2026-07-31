@@ -6,14 +6,14 @@ Requires: textual, pytest-asyncio.
 
 import pytest
 
-from cli_test_framework.tui.app import CaseManagerApp
-from cli_test_framework.tui.screens.case_list import CaseListScreen
-from cli_test_framework.tui.screens.case_editor import CaseEditorScreen
-from cli_test_framework.tui.widgets.search_bar import SearchBar
-from cli_test_framework.tui.widgets.case_table import CaseTable
-from cli_test_framework.tui.widgets.steps_editor import StepsEditor
-from cli_test_framework.tui.widgets.expected_editor import ExpectedEditor
-from cli_test_framework.core.test_case import TestCase, TestCaseStep
+from symtest.tui.app import CaseManagerApp
+from symtest.tui.screens.case_list import CaseListScreen
+from symtest.tui.screens.case_editor import CaseEditorScreen
+from symtest.tui.widgets.search_bar import SearchBar
+from symtest.tui.widgets.case_table import CaseTable
+from symtest.tui.widgets.steps_editor import StepsEditor
+from symtest.tui.widgets.expected_editor import ExpectedEditor
+from symtest.core.test_case import TestCase, TestCaseStep
 
 
 # =============================================================================

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
-from cli_test_framework.core.execution import (
+from symtest.core.execution import (
     execute_single_test_case,
     validate_result,
     _build_next_action_hint,
@@ -276,7 +276,7 @@ class TestNextActionHint:
 
 
 class TestRunnerHintCommandFilling:
-    """Runners fill the concrete cli-test command into next_action_hint."""
+    """Runners fill the concrete symtest command into next_action_hint."""
 
     def _make_failed_result(self, action):
         return {
@@ -286,27 +286,27 @@ class TestRunnerHintCommandFilling:
         }
 
     def test_update_baseline_command(self):
-        from cli_test_framework.runners.json_runner import JSONRunner
+        from symtest.runners.json_runner import JSONRunner
 
         runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_baseline")
         runner._fill_hint_command(result, "case_a")
         cmd = result["next_action_hint"]["command"]
         assert cmd == (
-            f'cli-test run "{runner.config_path}" --update-baseline -t "case_a"'
+            f'symtest run "{runner.config_path}" --update-baseline -t "case_a"'
         )
 
     def test_rerun_command_for_other_actions(self):
-        from cli_test_framework.runners.json_runner import JSONRunner
+        from symtest.runners.json_runner import JSONRunner
 
         runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_expected")
         runner._fill_hint_command(result, "case_a")
         cmd = result["next_action_hint"]["command"]
-        assert cmd == f'cli-test run "{runner.config_path}" -t "case_a"'
+        assert cmd == f'symtest run "{runner.config_path}" -t "case_a"'
 
     def test_existing_command_not_overwritten(self):
-        from cli_test_framework.runners.json_runner import JSONRunner
+        from symtest.runners.json_runner import JSONRunner
 
         runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_baseline")
@@ -315,7 +315,7 @@ class TestRunnerHintCommandFilling:
         assert result["next_action_hint"]["command"] == "custom"
 
     def test_no_hint_is_noop(self):
-        from cli_test_framework.runners.json_runner import JSONRunner
+        from symtest.runners.json_runner import JSONRunner
 
         runner = JSONRunner(config_file="cfg.json")
         result = {"name": "ok", "status": "passed", "next_action_hint": None}

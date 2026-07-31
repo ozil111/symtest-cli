@@ -44,8 +44,8 @@ from typing import Any, Dict, List, Optional
 # because the worker process inherits the same Python environment.
 # Use a guarded import for documentation/testing outside a full runtime.
 try:
-    from cli_test_framework.file_comparator.base_comparator import BaseComparator
-    from cli_test_framework.file_comparator.result import ComparisonResult, Difference
+    from symtest.file_comparator.base_comparator import BaseComparator
+    from symtest.file_comparator.result import ComparisonResult, Difference
 except ImportError:  # pragma: no cover
     BaseComparator = object  # type: ignore
     ComparisonResult = None  # type: ignore

@@ -8,9 +8,9 @@ work against the internal state even when the widget is not mounted.
 import copy
 import pytest
 
-from cli_test_framework.core.test_case import TestCaseStep
-from cli_test_framework.tui.widgets.steps_editor import StepsEditor
-from cli_test_framework.tui.widgets.expected_editor import ExpectedEditor
+from symtest.core.test_case import TestCaseStep
+from symtest.tui.widgets.steps_editor import StepsEditor
+from symtest.tui.widgets.expected_editor import ExpectedEditor
 
 
 def _step(cmd="echo", args=None, expected=None, timeout=None, retry_count=0):

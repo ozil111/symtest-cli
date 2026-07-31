@@ -4,10 +4,10 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cli_test_framework.core.setup import BaseSetup, EnvironmentSetup, SetupManager
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.parallel_json_runner import ParallelJSONRunner
-from cli_test_framework.runners.yaml_runner import YAMLRunner
+from symtest.core.setup import BaseSetup, EnvironmentSetup, SetupManager
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.parallel_json_runner import ParallelJSONRunner
+from symtest.runners.yaml_runner import YAMLRunner
 
 
 class TestBaseSetup(unittest.TestCase):

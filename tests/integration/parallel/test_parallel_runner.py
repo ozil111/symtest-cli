@@ -5,8 +5,8 @@ import tempfile
 import time
 import unittest
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.parallel_json_runner import ParallelJSONRunner
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.parallel_json_runner import ParallelJSONRunner
 
 
 class TestParallelRunner(unittest.TestCase):

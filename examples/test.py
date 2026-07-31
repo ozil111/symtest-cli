@@ -1,7 +1,7 @@
 # Example usage
-from cli_test_framework.runners.parallel_json_runner import ParallelJSONRunner
-from cli_test_framework.utils.report_generator import ReportGenerator
-from cli_test_framework.logging_config import setup_console_logging
+from symtest.runners.parallel_json_runner import ParallelJSONRunner
+from symtest.utils.report_generator import ReportGenerator
+from symtest.logging_config import setup_console_logging
 import argparse
 import sys
 import os

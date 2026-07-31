@@ -9,17 +9,17 @@ with open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 
 
 def read_version():
-    """Single source of truth: __version__ in cli_test_framework/__init__.py."""
-    init_path = os.path.join(this_directory, "src", "cli_test_framework", "__init__.py")
+    """Single source of truth: __version__ in symtest/__init__.py."""
+    init_path = os.path.join(this_directory, "src", "symtest", "__init__.py")
     with open(init_path, encoding="utf-8") as f:
         match = re.search(r'^__version__ = ["\']([^"\']+)["\']', f.read(), re.MULTILINE)
     if not match:
-        raise RuntimeError("Unable to find __version__ in cli_test_framework/__init__.py")
+        raise RuntimeError("Unable to find __version__ in symtest/__init__.py")
     return match.group(1)
 
 
 setup(
-    name="cli-test-framework",
+    name="symtest-cli",
     version=read_version(),
     author="Xiaotong Wang",
     author_email="xiaotongwang98@gmail.com",
@@ -51,8 +51,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'cli-test=cli_test_framework.cli:main',
-            'compare-files=cli_test_framework.commands.compare:main',
+            'symtest=symtest.cli:main',
+            # Backward-compatible alias for users of the old cli-test-framework.
+            'cli-test=symtest.cli:main',
+            'compare-files=symtest.commands.compare:main',
         ],
     },
     classifiers=[
