@@ -2,12 +2,12 @@
 
 中文 | [English](README.md)
 
-> **本项目已更名为 [`symtest`](https://pypi.org/project/symtest/)。**
-> `cli-test-framework` 1.2.4 是旧名称下的最后一个版本，今后不再更新。
+> **本项目已更名为 [`symtest-cli`](https://pypi.org/project/symtest-cli/)。**
+> `cli-test-framework` 1.2.5 是旧名称下的最后一个版本，今后不再更新。
 > 请改用新包：
 >
 > ```bash
-> pip install symtest
+> pip install symtest-cli
 > ```
 
 一个面向命令行程序的功能型自动化测试框架。它服务于不能只检查退出码的回归测试：

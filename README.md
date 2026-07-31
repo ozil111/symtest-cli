@@ -2,12 +2,12 @@
 
 [中文](README_cn.md) | English
 
-> **This project has been renamed to [`symtest`](https://pypi.org/project/symtest/).**
-> `cli-test-framework` 1.2.4 is the final release under this name and receives
+> **This project has been renamed to [`symtest-cli`](https://pypi.org/project/symtest-cli/).**
+> `cli-test-framework` 1.2.5 is the final release under this name and receives
 > no further updates. Please switch to the new package:
 >
 > ```bash
-> pip install symtest
+> pip install symtest-cli
 > ```
 
 A feature-focused automated testing framework for command-line applications.
