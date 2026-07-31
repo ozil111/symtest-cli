@@ -5,9 +5,9 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.core.assertions import Assertions, _detect_file_type
-from cli_test_framework.core.execution import validate_result, _dispatch_file_compare
-from cli_test_framework.core.assertions import Assertions as AS  # alias for dispatch tests
+from symtest.core.assertions import Assertions, _detect_file_type
+from symtest.core.execution import validate_result, _dispatch_file_compare
+from symtest.core.assertions import Assertions as AS  # alias for dispatch tests
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
         return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
-        "cli_test_framework.core.execution.Assertions.compare_files",
+        "symtest.core.execution.Assertions.compare_files",
         fake_compare_files,
     )
     _dispatch_file_compare(
@@ -303,7 +303,7 @@ def test_dispatch_omits_type_when_absent(monkeypatch):
         return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
-        "cli_test_framework.core.execution.Assertions.compare_files",
+        "symtest.core.execution.Assertions.compare_files",
         fake_compare_files,
     )
     _dispatch_file_compare(

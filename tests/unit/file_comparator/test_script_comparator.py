@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cli_test_framework.file_comparator.script_comparator import ScriptComparator
+from symtest.file_comparator.script_comparator import ScriptComparator
 
 
 _FIXTURES = Path(__file__).resolve().parent.parent.parent / "fixtures"

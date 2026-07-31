@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from cli_test_framework.commands import compare
+from symtest.commands import compare
 
 
 def test_detect_file_type_uses_specific_comparators():

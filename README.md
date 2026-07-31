@@ -2,9 +2,10 @@
 
 [中文](README_cn.md) | English
 
-> **This project has been renamed to [`symtest`](https://pypi.org/project/symtest/).**
-> `cli-test-framework` 1.2.4 is the final release under this name and receives
-> no further updates. Please switch to the new package:
+> **Note:** This project was formerly known as `cli-test-framework`.
+> Since version 1.3.0 it is released as
+> [`symtest`](https://pypi.org/project/symtest/); the old package name is no
+> longer updated. Install with:
 >
 > ```bash
 > pip install symtest
@@ -42,15 +43,15 @@ occur in real CLI and scientific-computing projects.
 Python 3.9 or newer is required.
 
 ```bash
-pip install cli-test-framework
+pip install symtest
 ```
 
 YAML and the TUI are optional:
 
 ```bash
-pip install "cli-test-framework[yaml]"
-pip install "cli-test-framework[tui]"
-pip install "cli-test-framework[all]"
+pip install "symtest[yaml]"
+pip install "symtest[tui]"
+pip install "symtest[all]"
 ```
 
 The default installation includes HDF5 and numerical comparison support.
@@ -79,13 +80,13 @@ Create `test_cases.json`:
 Run it:
 
 ```bash
-cli-test run test_cases.json
+symtest run test_cases.json
 ```
 
 Validate a configuration without executing it:
 
 ```bash
-cli-test validate test_cases.json
+symtest validate test_cases.json
 ```
 
 ## Numerical golden-file testing
@@ -133,8 +134,8 @@ can overwrite reference files, interactive runs require typing `yes`;
 non-interactive runs must explicitly add `--yes`:
 
 ```bash
-cli-test run test_cases.json --update-baseline
-cli-test run test_cases.json --update-baseline --yes   # automation / CI
+symtest run test_cases.json --update-baseline
+symtest run test_cases.json --update-baseline --yes   # automation / CI
 ```
 
 Keep baselines under version control and review every update.
@@ -146,9 +147,9 @@ step. For long workflows, `--resume` reuses saved state and skips steps that
 already passed:
 
 ```bash
-cli-test run solver_tests.json
-cli-test run solver_tests.json --last-failed
-cli-test run solver_tests.json -t long_case --resume
+symtest run solver_tests.json
+symtest run solver_tests.json --last-failed
+symtest run solver_tests.json -t long_case --resume
 ```
 
 `--resume` deliberately trusts that workspace artifacts have not changed
@@ -172,14 +173,14 @@ intended as an aid for locating cases and reviewing scenario coverage in large
 projects, rather than a requirement for normal test execution.
 
 ```bash
-cli-test tui main_config.json
+symtest tui main_config.json
 ```
 
 ## Parallel execution and resources
 
 ```bash
-cli-test run test_cases.json --parallel --workers 4
-cli-test run test_cases.json --parallel --execution-mode process
+symtest run test_cases.json --parallel --workers 4
+symtest run test_cases.json --parallel --execution-mode process
 ```
 
 Thread mode currently supports CPU-token allocation, solver thread environment
@@ -191,7 +192,7 @@ resource scheduling remain active areas of development.
 ## CI and reports
 
 ```bash
-cli-test run test_cases.json \
+symtest run test_cases.json \
   --parallel --workers 4 \
   --junit-xml report.xml
 ```
@@ -202,7 +203,7 @@ line coverage. CI exercises Windows and Linux across Python 3.9 through 3.13.
 ## Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, ParallelJSONRunner
 
 runner = ParallelJSONRunner(
     config_file="test_cases.json",

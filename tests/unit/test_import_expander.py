@@ -3,7 +3,7 @@
 from pathlib import Path
 import pytest
 
-from cli_test_framework.config.import_expander import expand_imports, _load_raw_config
+from symtest.config.import_expander import expand_imports, _load_raw_config
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 

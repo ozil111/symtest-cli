@@ -1,7 +1,7 @@
 import json
 import sys
 
-from cli_test_framework.runners.json_runner import JSONRunner
+from symtest.runners.json_runner import JSONRunner
 
 
 def write_config(tmp_path, config):

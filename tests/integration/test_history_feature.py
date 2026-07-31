@@ -7,8 +7,8 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
-from cli_test_framework.core.history_store import SYMTEST_FILENAME, load_history
+from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
+from symtest.core.history_store import SYMTEST_FILENAME, load_history
 
 
 def _make_json_config(tmp_path, test_cases):

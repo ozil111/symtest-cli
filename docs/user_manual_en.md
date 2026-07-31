@@ -26,7 +26,7 @@
 ## Installation
 
 ```bash
-pip install cli-test-framework
+pip install symtest
 ```
 
 Requirement: Python >= 3.9
@@ -34,13 +34,13 @@ Requirement: Python >= 3.9
 YAML support is available as an optional dependency:
 
 ```bash
-pip install "cli-test-framework[yaml]"
+pip install "symtest[yaml]"
 ```
 
 Install YAML, TUI, and all other optional features together:
 
 ```bash
-pip install "cli-test-framework[all]"
+pip install "symtest[all]"
 ```
 
 HDF5 file comparison depends on `h5py` (installed with the framework). If you need to use other comparison features without HDF5, you can uninstall it separately, but HDF5 comparison will become unavailable.
@@ -437,14 +437,14 @@ Placeholder substitution has two layers:
 2. **Global `--var`**: Passed via CLI (`--var KEY=VALUE`), applied after case-level variables; **global takes priority when keys conflict**
 
 ```bash
-cli-test run config.json --var solver=/path/to/solver
+symtest run config.json --var solver=/path/to/solver
 ```
 
 The `setup` block uses only global `--var` substitution (no case-level variables).
 
 ### validate Checks
 
-`cli-test validate` performs additional checks on inherited configurations:
+`symtest validate` performs additional checks on inherited configurations:
 
 - Whether the `extends` target exists
 - Whether a circular inheritance chain exists
@@ -463,16 +463,16 @@ The `validate` command checks configuration file correctness without running tes
 
 ```bash
 # Validate a single config file
-cli-test validate test_cases.json
+symtest validate test_cases.json
 
 # Validate a main config with imports (auto-expands and checks all sub-files)
-cli-test validate main_config.json
+symtest validate main_config.json
 
 # Specify working directory
-cli-test validate test_cases.json --workspace /path/to/project
+symtest validate test_cases.json --workspace /path/to/project
 
 # Output JSON format (for AI/script parsing)
-cli-test validate test_cases.json --output-format json
+symtest validate test_cases.json --output-format json
 ```
 
 ### What Gets Checked
@@ -515,28 +515,28 @@ The TUI depends on the `textual` library and is provided as an optional, on-dema
 
 ```bash
 # Install with TUI support
-pip install "cli-test-framework[tui]"
+pip install "symtest[tui]"
 
 # Or install textual separately on top of an existing framework
 pip install textual
 ```
 
-If `textual` is not installed and you run `cli-test tui`, the framework displays a friendly installation prompt.
+If `textual` is not installed and you run `symtest tui`, the framework displays a friendly installation prompt.
 
 ### Launching
 
 ```bash
 # Open TUI to edit test cases
-cli-test tui test_cases.json
+symtest tui test_cases.json
 
 # YAML files are also supported
-cli-test tui test_cases.yaml
+symtest tui test_cases.yaml
 
 # Specify working directory
-cli-test tui test_cases.json --workspace /path/to/project
+symtest tui test_cases.json --workspace /path/to/project
 
 # Open a main config with imports (auto-expands all cases from sub-files)
-cli-test tui main_config.json
+symtest tui main_config.json
 ```
 
 The TUI auto-expands `import` references via the [Configuration Splitting](#configuration-splitting) mechanism at startup, loading all cases into the interface for unified management.
@@ -633,66 +633,66 @@ Unsaved changes prompt a confirmation dialog when quitting the TUI.
 
 ```bash
 # Run JSON tests
-cli-test run test_cases.json
+symtest run test_cases.json
 
 # Run YAML tests
-cli-test run test_cases.yaml
+symtest run test_cases.yaml
 
 # Run a main config with import splitting (auto-expands sub-files)
-cli-test run main_config.json
+symtest run main_config.json
 
 # Specify working directory
-cli-test run test_cases.json --workspace /path/to/project
+symtest run test_cases.json --workspace /path/to/project
 
 # Run in parallel
-cli-test run test_cases.json --parallel --workers 4
+symtest run test_cases.json --parallel --workers 4
 
 # Specify parallel mode
-cli-test run test_cases.json --parallel --execution-mode process
+symtest run test_cases.json --parallel --execution-mode process
 
 # Run only specified cases
-cli-test run test_cases.json -t test_name_1 -t test_name_2
+symtest run test_cases.json -t test_name_1 -t test_name_2
 
 # Filter by tag
-cli-test run test_cases.json --tag smoke
-cli-test run test_cases.json --tag smoke --tag regression
+symtest run test_cases.json --tag smoke
+symtest run test_cases.json --tag smoke --tag regression
 
 # Filter by name and tag simultaneously (AND relationship)
-cli-test run test_cases.json -t test_name_1 --tag smoke
+symtest run test_cases.json -t test_name_1 --tag smoke
 
 # Verbose output
-cli-test run test_cases.json --verbose
+symtest run test_cases.json --verbose
 
 # Debug mode
-cli-test run test_cases.json --debug
+symtest run test_cases.json --debug
 
 # Output format
-cli-test run test_cases.json --output-format json|html|text
+symtest run test_cases.json --output-format json|html|text
 
 # Enable history (smart scheduling + regression detection)
-cli-test run test_cases.json --history-dir ./hist
+symtest run test_cases.json --history-dir ./hist
 
 # Custom regression threshold (default 1.5x)
-cli-test run test_cases.json --history-dir ./hist --regression-threshold 2.0
+symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 
 # Output JUnit XML report (consumable by Jenkins/GitLab CI etc.)
-cli-test run test_cases.json --junit-xml report.xml
+symtest run test_cases.json --junit-xml report.xml
 
 # Run only last-failed cases (overwritten on each run)
-cli-test run test_cases.json --last-failed
+symtest run test_cases.json --last-failed
 
 # Resume: skip passed steps, continue from failed step
-cli-test run test_cases.json --resume
-cli-test run test_cases.json --resume -t BS-U_01
+symtest run test_cases.json --resume
+symtest run test_cases.json --resume -t BS-U_01
 
 # Update baseline files on comparison failure (type yes interactively)
-cli-test run test_cases.json --update-baseline
+symtest run test_cases.json --update-baseline
 
 # Non-interactive environments must confirm explicitly
-cli-test run test_cases.json --update-baseline --yes
+symtest run test_cases.json --update-baseline --yes
 
 # Enable error analysis (full stats output for numerical comparisons)
-cli-test run test_cases.json --error-analysis
+symtest run test_cases.json --error-analysis
 ```
 
 ### Run Only Last-Failed Cases (--last-failed)
@@ -709,13 +709,13 @@ cli-test run test_cases.json --error-analysis
 
 ```bash
 # First run: all 10 cases, 3 fail
-cli-test run config.json
+symtest run config.json
 
 # After fixing code, rerun only those 3 failures
-cli-test run config.json --last-failed
+symtest run config.json --last-failed
 
 # If all 3 pass, run once more to confirm no regressions
-cli-test run config.json
+symtest run config.json
 ```
 
 **Interaction with `-t`**: `--last-failed` and `-t`/`--tag` can be used together; effects stack (AND relationship).
@@ -735,13 +735,13 @@ cli-test run config.json
 
 ```bash
 # First full run, BS-U_01 step 4 fails (total 72s)
-cli-test run config.json
+symtest run config.json
 
 # After fixing, rerun only BS-U_01, skipping steps 1-3 (~0.14s only)
-cli-test run config.json -t BS-U_01 --resume
+symtest run config.json -t BS-U_01 --resume
 
 # After all pass, do one full run to confirm no regressions
-cli-test run config.json
+symtest run config.json
 ```
 
 **Interaction with `-t`**: `--resume` is typically used with `-t` to first isolate a single failed case then resume from it. Without `-t`, all sequence cases with existing state will attempt to resume.
@@ -757,10 +757,10 @@ After algorithm improvements or parameter adjustments, you may expect output to 
 
 ```bash
 # Interactive runs ask you to type yes before execution
-cli-test run config.json --update-baseline
+symtest run config.json --update-baseline
 
 # Explicit confirmation for automation or CI
-cli-test run config.json --update-baseline --yes
+symtest run config.json --update-baseline --yes
 ```
 
 **Behavior**:
@@ -778,7 +778,7 @@ cli-test run config.json --update-baseline --yes
 The `validate` command has a `--output-format json` option that produces machine-readable JSON reports, suitable for AI/script-based config validation:
 
 ```bash
-cli-test validate config.json --output-format json
+symtest validate config.json --output-format json
 ```
 
 Output example:
@@ -793,7 +793,7 @@ Output example:
 ### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
 
 # Sequential run
 runner = JSONRunner(
@@ -827,7 +827,7 @@ runner = ParallelJSONRunner(
 success = runner.run_tests()
 
 # Parallel run (YAML)
-from cli_test_framework.runners import ParallelYAMLRunner
+from symtest.runners import ParallelYAMLRunner
 runner = ParallelYAMLRunner(
     config_file="test_cases.yaml",
     max_workers=4,
@@ -889,15 +889,15 @@ for detail in runner.results["details"]:
 
 ## Project Entry Script
 
-If your test project has a complex structure (requiring preset environment variables, customized report paths, etc.), using `cli-test run` directly may not be flexible enough. You can create a project entry script (e.g., `test.py` or `run_tests.py`) that calls the framework API from Python code.
+If your test project has a complex structure (requiring preset environment variables, customized report paths, etc.), using `symtest run` directly may not be flexible enough. You can create a project entry script (e.g., `test.py` or `run_tests.py`) that calls the framework API from Python code.
 
 ### When to Use CLI Directly
 
 | Scenario | Recommendation |
 |---|---|
-| Simple project, single config file | `cli-test run config.json --workers 4` |
-| One-off run, no special environment needs | `cli-test run config.yaml --tag smoke` |
-| CI pipeline | `cli-test run config.json --junit-xml report.xml` |
+| Simple project, single config file | `symtest run config.json --workers 4` |
+| One-off run, no special environment needs | `symtest run config.yaml --tag smoke` |
+| CI pipeline | `symtest run config.json --junit-xml report.xml` |
 
 ### When to Wrap in an Entry Script
 
@@ -950,7 +950,7 @@ python run_tests.py test_cases.json --junit-xml report.xml
 
 ### Windows WinError 2 Issue
 
-If your test case `command` field references console-script commands (e.g., `compare-files`, `cli-test` — entry points installed via pip), running the script via double-click or from an unactivated environment on Windows may cause subprocesses to fail finding these executables:
+If your test case `command` field references console-script commands (e.g., `compare-files`, `symtest` — entry points installed via pip), running the script via double-click or from an unactivated environment on Windows may cause subprocesses to fail finding these executables:
 
 ```
 FileNotFoundError: [WinError 2] The system cannot find the file specified.
@@ -1013,13 +1013,13 @@ Placeholders `{variable_name}` can appear in any string value in the config file
 
 ```bash
 # Single variable
-cli-test run test_cases.json --var solver=/opt/solver/bin/solver.exe
+symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe
 
 # Multiple variables
-cli-test run test_cases.json --var solver=/opt/solver/bin/solver.exe --var model=./data/model.dat
+symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe --var model=./data/model.dat
 
 # Combined with parallel mode, tag filtering, etc.
-cli-test run test_cases.json --var solver=solver.exe --parallel --workers 4 --tag smoke
+symtest run test_cases.json --var solver=solver.exe --parallel --workers 4 --tag smoke
 ```
 
 `--var` format is `KEY=VALUE`, usable multiple times. Separated by `=`; whitespace around key and value is auto-trimmed.
@@ -1027,7 +1027,7 @@ cli-test run test_cases.json --var solver=solver.exe --parallel --workers 4 --ta
 #### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, YAMLRunner, ParallelJSONRunner, ParallelYAMLRunner
+from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner, ParallelYAMLRunner
 
 # Sequential run
 runner = JSONRunner(
@@ -1111,13 +1111,13 @@ test_cases:
 
 ```bash
 # Run only cases with the "smoke" tag
-cli-test run test_cases.json --tag smoke
+symtest run test_cases.json --tag smoke
 
 # Run cases with "smoke" or "regression" tags (OR relationship)
-cli-test run test_cases.json --tag smoke --tag regression
+symtest run test_cases.json --tag smoke --tag regression
 
 # Combine name and tag filtering (AND relationship)
-cli-test run test_cases.json -t alpha --tag fast
+symtest run test_cases.json -t alpha --tag fast
 ```
 
 ### Python API
@@ -1174,7 +1174,7 @@ Environment variables in the config file are set before tests and restored to th
 ### Custom Setup Plugin
 
 ```python
-from cli_test_framework import BaseSetup, JSONRunner
+from symtest import BaseSetup, JSONRunner
 
 class DatabaseSetup(BaseSetup):
     def setup(self):
@@ -1202,7 +1202,7 @@ Multiple plugins execute `setup()` in addition order and `teardown()` in reverse
 ## Parallel Testing
 
 ```python
-from cli_test_framework.runners import ParallelJSONRunner
+from symtest.runners import ParallelJSONRunner
 
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
@@ -1355,16 +1355,16 @@ Use `--history-dir` to specify a directory where the framework maintains a `.sym
 
 ```bash
 # Enable history
-cli-test run test_cases.json --history-dir ./hist
+symtest run test_cases.json --history-dir ./hist
 
 # Custom regression threshold (warn only if 2x the average)
-cli-test run test_cases.json --history-dir ./hist --regression-threshold 2.0
+symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 ```
 
 ### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, ParallelJSONRunner
 
 # Sequential run + history
 runner = JSONRunner(
@@ -1421,7 +1421,7 @@ When algorithm refactoring or environment changes make historical duration data 
 
 ```bash
 # Clear history and make this run the new baseline (requires --history-dir)
-cli-test run config.json --history-dir ./hist --update-history
+symtest run config.json --history-dir ./hist --update-history
 ```
 
 **Behavior**:
@@ -1440,7 +1440,7 @@ Use `--junit-xml` to output a JUnit-format XML report alongside test execution, 
 ### CLI Usage
 
 ```bash
-cli-test run test_cases.json --junit-xml report.xml
+symtest run test_cases.json --junit-xml report.xml
 ```
 
 `--junit-xml` is a supplementary output, coexisting with `--output-format` (text/json/html) without affecting the console report.
@@ -1448,7 +1448,7 @@ cli-test run test_cases.json --junit-xml report.xml
 ### Python API
 
 ```python
-from cli_test_framework import write_junit_xml
+from symtest import write_junit_xml
 
 runner.run_tests()
 write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
@@ -1458,7 +1458,7 @@ Status mapping: `passed` → pass; `failed` → failure (assertion failure) or e
 
 ## Logging Configuration
 
-All framework diagnostic and status information is output through Python's standard `logging` module, unified under the `cli_test_framework` namespace. Logs are written to **stderr** by default, keeping `stdout` clean for safe use with `--output-format json` for machine-readable output.
+All framework diagnostic and status information is output through Python's standard `logging` module, unified under the `symtest` namespace. Logs are written to **stderr** by default, keeping `stdout` clean for safe use with `--output-format json` for machine-readable output.
 
 ### CLI Log Level Control
 
@@ -1473,10 +1473,10 @@ Default level is INFO, showing only key progress and errors; adding `--verbose` 
 
 ```bash
 # Verbose mode (includes command output etc. at DEBUG level)
-cli-test run test_cases.json --verbose
+symtest run test_cases.json --verbose
 
 # Debug mode (prints stack trace on error)
-cli-test run test_cases.json --debug
+symtest run test_cases.json --debug
 ```
 
 ### Library Usage
@@ -1485,22 +1485,22 @@ When imported as a library, the framework only attaches a `NullHandler` by defau
 
 ```python
 import logging
-from cli_test_framework.logging_config import setup_console_logging, get_logger
+from symtest.logging_config import setup_console_logging, get_logger
 
 # Enable console logging (stderr), with optional level
 setup_console_logging(level=logging.DEBUG)
 
-logger = get_logger(__name__)   # Automatically under cli_test_framework namespace
+logger = get_logger(__name__)   # Automatically under symtest namespace
 logger.info("Custom log message")
 ```
 
 ### Output to Log File
 
-The framework does not have a built-in `--log-file` option, but you can use Python's standard `logging` to add a file handler for the `cli_test_framework` logger:
+The framework does not have a built-in `--log-file` option, but you can use Python's standard `logging` to add a file handler for the `symtest` logger:
 
 ```python
 import logging
-from cli_test_framework.logging_config import get_logger
+from symtest.logging_config import get_logger
 
 file_handler = logging.FileHandler("run.log", encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
@@ -1509,10 +1509,10 @@ file_handler.setFormatter(
 )
 
 # Add file handler to framework root logger; all child loggers inherit it
-logging.getLogger("cli_test_framework").addHandler(file_handler)
+logging.getLogger("symtest").addHandler(file_handler)
 ```
 
-The above code works both for library usage and in scripts alongside `cli-test`. Console and file handlers can coexist.
+The above code works both for library usage and in scripts alongside `symtest`. Console and file handlers can coexist.
 
 ## File Comparison
 
@@ -1526,8 +1526,8 @@ Two equivalent invocation methods with identical parameters:
 # Standalone command
 compare-files <file1> <file2> [options]
 
-# cli-test subcommand
-cli-test compare <file1> <file2> [options]
+# symtest subcommand
+symtest compare <file1> <file2> [options]
 ```
 
 ### Common Options
@@ -1615,10 +1615,10 @@ Statistics are computed **in streaming fashion**, independent of the difference 
 
 ```bash
 # Enable error analysis
-cli-test run config.json --error-analysis
+symtest run config.json --error-analysis
 
 # Combine with comparison parameters
-cli-test run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
+symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
 
 **Python API**:
@@ -1632,7 +1632,7 @@ result = comparator.compare_files("data1.csv", "data2.csv")
 print(result.error_stats)  # dict or None
 
 # Enable via Assertions.compare_files
-from cli_test_framework.core.assertions import Assertions
+from symtest.core.assertions import Assertions
 cf_result = Assertions.compare_files(
     "actual.csv", "baseline.csv",
     file_type="csv", rtol=1e-5, atol=1e-8,
@@ -1704,7 +1704,7 @@ compare-files binary1.bin binary2.bin --similarity --chunk-size 16384
 ### Python API
 
 ```python
-from cli_test_framework.file_comparator import ComparatorFactory
+from symtest.file_comparator import ComparatorFactory
 
 # Text comparison
 comparator = ComparatorFactory.create_comparator("text", encoding="utf-8", verbose=True)
@@ -1741,7 +1741,7 @@ result.differences # list
 ### Custom Runner
 
 ```python
-from cli_test_framework.core.base_runner import BaseRunner
+from symtest.core.base_runner import BaseRunner
 
 class CustomRunner(BaseRunner):
     def load_test_cases(self):
@@ -1756,7 +1756,7 @@ class CustomRunner(BaseRunner):
 ### Custom Setup Plugin
 
 ```python
-from cli_test_framework import BaseSetup
+from symtest import BaseSetup
 
 class MySetup(BaseSetup):
     def setup(self):
@@ -1785,17 +1785,17 @@ your-workspace/
 You can specify additional plugin directories via the CLI `--plugin-dir` parameter (usable multiple times):
 
 ```bash
-cli-test run test_config.json --plugin-dir ./extra_plugins
+symtest run test_config.json --plugin-dir ./extra_plugins
 ```
 
 Plugins are also automatically inherited by process-mode child processes via the `CLITEST_PLUGIN_DIRS` environment variable.
 
 **Plugin development notes**:
-- Inherit from `cli_test_framework.file_comparator.BaseComparator`
+- Inherit from `symtest.file_comparator.BaseComparator`
 - Class name must end with `Comparator` (e.g., `MyAnalysisComparator`)
 - The registered type name = class name without `Comparator`, lowercased (e.g., `myanalysis`)
 - Prefer overriding the `compare_files(file1, file2, **kwargs)` method over `read_content`/`compare_content` (if your comparator doesn't use the two-file model)
-- Construct structured results via `from cli_test_framework.file_comparator import ComparisonResult, Difference`
+- Construct structured results via `from symtest.file_comparator import ComparisonResult, Difference`
 - `extra_kwargs` are auto-passed from the config `compareSpec`
 
 Use the registered type name directly in your config:
@@ -1852,8 +1852,8 @@ The script's stdout and stderr are fully captured in the `Comparator Output` sec
 #### Method 3: Manual Registration (Programmatic)
 
 ```python
-from cli_test_framework.file_comparator import ComparatorFactory
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator import ComparatorFactory
+from symtest.file_comparator.base_comparator import BaseComparator
 
 class FooComparator(BaseComparator):
     # Implement read_content / compare_content etc.
@@ -1893,7 +1893,7 @@ Usage: copy the plugin file into your workspace's `comparators/` directory for a
 The `Assertions` class provides static assertion methods; all checks in `expected` are performed by it:
 
 ```python
-from cli_test_framework.core.assertions import Assertions
+from symtest.core.assertions import Assertions
 
 Assertions.return_code_equals(actual_code, 0)
 Assertions.contains(output, "expected text")

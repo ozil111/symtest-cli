@@ -1,5 +1,5 @@
-from cli_test_framework.file_comparator.factory import ComparatorFactory
-from cli_test_framework.file_comparator.binary_comparator import BinaryComparator
+from symtest.file_comparator.factory import ComparatorFactory
+from symtest.file_comparator.binary_comparator import BinaryComparator
 
 
 def compare_binary(file1, file2, **kwargs):

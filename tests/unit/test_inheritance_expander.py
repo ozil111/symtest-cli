@@ -3,7 +3,7 @@
 from pathlib import Path
 import pytest
 
-from cli_test_framework.config.inheritance_expander import (
+from symtest.config.inheritance_expander import (
     resolve_inheritance,
     apply_variables,
     _deep_merge_dicts,
@@ -329,7 +329,7 @@ class TestAbstract:
 class TestResolveFixtures:
     def test_fixture_basic_inheritance(self):
         """Test with inheritance_base.json fixture."""
-        from cli_test_framework.config.import_expander import _load_raw_config
+        from symtest.config.import_expander import _load_raw_config
 
         path = FIXTURES / "inheritance_base.json"
         config = _load_raw_config(path)
@@ -354,7 +354,7 @@ class TestResolveFixtures:
 
     def test_fixture_chain_inheritance(self):
         """Test with inheritance_chain.json fixture."""
-        from cli_test_framework.config.import_expander import _load_raw_config
+        from symtest.config.import_expander import _load_raw_config
 
         path = FIXTURES / "inheritance_chain.json"
         config = _load_raw_config(path)

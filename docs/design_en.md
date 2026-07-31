@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI Entry                                │
-│     cli-test run / tui / validate / schema / compare-files       │
+│     symtest run / tui / validate / schema / compare-files       │
 └──────┬──────────┬──────────┬──────────┬──────────┬──────────────┘
        │          │          │          │          │
 ┌──────▼──────┐ ┌▼───────┐ ┌▼───────┐ ┌▼───────┐ ┌▼──────────────┐
@@ -47,9 +47,9 @@ The framework is divided into four layers: **CLI Entry Layer** (including TUI), 
 ### 2.1 Directory Structure
 
 ```
-src/cli_test_framework/
+src/symtest/
 ├── __init__.py                  # Package entry, exports public API
-├── cli.py                       # cli-test command entry (6 subcommands)
+├── cli.py                       # symtest command entry (6 subcommands)
 ├── logging_config.py            # Unified logging configuration
 ├── core/                        # Core abstractions and base components
 │   ├── base_runner.py           # BaseRunner abstract base class
@@ -112,11 +112,11 @@ src/cli_test_framework/
 
 | Command | Mapping |
 |---|---|
-| `cli-test run` | `cli_test_framework.cli:run_tests` |
-| `cli-test tui` | `cli_test_framework.tui.app:run_tui` |
-| `cli-test validate` | `cli_test_framework.cli:run_validate` |
-| `cli-test schema` | `cli_test_framework.cli:run_schema` |
-| `cli-test compare` | `cli_test_framework.cli:run_compare` |
+| `symtest run` | `symtest.cli:run_tests` |
+| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest validate` | `symtest.cli:run_validate` |
+| `symtest schema` | `symtest.cli:run_schema` |
+| `symtest compare` | `symtest.cli:run_compare` |
 
 ## 3. Config Pipeline
 
@@ -180,7 +180,7 @@ The `extends` field enables test-case template inheritance:
 
 ### 3.3 Config Validation (`config_io.py`)
 
-The `cli-test validate` subcommand checks configuration without running tests:
+The `symtest validate` subcommand checks configuration without running tests:
 
 - Error-level (affects `valid`): JSON/YAML syntax, required fields, import target existence, circular imports, extends target existence, circular extends
 - Warning-level (does not affect `valid`): command executability (PATH lookup), `compare_files` baseline file existence
@@ -595,7 +595,7 @@ class ComparisonResult:
 Terminal-based interactive interface built on [Textual](https://textual.textualize.io/).
 
 ```
-cli-test tui test_cases.json --workspace /path/to/project
+symtest tui test_cases.json --workspace /path/to/project
 ```
 
 ### 6.1 Architecture
@@ -718,7 +718,7 @@ ParallelConfigRunner.run_tests()
 ### 7.3 File Comparison Flow
 
 ```
-cli-test compare file1 file2 [options]
+symtest compare file1 file2 [options]
        │
        ▼
   Auto-detect / specify --file-type

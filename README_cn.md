@@ -2,9 +2,9 @@
 
 中文 | [English](README.md)
 
-> **本项目已更名为 [`symtest`](https://pypi.org/project/symtest/)。**
-> `cli-test-framework` 1.2.4 是旧名称下的最后一个版本，今后不再更新。
-> 请改用新包：
+> **说明：** 本项目原名为 `cli-test-framework`，自 1.3.0 起以
+> [`symtest`](https://pypi.org/project/symtest/) 名称发布，旧包名不再更新。
+> 安装请使用：
 >
 > ```bash
 > pip install symtest
@@ -36,15 +36,15 @@ CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程�
 要求 Python 3.9 或更高版本。
 
 ```bash
-pip install cli-test-framework
+pip install symtest
 ```
 
 YAML 和 TUI 均为可选能力：
 
 ```bash
-pip install "cli-test-framework[yaml]"
-pip install "cli-test-framework[tui]"
-pip install "cli-test-framework[all]"
+pip install "symtest[yaml]"
+pip install "symtest[tui]"
+pip install "symtest[all]"
 ```
 
 默认安装包含 HDF5 和数值比较支持。
@@ -73,13 +73,13 @@ pip install "cli-test-framework[all]"
 运行测试：
 
 ```bash
-cli-test run test_cases.json
+symtest run test_cases.json
 ```
 
 只校验配置而不执行：
 
 ```bash
-cli-test validate test_cases.json
+symtest validate test_cases.json
 ```
 
 ## 数值 Golden File 测试
@@ -124,8 +124,8 @@ cli-test validate test_cases.json
 文件，因此交互运行时必须输入 `yes`，非交互环境必须显式增加 `--yes`：
 
 ```bash
-cli-test run test_cases.json --update-baseline
-cli-test run test_cases.json --update-baseline --yes   # 自动化或 CI
+symtest run test_cases.json --update-baseline
+symtest run test_cases.json --update-baseline --yes   # 自动化或 CI
 ```
 
 请将基线纳入版本控制，并审查每一次更新。
@@ -136,9 +136,9 @@ cli-test run test_cases.json --update-baseline --yes   # 自动化或 CI
 `--resume` 会复用保存的状态，跳过已经通过的步骤：
 
 ```bash
-cli-test run solver_tests.json
-cli-test run solver_tests.json --last-failed
-cli-test run solver_tests.json -t long_case --resume
+symtest run solver_tests.json
+symtest run solver_tests.json --last-failed
+symtest run solver_tests.json -t long_case --resume
 ```
 
 `--resume` 明确信任两次运行之间的工作区产物未被修改。
@@ -160,14 +160,14 @@ cli-test run solver_tests.json -t long_case --resume
 辅助检查场景覆盖情况，并不是日常执行测试的必要组件。
 
 ```bash
-cli-test tui main_config.json
+symtest tui main_config.json
 ```
 
 ## 并行执行与资源
 
 ```bash
-cli-test run test_cases.json --parallel --workers 4
-cli-test run test_cases.json --parallel --execution-mode process
+symtest run test_cases.json --parallel --workers 4
+symtest run test_cases.json --parallel --execution-mode process
 ```
 
 线程模式目前支持 CPU 令牌分配、求解器线程环境变量注入，以及基于预估时间或历史
@@ -177,7 +177,7 @@ priority 语义和更完整的资源管理仍是后续演进方向。
 ## CI 与报告
 
 ```bash
-cli-test run test_cases.json \
+symtest run test_cases.json \
   --parallel --workers 4 \
   --junit-xml report.xml
 ```
@@ -188,7 +188,7 @@ Linux 上覆盖 Python 3.9 至 3.13。
 ## Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, ParallelJSONRunner
 
 runner = ParallelJSONRunner(
     config_file="test_cases.json",

@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.yaml_runner import YAMLRunner
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.yaml_runner import YAMLRunner
 
 
 class TestJSONRunner(unittest.TestCase):

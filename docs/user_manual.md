@@ -26,7 +26,7 @@
 ## 安装
 
 ```bash
-pip install cli-test-framework
+pip install symtest
 ```
 
 要求：Python >= 3.9
@@ -34,13 +34,13 @@ pip install cli-test-framework
 YAML 支持需安装可选依赖：
 
 ```bash
-pip install "cli-test-framework[yaml]"
+pip install "symtest[yaml]"
 ```
 
 一次安装 YAML 和 TUI 等全部可选功能：
 
 ```bash
-pip install "cli-test-framework[all]"
+pip install "symtest[all]"
 ```
 
 HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环境下使用其他比较功能，可单独卸载，但 HDF5 比较将不可用。
@@ -437,14 +437,14 @@ test_cases:
 2. **全局 `--var`**：通过 CLI 传入（`--var KEY=VALUE`），在用例级变量之后叠加，**同名 key 全局优先级更高**
 
 ```bash
-cli-test run config.json --var solver=/path/to/solver
+symtest run config.json --var solver=/path/to/solver
 ```
 
 `setup` 区块仅使用全局 `--var` 替换（无用例级变量）。
 
 ### validate 检查
 
-`cli-test validate` 对继承配置做额外校验：
+`symtest validate` 对继承配置做额外校验：
 
 - `extends` 目标是否存在
 - 是否形成循环继承链
@@ -463,16 +463,16 @@ cli-test run config.json --var solver=/path/to/solver
 
 ```bash
 # 校验单个配置文件
-cli-test validate test_cases.json
+symtest validate test_cases.json
 
 # 校验带 import 的主配置（自动展开并检查所有子文件）
-cli-test validate main_config.json
+symtest validate main_config.json
 
 # 指定工作目录
-cli-test validate test_cases.json --workspace /path/to/project
+symtest validate test_cases.json --workspace /path/to/project
 
 # 输出 JSON 格式（适合 AI/脚本解析）
-cli-test validate test_cases.json --output-format json
+symtest validate test_cases.json --output-format json
 ```
 
 ### 校验内容
@@ -515,28 +515,28 @@ TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
 
 ```bash
 # 安装时附带 TUI 支持
-pip install "cli-test-framework[tui]"
+pip install "symtest[tui]"
 
 # 或者在已有框架上单独安装 textual
 pip install textual
 ```
 
-如果未安装 `textual` 就直接执行 `cli-test tui`，框架会给出友好的安装提示。
+如果未安装 `textual` 就直接执行 `symtest tui`，框架会给出友好的安装提示。
 
 ### 启动
 
 ```bash
 # 打开 TUI 编辑测试用例
-cli-test tui test_cases.json
+symtest tui test_cases.json
 
 # YAML 文件同样支持
-cli-test tui test_cases.yaml
+symtest tui test_cases.yaml
 
 # 指定工作目录
-cli-test tui test_cases.json --workspace /path/to/project
+symtest tui test_cases.json --workspace /path/to/project
 
 # 打开带 import 的主配置文件（自动展开子文件中的所有用例）
-cli-test tui main_config.json
+symtest tui main_config.json
 ```
 
 TUI 启动时会自动通过[配置拆分机制](#配置拆分机制)展开 `import` 引用，将所有用例加载到界面中统一管理。
@@ -633,66 +633,66 @@ TUI 启动后显示**用例列表主界面**：
 
 ```bash
 # 运行 JSON 测试
-cli-test run test_cases.json
+symtest run test_cases.json
 
 # 运行 YAML 测试
-cli-test run test_cases.yaml
+symtest run test_cases.yaml
 
 # 运行带 import 拆分的主配置（自动展开子文件）
-cli-test run main_config.json
+symtest run main_config.json
 
 # 指定工作目录
-cli-test run test_cases.json --workspace /path/to/project
+symtest run test_cases.json --workspace /path/to/project
 
 # 并行运行
-cli-test run test_cases.json --parallel --workers 4
+symtest run test_cases.json --parallel --workers 4
 
 # 指定并行模式
-cli-test run test_cases.json --parallel --execution-mode process
+symtest run test_cases.json --parallel --execution-mode process
 
 # 只运行指定用例
-cli-test run test_cases.json -t test_name_1 -t test_name_2
+symtest run test_cases.json -t test_name_1 -t test_name_2
 
 # 按标签过滤
-cli-test run test_cases.json --tag smoke
-cli-test run test_cases.json --tag smoke --tag regression
+symtest run test_cases.json --tag smoke
+symtest run test_cases.json --tag smoke --tag regression
 
 # 同时按名称和标签过滤（AND 关系）
-cli-test run test_cases.json -t test_name_1 --tag smoke
+symtest run test_cases.json -t test_name_1 --tag smoke
 
 # 详细输出
-cli-test run test_cases.json --verbose
+symtest run test_cases.json --verbose
 
 # 调试模式
-cli-test run test_cases.json --debug
+symtest run test_cases.json --debug
 
 # 输出格式
-cli-test run test_cases.json --output-format json|html|text
+symtest run test_cases.json --output-format json|html|text
 
 # 启用历史记录（智能调度 + 回归检测）
-cli-test run test_cases.json --history-dir ./hist
+symtest run test_cases.json --history-dir ./hist
 
 # 自定义回归检测阈值（默认 1.5 倍）
-cli-test run test_cases.json --history-dir ./hist --regression-threshold 2.0
+symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 
 # 输出 JUnit XML 报告（可供 Jenkins/GitLab CI 等工具解析）
-cli-test run test_cases.json --junit-xml report.xml
+symtest run test_cases.json --junit-xml report.xml
 
 # 只运行上次失败的用例（每次运行时覆盖式更新）
-cli-test run test_cases.json --last-failed
+symtest run test_cases.json --last-failed
 
 # 断点续跑：跳过已通过的步骤，从失败步骤继续
-cli-test run test_cases.json --resume
-cli-test run test_cases.json --resume -t BS-U_01
+symtest run test_cases.json --resume
+symtest run test_cases.json --resume -t BS-U_01
 
 # 比较失败时更新基线文件（交互运行需输入 yes）
-cli-test run test_cases.json --update-baseline
+symtest run test_cases.json --update-baseline
 
 # 非交互环境必须显式确认
-cli-test run test_cases.json --update-baseline --yes
+symtest run test_cases.json --update-baseline --yes
 
 # 启用误差分析（数值比较时输出全量统计）
-cli-test run test_cases.json --error-analysis
+symtest run test_cases.json --error-analysis
 ```
 
 ### 只运行上次失败的用例（--last-failed）
@@ -709,13 +709,13 @@ cli-test run test_cases.json --error-analysis
 
 ```bash
 # 第一次：全量运行 10 个用例，3 个失败
-cli-test run config.json
+symtest run config.json
 
 # 修复代码后，只重跑那 3 个失败的
-cli-test run config.json --last-failed
+symtest run config.json --last-failed
 
 # 如果 3 个全过，再跑一次全量确认
-cli-test run config.json
+symtest run config.json
 ```
 
 **与 `-t` 的交互**：`--last-failed` 与 `-t`/`--tag` 可以同时使用，效果叠加（AND 关系）。
@@ -735,13 +735,13 @@ cli-test run config.json
 
 ```bash
 # 首次全量运行，BS-U_01 的 step 4 失败（总耗时 72s）
-cli-test run config.json
+symtest run config.json
 
 # 修复后只重跑 BS-U_01，跳过 step 1-3（仅耗时 ~0.14s）
-cli-test run config.json -t BS-U_01 --resume
+symtest run config.json -t BS-U_01 --resume
 
 # 全部通过后，跑一次全量确认无回归
-cli-test run config.json
+symtest run config.json
 ```
 
 **与 `-t` 的交互**：`--resume` 通常与 `-t` 组合使用，先定位到单个失败用例再断点续跑。不带 `-t` 时，所有已存在状态的序列用例都会尝试续跑。
@@ -757,10 +757,10 @@ cli-test run config.json
 
 ```bash
 # 交互运行会先要求输入 yes
-cli-test run config.json --update-baseline
+symtest run config.json --update-baseline
 
 # 自动化或 CI 中显式确认
-cli-test run config.json --update-baseline --yes
+symtest run config.json --update-baseline --yes
 ```
 
 **行为**：
@@ -778,7 +778,7 @@ cli-test run config.json --update-baseline --yes
 `validate` 命令新增 `--output-format json`，输出机器可读的 JSON 报告，适合 AI/脚本自动检查配置合法性：
 
 ```bash
-cli-test validate config.json --output-format json
+symtest validate config.json --output-format json
 ```
 
 输出示例：
@@ -793,7 +793,7 @@ cli-test validate config.json --output-format json
 ### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
 
 # 顺序运行
 runner = JSONRunner(
@@ -827,7 +827,7 @@ runner = ParallelJSONRunner(
 success = runner.run_tests()
 
 # 并行运行（YAML）
-from cli_test_framework.runners import ParallelYAMLRunner
+from symtest.runners import ParallelYAMLRunner
 runner = ParallelYAMLRunner(
     config_file="test_cases.yaml",
     max_workers=4,
@@ -889,15 +889,15 @@ for detail in runner.results["details"]:
 
 ## 项目入口脚本
 
-如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `cli-test run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
+如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `symtest run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
 
 ### 何时直接用 CLI
 
 | 场景 | 推荐方式 |
 |---|---|
-| 简单项目、单个配置文件 | `cli-test run config.json --workers 4` |
-| 一次性运行、无特殊环境需求 | `cli-test run config.yaml --tag smoke` |
-| CI 流水线 | `cli-test run config.json --junit-xml report.xml` |
+| 简单项目、单个配置文件 | `symtest run config.json --workers 4` |
+| 一次性运行、无特殊环境需求 | `symtest run config.yaml --tag smoke` |
+| CI 流水线 | `symtest run config.json --junit-xml report.xml` |
 
 ### 何时包一层入口脚本
 
@@ -950,7 +950,7 @@ python run_tests.py test_cases.json --junit-xml report.xml
 
 ### Windows 下 WinError 2 问题
 
-如果你的测试用例 `command` 字段引用了 console-script 命令（例如 `compare-files`、`cli-test` 等通过 pip 安装的入口点），在 Windows 下直接双击运行脚本或通过未激活的环境启动时，子进程可能找不到这些可执行文件，报错：
+如果你的测试用例 `command` 字段引用了 console-script 命令（例如 `compare-files`、`symtest` 等通过 pip 安装的入口点），在 Windows 下直接双击运行脚本或通过未激活的环境启动时，子进程可能找不到这些可执行文件，报错：
 
 ```
 FileNotFoundError: [WinError 2] 系统找不到指定的文件。
@@ -1013,13 +1013,13 @@ test_cases:
 
 ```bash
 # 单个变量
-cli-test run test_cases.json --var solver=/opt/solver/bin/solver.exe
+symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe
 
 # 多个变量
-cli-test run test_cases.json --var solver=/opt/solver/bin/solver.exe --var model=./data/model.dat
+symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe --var model=./data/model.dat
 
 # 与并行模式、标签过滤等组合使用
-cli-test run test_cases.json --var solver=solver.exe --parallel --workers 4 --tag smoke
+symtest run test_cases.json --var solver=solver.exe --parallel --workers 4 --tag smoke
 ```
 
 `--var` 格式为 `KEY=VALUE`，可多次使用。等号分隔，key 和 value 两侧的空格会被自动去除。
@@ -1027,7 +1027,7 @@ cli-test run test_cases.json --var solver=solver.exe --parallel --workers 4 --ta
 #### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, YAMLRunner, ParallelJSONRunner, ParallelYAMLRunner
+from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner, ParallelYAMLRunner
 
 # 顺序运行
 runner = JSONRunner(
@@ -1111,13 +1111,13 @@ test_cases:
 
 ```bash
 # 只运行带 "smoke" 标签的用例
-cli-test run test_cases.json --tag smoke
+symtest run test_cases.json --tag smoke
 
 # 运行带 "smoke" 或 "regression" 标签的用例（OR 关系）
-cli-test run test_cases.json --tag smoke --tag regression
+symtest run test_cases.json --tag smoke --tag regression
 
 # 同时按名称和标签过滤（AND 关系）
-cli-test run test_cases.json -t alpha --tag fast
+symtest run test_cases.json -t alpha --tag fast
 ```
 
 ### Python API
@@ -1174,7 +1174,7 @@ test_cases:
 ### 自定义 Setup 插件
 
 ```python
-from cli_test_framework import BaseSetup, JSONRunner
+from symtest import BaseSetup, JSONRunner
 
 class DatabaseSetup(BaseSetup):
     def setup(self):
@@ -1202,7 +1202,7 @@ success = runner.run_tests()
 ## 并行测试
 
 ```python
-from cli_test_framework.runners import ParallelJSONRunner
+from symtest.runners import ParallelJSONRunner
 
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
@@ -1355,16 +1355,16 @@ test_cases:
 
 ```bash
 # 启用历史记录
-cli-test run test_cases.json --history-dir ./hist
+symtest run test_cases.json --history-dir ./hist
 
 # 自定义回归阈值（超过 2 倍均值才警告）
-cli-test run test_cases.json --history-dir ./hist --regression-threshold 2.0
+symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 ```
 
 ### Python API
 
 ```python
-from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
+from symtest.runners import JSONRunner, ParallelJSONRunner
 
 # 顺序运行 + 历史记录
 runner = JSONRunner(
@@ -1423,7 +1423,7 @@ success = runner.run_tests()
 
 ```bash
 # 清除历史后本次运行成为新基线（需搭配 --history-dir）
-cli-test run config.json --history-dir ./hist --update-history
+symtest run config.json --history-dir ./hist --update-history
 ```
 
 **行为**：
@@ -1442,7 +1442,7 @@ cli-test run config.json --history-dir ./hist --update-history
 ### CLI 用法
 
 ```bash
-cli-test run test_cases.json --junit-xml report.xml
+symtest run test_cases.json --junit-xml report.xml
 ```
 
 `--junit-xml` 是补充输出，与 `--output-format`（text/json/html）并存，不影响控制台报告。
@@ -1450,7 +1450,7 @@ cli-test run test_cases.json --junit-xml report.xml
 ### Python API
 
 ```python
-from cli_test_framework import write_junit_xml
+from symtest import write_junit_xml
 
 runner.run_tests()
 write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
@@ -1460,7 +1460,7 @@ write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 
 ## 日志配置
 
-框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `cli_test_framework` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
+框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `symtest` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
 
 ### 命令行控制日志级别
 
@@ -1475,10 +1475,10 @@ write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 
 ```bash
 # 详细模式（含命令输出等 DEBUG 信息）
-cli-test run test_cases.json --verbose
+symtest run test_cases.json --verbose
 
 # 调试模式（出错时打印堆栈）
-cli-test run test_cases.json --debug
+symtest run test_cases.json --debug
 ```
 
 ### 库使用方式
@@ -1487,22 +1487,22 @@ cli-test run test_cases.json --debug
 
 ```python
 import logging
-from cli_test_framework.logging_config import setup_console_logging, get_logger
+from symtest.logging_config import setup_console_logging, get_logger
 
 # 启用控制台日志（stderr），可指定级别
 setup_console_logging(level=logging.DEBUG)
 
-logger = get_logger(__name__)   # 自动归入 cli_test_framework 命名空间
+logger = get_logger(__name__)   # 自动归入 symtest 命名空间
 logger.info("自定义日志信息")
 ```
 
 ### 输出到日志文件
 
-框架未内置 `--log-file` 选项，但可借助 Python 标准 `logging` 自行为 `cli_test_framework` logger 添加文件处理器：
+框架未内置 `--log-file` 选项，但可借助 Python 标准 `logging` 自行为 `symtest` logger 添加文件处理器：
 
 ```python
 import logging
-from cli_test_framework.logging_config import get_logger
+from symtest.logging_config import get_logger
 
 file_handler = logging.FileHandler("run.log", encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
@@ -1511,10 +1511,10 @@ file_handler.setFormatter(
 )
 
 # 给框架根 logger 加文件处理器，所有子 logger 都会继承
-logging.getLogger("cli_test_framework").addHandler(file_handler)
+logging.getLogger("symtest").addHandler(file_handler)
 ```
 
-上述代码既适用于库调用，也可放在脚本中配合 `cli-test` 一起使用。控制台与文件处理器可并存。
+上述代码既适用于库调用，也可放在脚本中配合 `symtest` 一起使用。控制台与文件处理器可并存。
 
 ## 文件比较
 
@@ -1528,8 +1528,8 @@ logging.getLogger("cli_test_framework").addHandler(file_handler)
 # 独立命令
 compare-files <file1> <file2> [选项]
 
-# cli-test 子命令
-cli-test compare <file1> <file2> [选项]
+# symtest 子命令
+symtest compare <file1> <file2> [选项]
 ```
 
 ### 通用选项
@@ -1617,10 +1617,10 @@ CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内�
 
 ```bash
 # 启用误差分析
-cli-test run config.json --error-analysis
+symtest run config.json --error-analysis
 
 # 与比较参数组合使用
-cli-test run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
+symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
 
 **Python API**：
@@ -1634,7 +1634,7 @@ result = comparator.compare_files("data1.csv", "data2.csv")
 print(result.error_stats)  # dict 或 None
 
 # 通过 Assertions.compare_files 启用
-from cli_test_framework.core.assertions import Assertions
+from symtest.core.assertions import Assertions
 cf_result = Assertions.compare_files(
     "actual.csv", "baseline.csv",
     file_type="csv", rtol=1e-5, atol=1e-8,
@@ -1706,7 +1706,7 @@ compare-files binary1.bin binary2.bin --similarity --chunk-size 16384
 ### Python API
 
 ```python
-from cli_test_framework.file_comparator import ComparatorFactory
+from symtest.file_comparator import ComparatorFactory
 
 # 文本比较
 comparator = ComparatorFactory.create_comparator("text", encoding="utf-8", verbose=True)
@@ -1743,7 +1743,7 @@ result.differences # list
 ### 自定义 Runner
 
 ```python
-from cli_test_framework.core.base_runner import BaseRunner
+from symtest.core.base_runner import BaseRunner
 
 class CustomRunner(BaseRunner):
     def load_test_cases(self):
@@ -1758,7 +1758,7 @@ class CustomRunner(BaseRunner):
 ### 自定义 Setup 插件
 
 ```python
-from cli_test_framework import BaseSetup
+from symtest import BaseSetup
 
 class MySetup(BaseSetup):
     def setup(self):
@@ -1787,17 +1787,17 @@ your-workspace/
 可通过 CLI `--plugin-dir` 参数指定额外插件目录（支持多次使用）：
 
 ```bash
-cli-test run test_config.json --plugin-dir ./extra_plugins
+symtest run test_config.json --plugin-dir ./extra_plugins
 ```
 
 插件也会通过环境变量 `CLITEST_PLUGIN_DIRS` 自动继承到 process 模式子进程。
 
 **插件开发注意事项**：
-- 继承 `cli_test_framework.file_comparator.BaseComparator`
+- 继承 `symtest.file_comparator.BaseComparator`
 - 类名必须以 `Comparator` 结尾（如 `MyAnalysisComparator`）
 - 注册的 type 名 = 类名去掉 `Comparator` 再小写（如 `myanalysis`）
 - 推荐重写 `compare_files(file1, file2, **kwargs)` 方法而非 `read_content`/`compare_content`（若比较器不使用两文件模型）
-- 通过 `from cli_test_framework.file_comparator import ComparisonResult, Difference` 构造结构化结果
+- 通过 `from symtest.file_comparator import ComparisonResult, Difference` 构造结构化结果
 - `extra_kwargs` 自动从 config `compareSpec` 透传
 
 在配置中直接使用注册的类型名：
@@ -1854,8 +1854,8 @@ cli-test run test_config.json --plugin-dir ./extra_plugins
 #### 方式三：手动注册（编程方式）
 
 ```python
-from cli_test_framework.file_comparator import ComparatorFactory
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator import ComparatorFactory
+from symtest.file_comparator.base_comparator import BaseComparator
 
 class FooComparator(BaseComparator):
     # 实现 read_content / compare_content 等方法
@@ -1895,7 +1895,7 @@ comparator = ComparatorFactory.create_comparator("foo")
 `Assertions` 类提供静态断言方法，`expected` 中的校验均由其完成：
 
 ```python
-from cli_test_framework.core.assertions import Assertions
+from symtest.core.assertions import Assertions
 
 Assertions.return_code_equals(actual_code, 0)
 Assertions.contains(output, "expected text")

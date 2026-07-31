@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI 入口                                 │
-│     cli-test run / tui / validate / schema / compare-files       │
+│     symtest run / tui / validate / schema / compare-files       │
 └──────┬──────────┬──────────┬──────────┬──────────┬──────────────┘
        │          │          │          │          │
 ┌──────▼──────┐ ┌▼───────┐ ┌▼───────┐ ┌▼───────┐ ┌▼──────────────┐
@@ -47,9 +47,9 @@
 ### 2.1 目录结构
 
 ```
-src/cli_test_framework/
+src/symtest/
 ├── __init__.py                  # 包入口，导出公共 API
-├── cli.py                       # cli-test 命令入口（6 个子命令）
+├── cli.py                       # symtest 命令入口（6 个子命令）
 ├── logging_config.py            # 统一日志配置
 ├── core/                        # 核心抽象与基础组件
 │   ├── base_runner.py           # BaseRunner 抽象基类
@@ -112,11 +112,11 @@ src/cli_test_framework/
 
 | 命令 | 映射 |
 |---|---|
-| `cli-test run` | `cli_test_framework.cli:run_tests` |
-| `cli-test tui` | `cli_test_framework.tui.app:run_tui` |
-| `cli-test validate` | `cli_test_framework.cli:run_validate` |
-| `cli-test schema` | `cli_test_framework.cli:run_schema` |
-| `cli-test compare` | `cli_test_framework.cli:run_compare` |
+| `symtest run` | `symtest.cli:run_tests` |
+| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest validate` | `symtest.cli:run_validate` |
+| `symtest schema` | `symtest.cli:run_schema` |
+| `symtest compare` | `symtest.cli:run_compare` |
 
 ## 3. 配置管线
 
@@ -180,7 +180,7 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 
 ### 3.3 配置验证 (`config_io.py`)
 
-`cli-test validate` 子命令在不执行测试的情况下校验配置：
+`symtest validate` 子命令在不执行测试的情况下校验配置：
 
 - Error 级（影响 valid）：JSON/YAML 语法、必填字段、import 目标存在性、循环引用、extends 目标存在性、循环继承
 - Warning 级（不影响 valid）：命令可执行性（PATH 查找）、`compare_files` baseline 文件存在性
@@ -595,7 +595,7 @@ class ComparisonResult:
 基于 [Textual](https://textual.textualize.io/) 的终端交互界面。
 
 ```
-cli-test tui test_cases.json --workspace /path/to/project
+symtest tui test_cases.json --workspace /path/to/project
 ```
 
 ### 6.1 架构
@@ -718,7 +718,7 @@ ParallelConfigRunner.run_tests()
 ### 7.3 文件比较流
 
 ```
-cli-test compare file1 file2 [options]
+symtest compare file1 file2 [options]
        │
        ▼
   自动检测 / 指定 --file-type

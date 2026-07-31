@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from cli_test_framework.core import process_worker
+from symtest.core import process_worker
 
 
 def passed_result(name="case", output="ok\n"):

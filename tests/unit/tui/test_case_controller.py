@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cli_test_framework.core.test_case import TestCase, TestCaseStep
-from cli_test_framework.core.config_loader import parse_test_cases
-from cli_test_framework.tui.controllers.case_controller import CaseController
+from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.config_loader import parse_test_cases
+from symtest.tui.controllers.case_controller import CaseController
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ class TestControllerInit:
 
 
 class TestControllerLoad:
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
     def test_load_single_cmd_cases(self, mock_load):
         mock_load.return_value = {
             "test_cases": [
@@ -79,7 +79,7 @@ class TestControllerLoad:
         assert ctrl.cases[0].command == "echo"
         assert ctrl.cases[0].tags == ["smoke"]
 
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
     def test_load_sequence_cases(self, mock_load):
         mock_load.return_value = {
             "test_cases": [
@@ -98,7 +98,7 @@ class TestControllerLoad:
         assert len(ctrl.cases[0].steps) == 2
         assert ctrl.cases[0].steps[0].command == "echo"
 
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
     def test_load_preserves_setup(self, mock_load):
         mock_load.return_value = {
             "setup": {"workspace": "/tmp"},
@@ -110,7 +110,7 @@ class TestControllerLoad:
         # Setup is stored internally for re-serialisation
         assert ctrl._setup == {"workspace": "/tmp"}
 
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
     def test_load_stores_workspace(self, mock_load):
         mock_load.return_value = {"test_cases": []}
         ctrl = CaseController()
@@ -119,8 +119,8 @@ class TestControllerLoad:
 
 
 class TestControllerSave:
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
-    @patch("cli_test_framework.tui.controllers.case_controller.save_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.save_config")
     def test_save_writes_cases(self, mock_save, mock_load):
         mock_load.return_value = {
             "test_cases": [
@@ -141,8 +141,8 @@ class TestControllerSave:
         assert len(config_dict["test_cases"]) == 2
         assert ctrl.dirty is False
 
-    @patch("cli_test_framework.tui.controllers.case_controller.load_config")
-    @patch("cli_test_framework.tui.controllers.case_controller.save_config")
+    @patch("symtest.tui.controllers.case_controller.load_config")
+    @patch("symtest.tui.controllers.case_controller.save_config")
     def test_save_as_new_path(self, mock_save, mock_load):
         mock_load.return_value = {"test_cases": []}
         ctrl = CaseController()
@@ -353,7 +353,7 @@ class TestDirtyFlag:
     def test_load_resets_dirty(self):
         ctrl = CaseController()
         ctrl._dirty = True
-        with patch("cli_test_framework.tui.controllers.case_controller.load_config",
+        with patch("symtest.tui.controllers.case_controller.load_config",
                    return_value={"test_cases": []}):
             ctrl.load("dummy.json")
         assert ctrl.dirty is False
@@ -362,7 +362,7 @@ class TestDirtyFlag:
         ctrl = CaseController()
         ctrl._file_path = Path("/tmp/test.json")
         ctrl._dirty = True
-        with patch("cli_test_framework.tui.controllers.case_controller.save_config"):
+        with patch("symtest.tui.controllers.case_controller.save_config"):
             ctrl.save()
         assert ctrl.dirty is False
 

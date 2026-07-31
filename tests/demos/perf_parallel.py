@@ -17,8 +17,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.parallel_json_runner import ParallelJSONRunner
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.parallel_json_runner import ParallelJSONRunner
 
 
 def create_test_config(num_tests=10):

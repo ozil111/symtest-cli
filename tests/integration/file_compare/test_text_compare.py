@@ -1,4 +1,4 @@
-from cli_test_framework.file_comparator.factory import ComparatorFactory
+from symtest.file_comparator.factory import ComparatorFactory
 
 
 def compare_text(file1, file2, **kwargs):

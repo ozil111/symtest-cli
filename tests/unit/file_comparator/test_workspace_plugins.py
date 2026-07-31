@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cli_test_framework.file_comparator.factory import ComparatorFactory
+from symtest.file_comparator.factory import ComparatorFactory
 
 
 class TestWorkspacePluginDiscovery:
@@ -20,8 +20,8 @@ class TestWorkspacePluginDiscovery:
         with tempfile.TemporaryDirectory() as tmpd:
             plugin_file = Path(tmpd) / "demo_comparator.py"
             plugin_file.write_text("""
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
-from cli_test_framework.file_comparator.result import ComparisonResult
+from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator.result import ComparisonResult
 
 class DemoComparator(BaseComparator):
     def read_content(self, fp, **kw):
@@ -38,8 +38,8 @@ class DemoComparator(BaseComparator):
         with tempfile.TemporaryDirectory() as tmpd:
             plugin_file = Path(tmpd) / "envtest_comparator.py"
             plugin_file.write_text("""
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
-from cli_test_framework.file_comparator.result import ComparisonResult
+from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator.result import ComparisonResult
 
 class EnvtestComparator(BaseComparator):
     def read_content(self, fp, **kw):
@@ -60,8 +60,8 @@ class EnvtestComparator(BaseComparator):
         with tempfile.TemporaryDirectory() as tmpd:
             plugin_file = Path(tmpd) / "early_comparator.py"
             plugin_file.write_text("""
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
-from cli_test_framework.file_comparator.result import ComparisonResult
+from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator.result import ComparisonResult
 
 class EarlyComparator(BaseComparator):
     def read_content(self, fp, **kw):
@@ -87,8 +87,8 @@ class EarlyComparator(BaseComparator):
         with tempfile.TemporaryDirectory() as tmpd:
             plugin_file = Path(tmpd) / "reset_test_comparator.py"
             plugin_file.write_text("""
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
-from cli_test_framework.file_comparator.result import ComparisonResult
+from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator.result import ComparisonResult
 
 class ResetTestComparator(BaseComparator):
     def read_content(self, fp, **kw):

@@ -111,7 +111,7 @@ class TestCase:
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                      用户交互层                           │
-│   cli-test run      cli-test tui      cli-test validate  │
+│   symtest run      symtest tui      symtest validate  │
 │      (现有)          (新增 A)           (新增 B 辅助)      │
 └─────────┬───────────────┬───────────────────┬────────────┘
           │               │                   │
@@ -213,8 +213,8 @@ function load_and_expand(config_path, workspace):
 新增 `validate` 子命令，在不运行测试的情况下检查配置：
 
 ```bash
-cli-test validate test_cases.json
-cli-test validate ./test_suite/
+symtest validate test_cases.json
+symtest validate ./test_suite/
 ```
 
 校验内容：
@@ -462,7 +462,7 @@ def fuzzy_score(query: str, candidate_fields: dict) -> float:
 ### 6.1 新增目录结构
 
 ```
-src/cli_test_framework/
+src/symtest/
 ├── config/                    ← 新增（方案 B）
 │   ├── __init__.py
 │   ├── config_io.py           # 配置读写封装
@@ -577,7 +577,7 @@ CaseController 持有 List[TestCase]
 ### 7.3 配置校验流（validate 命令）
 
 ```
-cli-test validate <path>
+symtest validate <path>
        │
        ▼
 config_io.load_config(path) → config dict  (含展开)
@@ -625,11 +625,11 @@ validate_parser.add_argument('--workspace', '-w', help='Working directory')
 
 ```bash
 # 现有用法（不变）
-cli-test run test_cases.json
-cli-test run test_cases.yaml
+symtest run test_cases.json
+symtest run test_cases.yaml
 
 # 新增：带 import 的主配置
-cli-test run main_config.json
+symtest run main_config.json
 ```
 
 ### 8.3 `main()` 分发
@@ -658,15 +658,15 @@ else:
 
 ```bash
 # 方案 B：配置拆分
-cli-test run main_config.json          # 自动展开 import
-cli-test validate main_config.json     # 校验配置
+symtest run main_config.json          # 自动展开 import
+symtest validate main_config.json     # 校验配置
 
 # 方案 A：TUI 管理
-cli-test tui test_cases.json           # 打开 TUI 编辑
-cli-test tui test_cases.yaml -w ./proj # 指定工作目录
+symtest tui test_cases.json           # 打开 TUI 编辑
+symtest tui test_cases.yaml -w ./proj # 指定工作目录
 
 # 组合使用：拆分配置 + TUI
-cli-test tui main_config.json          # TUI 中编辑主配置（含 import 引用）
+symtest tui main_config.json          # TUI 中编辑主配置（含 import 引用）
 ```
 
 ---
@@ -683,13 +683,13 @@ tui = ["textual>=0.40.0"]
 ```
 
 ```bash
-pip install cli-test-framework[tui]   # 安装 TUI 依赖
-pip install cli-test-framework        # 核心包，不含 TUI
+pip install symtest[tui]   # 安装 TUI 依赖
+pip install symtest        # 核心包，不含 TUI
 ```
 
 ### 9.2 优雅降级
 
-当用户执行 `cli-test tui` 但未安装 textual 时，给出友好提示：
+当用户执行 `symtest tui` 但未安装 textual 时，给出友好提示：
 
 ```python
 def run_tui(config_file, workspace):
@@ -698,7 +698,7 @@ def run_tui(config_file, workspace):
     except ImportError:
         print(
             "TUI 功能需要安装 textual。请运行：\n"
-            "  pip install cli-test-framework[tui]\n"
+            "  pip install symtest[tui]\n"
             "或：\n"
             "  pip install textual"
         )
@@ -800,7 +800,7 @@ def run_tui(config_file, workspace):
 用户无需一次性迁移所有配置：
 1. 先用 `validate` 命令校验现有配置无问题。
 2. 逐步把大文件中的用例拆到子文件，用 `import` 引用。
-3. 需要可视化编辑时安装 `[tui]` extra 并使用 `cli-test tui`。
+3. 需要可视化编辑时安装 `[tui]` extra 并使用 `symtest tui`。
 
 ---
 
