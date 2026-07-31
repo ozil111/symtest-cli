@@ -26,7 +26,7 @@
 ## Installation
 
 ```bash
-pip install symtest
+pip install symtest-cli
 ```
 
 Requirement: Python >= 3.9
@@ -34,13 +34,13 @@ Requirement: Python >= 3.9
 YAML support is available as an optional dependency:
 
 ```bash
-pip install "symtest[yaml]"
+pip install "symtest-cli[yaml]"
 ```
 
 Install YAML, TUI, and all other optional features together:
 
 ```bash
-pip install "symtest[all]"
+pip install "symtest-cli[all]"
 ```
 
 HDF5 file comparison depends on `h5py` (installed with the framework). If you need to use other comparison features without HDF5, you can uninstall it separately, but HDF5 comparison will become unavailable.
@@ -515,7 +515,7 @@ The TUI depends on the `textual` library and is provided as an optional, on-dema
 
 ```bash
 # Install with TUI support
-pip install "symtest[tui]"
+pip install "symtest-cli[tui]"
 
 # Or install textual separately on top of an existing framework
 pip install textual

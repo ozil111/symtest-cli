@@ -26,7 +26,7 @@
 ## 安装
 
 ```bash
-pip install symtest
+pip install symtest-cli
 ```
 
 要求：Python >= 3.9
@@ -34,13 +34,13 @@ pip install symtest
 YAML 支持需安装可选依赖：
 
 ```bash
-pip install "symtest[yaml]"
+pip install "symtest-cli[yaml]"
 ```
 
 一次安装 YAML 和 TUI 等全部可选功能：
 
 ```bash
-pip install "symtest[all]"
+pip install "symtest-cli[all]"
 ```
 
 HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环境下使用其他比较功能，可单独卸载，但 HDF5 比较将不可用。
@@ -515,7 +515,7 @@ TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
 
 ```bash
 # 安装时附带 TUI 支持
-pip install "symtest[tui]"
+pip install "symtest-cli[tui]"
 
 # 或者在已有框架上单独安装 textual
 pip install textual

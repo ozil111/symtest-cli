@@ -4,11 +4,11 @@
 
 > **Note:** This project was formerly known as `cli-test-framework`.
 > Since version 1.3.0 it is released as
-> [`symtest`](https://pypi.org/project/symtest/); the old package name is no
-> longer updated. Install with:
+> [`symtest-cli`](https://pypi.org/project/symtest-cli/); the old package name
+> is no longer updated. Install with:
 >
 > ```bash
-> pip install symtest
+> pip install symtest-cli
 > ```
 
 A feature-focused automated testing framework for command-line applications.
@@ -43,15 +43,15 @@ occur in real CLI and scientific-computing projects.
 Python 3.9 or newer is required.
 
 ```bash
-pip install symtest
+pip install symtest-cli
 ```
 
 YAML and the TUI are optional:
 
 ```bash
-pip install "symtest[yaml]"
-pip install "symtest[tui]"
-pip install "symtest[all]"
+pip install "symtest-cli[yaml]"
+pip install "symtest-cli[tui]"
+pip install "symtest-cli[all]"
 ```
 
 The default installation includes HDF5 and numerical comparison support.

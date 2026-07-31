@@ -3,11 +3,11 @@
 中文 | [English](README.md)
 
 > **说明：** 本项目原名为 `cli-test-framework`，自 1.3.0 起以
-> [`symtest`](https://pypi.org/project/symtest/) 名称发布，旧包名不再更新。
+> [`symtest-cli`](https://pypi.org/project/symtest-cli/) 名称发布，旧包名不再更新。
 > 安装请使用：
 >
 > ```bash
-> pip install symtest
+> pip install symtest-cli
 > ```
 
 一个面向命令行程序的功能型自动化测试框架。它服务于不能只检查退出码的回归测试：
@@ -36,15 +36,15 @@ CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程�
 要求 Python 3.9 或更高版本。
 
 ```bash
-pip install symtest
+pip install symtest-cli
 ```
 
 YAML 和 TUI 均为可选能力：
 
 ```bash
-pip install "symtest[yaml]"
-pip install "symtest[tui]"
-pip install "symtest[all]"
+pip install "symtest-cli[yaml]"
+pip install "symtest-cli[tui]"
+pip install "symtest-cli[all]"
 ```
 
 默认安装包含 HDF5 和数值比较支持。

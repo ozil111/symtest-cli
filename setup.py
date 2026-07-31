@@ -19,14 +19,14 @@ def read_version():
 
 
 setup(
-    name="symtest",
+    name="symtest-cli",
     version=read_version(),
     author="Xiaotong Wang",
     author_email="xiaotongwang98@gmail.com",
     description="Regression testing for CLI applications, with multi-step workflows and numerical file comparison.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ozil111/symtest",
+    url="https://github.com/ozil111/cli-test-framework",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     install_requires=[
@@ -68,8 +68,8 @@ setup(
     ],
     python_requires='>=3.9',
     project_urls={
-        'Documentation': 'https://github.com/ozil111/symtest/blob/main/docs/user_manual.md',
-        'Source': 'https://github.com/ozil111/symtest',
-        'Tracker': 'https://github.com/ozil111/symtest/issues',
+        'Documentation': 'https://github.com/ozil111/cli-test-framework/blob/main/docs/user_manual.md',
+        'Source': 'https://github.com/ozil111/cli-test-framework',
+        'Tracker': 'https://github.com/ozil111/cli-test-framework/issues',
     },
 )

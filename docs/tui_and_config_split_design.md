@@ -683,8 +683,8 @@ tui = ["textual>=0.40.0"]
 ```
 
 ```bash
-pip install symtest[tui]   # 安装 TUI 依赖
-pip install symtest        # 核心包，不含 TUI
+pip install symtest-cli[tui]   # 安装 TUI 依赖
+pip install symtest-cli        # 核心包，不含 TUI
 ```
 
 ### 9.2 优雅降级
@@ -698,7 +698,7 @@ def run_tui(config_file, workspace):
     except ImportError:
         print(
             "TUI 功能需要安装 textual。请运行：\n"
-            "  pip install symtest[tui]\n"
+            "  pip install symtest-cli[tui]\n"
             "或：\n"
             "  pip install textual"
         )

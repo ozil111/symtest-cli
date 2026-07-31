@@ -77,7 +77,7 @@ def run_tui(config_file: str, workspace: Optional[str] = None,
 
         print(
             "TUI 功能需要安装 textual。请运行：\n"
-            "  pip install symtest[tui]\n"
+            "  pip install symtest-cli[tui]\n"
             "或：\n"
             "  pip install textual"
         )
