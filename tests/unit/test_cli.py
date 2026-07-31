@@ -38,6 +38,8 @@ def make_args(config_file, **overrides):
         "tag": None,
         "verbose": False,
         "debug": False,
+        "update_baseline": False,
+        "yes": False,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -97,6 +99,60 @@ def test_run_tests_rejects_unsupported_config_format(tmp_path, caplog):
 
     assert not success
     assert "Unsupported configuration file format" in caplog.text
+
+
+class TestBaselineUpdateConfirmation:
+    def test_not_required_without_update_flag(self):
+        assert cli._confirm_baseline_update(
+            Namespace(update_baseline=False, yes=False)
+        )
+
+    def test_yes_skips_interactive_prompt(self, monkeypatch):
+        monkeypatch.setattr(
+            "builtins.input",
+            lambda _: pytest.fail("input() should not be called"),
+        )
+        assert cli._confirm_baseline_update(
+            Namespace(update_baseline=True, yes=True)
+        )
+
+    def test_non_interactive_requires_yes(self, monkeypatch, caplog):
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        assert not cli._confirm_baseline_update(
+            Namespace(update_baseline=True, yes=False)
+        )
+        assert "Re-run with --yes" in caplog.text
+
+    def test_interactive_user_must_type_yes(self, monkeypatch):
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "yes")
+        assert cli._confirm_baseline_update(
+            Namespace(update_baseline=True, yes=False)
+        )
+
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        assert not cli._confirm_baseline_update(
+            Namespace(update_baseline=True, yes=False)
+        )
+
+    def test_confirmed_update_reaches_runner(self, tmp_path, monkeypatch):
+        config = tmp_path / "cases.json"
+        config.write_text('{"test_cases": []}', encoding="utf-8")
+        captured = {}
+
+        class PassingRunner(DummyRunner):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured.update(kwargs)
+
+            def run_tests(self):
+                return True
+
+        monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+        assert cli.run_tests(make_args(
+            config, update_baseline=True, yes=True
+        ))
+        assert captured["update_baseline"] is True
 
 
 def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, caplog):
@@ -706,6 +762,8 @@ class TestCreateParser:
             "--debug",
             "--junit-xml", "report.xml",
             "--var", "key=value",
+            "--update-baseline",
+            "--yes",
         ])
         assert args.command == "run"
         assert args.config_file == "config.json"
@@ -722,6 +780,8 @@ class TestCreateParser:
         assert args.debug is True
         assert args.junit_xml == "report.xml"
         assert args.var == ["key=value"]
+        assert args.update_baseline is True
+        assert args.yes is True
 
     def test_validate_subcommand(self):
         parser = cli.create_parser()
@@ -729,6 +789,15 @@ class TestCreateParser:
         assert args.command == "validate"
         assert args.config_file == "config.json"
         assert args.workspace == "/ws"
+
+    def test_tui_accepts_baseline_confirmation(self):
+        parser = cli.create_parser()
+        args = parser.parse_args([
+            "tui", "config.json", "--update-baseline", "--yes",
+        ])
+        assert args.command == "tui"
+        assert args.update_baseline is True
+        assert args.yes is True
 
     def test_compare_subcommand(self):
         parser = cli.create_parser()

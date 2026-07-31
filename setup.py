@@ -23,7 +23,7 @@ setup(
     version=read_version(),
     author="Xiaotong Wang",
     author_email="xiaotongwang98@gmail.com",
-    description="A powerful command line testing framework in Python with setup modules, parallel execution, and file comparison capabilities.",
+    description="Regression testing for CLI applications, with multi-step workflows and numerical file comparison.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/ozil111/cli-test-framework",
@@ -35,7 +35,19 @@ setup(
         "numpy>=1.26.0; python_version>='3.12'",
     ],
     extras_require={
+        "yaml": ["PyYAML>=6.0"],
         "tui": ["textual>=0.40.0"],
+        "all": [
+            "PyYAML>=6.0",
+            "textual>=0.40.0",
+        ],
+        "dev": [
+            "PyYAML>=6.0",
+            "textual>=0.40.0",
+            "pytest>=7.0",
+            "pytest-asyncio>=0.21.0",
+            "pytest-cov>=4.0",
+        ],
     },
     entry_points={
         'console_scripts': [

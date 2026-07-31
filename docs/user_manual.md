@@ -31,10 +31,16 @@ pip install cli-test-framework
 
 要求：Python >= 3.9
 
-YAML 支持需额外安装：
+YAML 支持需安装可选依赖：
 
 ```bash
-pip install pyyaml
+pip install "cli-test-framework[yaml]"
+```
+
+一次安装 YAML 和 TUI 等全部可选功能：
+
+```bash
+pip install "cli-test-framework[all]"
 ```
 
 HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环境下使用其他比较功能，可单独卸载，但 HDF5 比较将不可用。
@@ -501,15 +507,15 @@ cli-test validate test_cases.json --output-format json
 
 ## TUI 交互式管理器
 
-当测试用例数量增长到几十甚至上百条时，纯手工编辑 JSON/YAML 配置文件容易出错且效率低下。TUI（Terminal User Interface）交互式管理器提供了一个终端内的可视化界面，支持浏览、搜索、编辑、运行测试用例，所有操作通过键盘快捷键完成，无需切换窗口或打开编辑器。
+当大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。TUI（Terminal User Interface）在所有导入配置之上提供统一视图，用于浏览、全局搜索、辅助检查覆盖场景，并可按需编辑或运行用例。它是大型测试集的辅助工具，不是日常执行测试的必需组件。
 
 ### 安装
 
-TUI 依赖 `textual` 库，作为可选依赖提供，不影响核心框架的安装体积：
+TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
 
 ```bash
 # 安装时附带 TUI 支持
-pip install cli-test-framework[tui]
+pip install "cli-test-framework[tui]"
 
 # 或者在已有框架上单独安装 textual
 pip install textual
@@ -679,8 +685,11 @@ cli-test run test_cases.json --last-failed
 cli-test run test_cases.json --resume
 cli-test run test_cases.json --resume -t BS-U_01
 
-# 比较失败时自动更新基线文件
+# 比较失败时更新基线文件（交互运行需输入 yes）
 cli-test run test_cases.json --update-baseline
+
+# 非交互环境必须显式确认
+cli-test run test_cases.json --update-baseline --yes
 
 # 启用误差分析（数值比较时输出全量统计）
 cli-test run test_cases.json --error-analysis
@@ -717,7 +726,7 @@ cli-test run config.json
 
 **工作原理**：
 - 每个步骤通过后，框架在 `<workspace>/.cli-test/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
-- 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected 的 SHA256）与已保存状态比对
+- 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected/timeout/retry_count 及 case 级 expected 的 SHA256）与已保存状态比对
 - 哈希匹配 → 跳过已通过的步骤，从缓存重建 `combined_output`（确保 case 级 `expected` 断言能正常执行）
 - 用例全部通过 → 自动删除状态文件和缓存，避免残留影响后续运行
 - 哈希不匹配（配置有改动）→ 自动全量重跑，并丢弃旧状态
@@ -739,7 +748,7 @@ cli-test run config.json
 
 **限制**：
 - 仅对序列步骤用例（`steps` 模式）生效，单命令模式忽略
-- 状态文件的配置哈希会因任何 step 的 command/args/expected 或 case 级 expected 变化而失效
+- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count 或 case 级 expected 变化而失效
 - 缓存输出主要用于重建 `combined_output`，报告中的 `output` 字段仍只包含失败步骤的输出
 
 ### 自动更新基线文件（--update-baseline）
@@ -747,17 +756,22 @@ cli-test run config.json
 在进行算法改进或参数调整后，你可能期望输出结果发生变化（且新结果更正确）。`--update-baseline` 会自动用实际产出覆盖基线文件，免去手动复制粘贴。
 
 ```bash
-# 比较失败时，自动将 actual 文件复制覆盖 baseline，标记用例为通过
+# 交互运行会先要求输入 yes
 cli-test run config.json --update-baseline
+
+# 自动化或 CI 中显式确认
+cli-test run config.json --update-baseline --yes
 ```
 
 **行为**：
+- 交互运行必须输入完整的 `yes` 才会开始测试
+- 非交互环境不会等待输入，必须同时传入 `--yes`
 - 文件比较失败时，`actual` 文件被复制到 `baseline` 路径
 - 该条断言视为**通过**，用例状态为 `passed`
 - 报告中显示 `Baseline Updated` 计数和更新的文件列表
 - 文本报告与 JSON 报告均会列出所有被更新的 baseline 路径
 
-> **注意**：`--update-baseline` 会静默覆盖文件。建议搭配版本控制（git）使用，以便回滚不需要的更改。
+> **注意**：确认发生在测试执行前，而实际被更新的文件只有比较后才能确定。请将基线纳入版本控制，并审查报告中的 `Baseline Updated` 列表。Python API 中显式传入 `update_baseline=True` 视为调用方已经确认。
 
 ### 配置校验 JSON 输出
 
@@ -906,7 +920,8 @@ for detail in runner.results["details"]:
 | `--tag` | 按标签过滤用例（OR 关系） |
 | `--last-failed` | 只运行上次失败的用例 |
 | `--resume` | 断点续跑序列用例 |
-| `--update-baseline` | 比较失败时自动更新基线 |
+| `--update-baseline` | 比较失败时更新基线；交互运行需要二次确认 |
+| `--yes` / `-y` | 跳过基线更新确认，供自动化或 CI 使用 |
 | `--junit-xml` | JUnit XML 报告输出路径 |
 | `--report` | 文本报告输出路径，默认 `test_report.txt` |
 | `--workers` / `-w` | 并行工作线程数，默认 4 |
@@ -1915,6 +1930,9 @@ Assertions.compare_files("actual.h5", "baseline.h5", file_type="h5", workspace="
 ```bash
 # 运行全部测试（默认）
 python tests/run_all.py
+
+# 开发者也可一次安装全部可选与测试依赖
+pip install -e ".[dev]"
 
 # 只运行单元测试
 python tests/run_all.py --scope unit

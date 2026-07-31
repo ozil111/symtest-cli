@@ -1,245 +1,240 @@
-# CLI 测试框架
+# CLI Test Framework
 
-轻量级命令行自动化测试框架，用 JSON/YAML 定义测试用例，一行命令跑完所有验证。
+中文 | [English](README.md)
 
-特别适合科学计算场景——对 HDF5 结果文件有深度支持：正则匹配表格、数据过滤、容差对比，轻松搞定仿真结果校验。
+一个面向命令行程序的功能型自动化测试框架。它服务于不能只检查退出码的回归测试：
+多步骤命令、数值结果对比、大型配置集、并行执行，以及可直接接入 CI 的报告。
 
-## 为什么开发这个框架
+项目最初来自有限元求解器开发。在这类场景中，一个测试可能需要依次运行多个程序，
+生成 HDF5 或 CSV 结果，按照数值容差与基线比较，并持续跟踪不同版本的运行耗时。
 
-这个项目最初是为有限元求解器做回归测试而生的。在这个领域，检查退出码远远不够——每个测试可能需要运行多条命令、生成数值结果文件、在容差范围内对比 HDF5/CSV 输出、还要防止性能退化。
+## 解决什么问题
 
-过程中我们发现，这个框架天然适配 **TDD + AI 协作** 的工作流：
+CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程和验收标准：
 
-1. **建模测试** — 用干净的 JSON/YAML 定义测试的输入、命令和预期行为
-2. **声明验收标准** — `return_code`、`output_contains`、`compare_files` 带容差——这就是你的"契约"
-3. **跑起来** — 框架执行命令、对比输出和基线、产出结构化结果
-4. **喂给 AI** — 测试失败时，结构化的 diff（哪里失败了、怎么失败的、容差信息）为 LLM 提供了修复所需的全部上下文
-5. **迭代** — `--last-failed` 只重跑失败用例；`--resume` 跳过已通过的步骤继续执行；循环压缩到秒级
+- **执行工作流**：支持单命令或失败即停止的步骤序列，以及超时、重试、变量、标签和
+  预期失败。
+- **验证结果**：支持返回码、输出文本、正则表达式，以及 text、JSON、CSV、XML、
+  HDF5、二进制和自定义脚本文件比较。
+- **管理大型测试集**：通过 `import` 拆分配置、通过 `extends` 复用模板、按名称或
+  标签筛选，并可在可选 TUI 中跨文件查看用例。
+- **迭代与集成**：支持并行执行、`--last-failed`、步骤级 `--resume`、耗时历史、
+  结构化报告和 JUnit XML。
 
-这让测试套件变成了一份**机器可读的目标规格书**——"正确"只需定义一次，之后交给 AI 对着定义迭代。框架架起了人类意图和自动验证之间的桥梁。
+项目强调务实：功能来自真实 CLI 和科学计算项目中出现的测试需求。
 
-本质上，CLI 测试框架始终聚焦于它的原点：**科学计算回归测试**。但 TDD + AI 这一循环适用于任何命令行工具——脚本、编译器、仿真器、数据管线，一切从终端运行的程序都行。
+## 安装
 
-## 功能亮点
-
-- **Golden File 断言** — `compare_files` 嵌入测试 `expected`，运行后自动对比产物文件与基准文件，支持容差
-- **并行执行** — 多线程/多进程，3–5 倍加速
-- **资源感知调度** — 自动管理 CPU 核心分配，防止求解器线程失控
-- **顺序步骤测试** — 单个用例内多步执行，失败即停
-- **配置拆分与继承** — `import` 引入子文件，`extends` 继承模板基类——大型测试套件告别重复
-- **TUI 交互式管理器** — 在终端里浏览、搜索、编辑、运行测试用例，无需切出编辑器
-- **AI 友好迭代** — `--last-failed` 只跑失败用例；`--resume` 跳过已通过步骤继续；`--update-baseline` 刷新基线；`xfail` 标记已知缺陷
-- **文件比较** — 文本 / JSON / CSV / XML / HDF5 / 二进制，支持 CLI 独立使用和内嵌断言两种方式
-- **筛选运行** — 按名称、标签或两者组合（AND 逻辑）筛选运行
-- **JUnit XML 输出** — 开箱即用的 CI 报告，兼容 GitLab CI / Jenkins / CircleCI
-- **自定义比较器插件** — 将 `*_comparator.py` 放入工作区即可自动发现；通过 `type: script` 调用任意外部分析脚本
-
-## 快速开始
+要求 Python 3.9 或更高版本。
 
 ```bash
 pip install cli-test-framework
 ```
 
-### 30 秒上手
+YAML 和 TUI 均为可选能力：
 
-1. 写测试用例 `test_cases.json`：
+```bash
+pip install "cli-test-framework[yaml]"
+pip install "cli-test-framework[tui]"
+pip install "cli-test-framework[all]"
+```
+
+默认安装包含 HDF5 和数值比较支持。
+
+## 快速开始
+
+创建 `test_cases.json`：
 
 ```json
 {
-    "test_cases": [
-        {
-            "name": "hello",
-            "command": "echo",
-            "args": ["Hello World"],
-            "tags": ["smoke"],
-            "expected": {
-                "return_code": 0,
-                "output_contains": ["Hello World"]
-            }
-        }
-    ]
+  "test_cases": [
+    {
+      "name": "hello",
+      "command": "echo",
+      "args": ["Hello World"],
+      "tags": ["smoke"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Hello World"]
+      }
+    }
+  ]
 }
 ```
 
-2. 运行：
+运行测试：
 
 ```bash
 cli-test run test_cases.json
 ```
 
-### 测试中对比 Golden File
+只校验配置而不执行：
 
-运行仿真命令，自动对比输出文件与基准：
-
-```json
-{
-    "test_cases": [
-        {
-            "name": "FEA 位移检查",
-            "command": "my_solver",
-            "args": ["--input", "case1.dat", "--output", "out.h5"],
-            "expected": {
-                "return_code": 0,
-                "compare_files": [
-                    {
-                        "actual": "out.h5",
-                        "baseline": "ref/golden.h5",
-                        "rtol": 1e-5,
-                        "atol": 1e-8,
-                        "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
-                    }
-                ]
-            }
-        }
-    ]
-}
+```bash
+cli-test validate test_cases.json
 ```
 
-- `actual` — 命令产出的文件
-- `baseline` — 用于对比的基准文件
-- `type` — 比较器类型（省略时从后缀自动检测：`.h5`→h5，`.json`→json，`.csv`→csv，`.xml`→xml，`.txt`→text）
-- 其余字段透传到对应比较器（`rtol`、`atol`、`tables`、`table_regex`、`data_filter`、`encoding`、`structure_only`、`delimiter`、`compare_mode`、`key_field` 等）
+## 数值 Golden File 测试
 
-支持同时对比多个文件，以及与已有断言混用：
+文件比较可以直接作为测试的验收条件。数值容差、表选择、数据过滤和编码等参数与命令
+一起声明：
 
 ```json
 {
-    "expected": {
+  "test_cases": [
+    {
+      "name": "有限元位移检查",
+      "command": "my_solver",
+      "args": ["--input", "case1.dat", "--output", "out.h5"],
+      "expected": {
         "return_code": 0,
-        "output_contains": ["仿真完成"],
+        "output_contains": ["simulation finished"],
         "compare_files": [
-            {"actual": "out.h5",   "baseline": "ref/disp.h5",      "rtol": 1e-5},
-            {"actual": "report.csv", "baseline": "ref/expected.csv", "rtol": 1e-6}
+          {
+            "actual": "out.h5",
+            "baseline": "ref/golden.h5",
+            "rtol": 1e-5,
+            "atol": 1e-8,
+            "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
+          },
+          {
+            "actual": "summary.csv",
+            "baseline": "ref/summary.csv",
+            "rtol": 1e-6
+          }
         ]
+      }
     }
+  ]
 }
 ```
 
-### 项目入口脚本
+省略 `type` 时，框架会根据扩展名自动选择比较器。内置类型包括 `text`、`json`、
+`csv`、`xml`、`h5`、`binary` 和 `script`，也可以在工作区中增加自定义比较器。
 
-如果你的项目需要自定义环境配置、预设运行参数或多格式报告输出，可以将 `examples/full_runner_example.py` 复制到项目根目录并重命名（如 `run_tests.py`）。它提供了一个功能完备的 Python 入口，自动识别 JSON/YAML 配置文件，支持所有 CLI 参数（`--last-failed`、`--resume`、`--update-baseline`、`--junit-xml`、`--workers`、`--var` 等）——非常适合团队共享的工作流。
-
-```bash
-python run_tests.py test_cases.json --workers 4 --junit-xml report.xml
-```
-
-## 核心使用场景
-
-### 科学计算回归测试
-
-用多格式 Golden File 对比定义求解器测试。当算法改动导致数值结果变化时，`--update-baseline` 刷新基线，git 帮你兜底。`--history-dir` 追踪耗时趋势，性能退化自动告警。
+当结果变化合理、需要接受新基线时，可使用 `--update-baseline`。该操作可能覆盖参考
+文件，因此交互运行时必须输入 `yes`，非交互环境必须显式增加 `--yes`：
 
 ```bash
-cli-test run fea_cases.json --history-dir ./hist --regression-threshold 2.0
+cli-test run test_cases.json --update-baseline
+cli-test run test_cases.json --update-baseline --yes   # 自动化或 CI
 ```
 
-### TDD + AI 协作循环
+请将基线纳入版本控制，并审查每一次更新。
 
-先写测试，定义好"什么叫正确"，跑一遍。框架的结构化输出——失败类型、详细 diff、容差违规——把测试失败变成了 LLM 的精确提示词。AI 修复代码后，用 `--last-failed` 只验证刚才失败的那几个用例。
+## 多步骤与迭代工作流
+
+一个用例可以包含有序的 `steps` 列表，任一步骤失败后立即停止。对于长耗时流程，
+`--resume` 会复用保存的状态，跳过已经通过的步骤：
 
 ```bash
-cli-test run solver_tests.json                        # 3 个失败
-# ... AI 根据结构化失败输出修复代码 ...
-cli-test run solver_tests.json --last-failed           # 只验证那 3 个
-cli-test run solver_tests.json                         # 全量回归确认
+cli-test run solver_tests.json
+cli-test run solver_tests.json --last-failed
+cli-test run solver_tests.json -t long_case --resume
 ```
 
-### CI/CD 集成
+`--resume` 明确信任两次运行之间的工作区产物未被修改。
 
-在 CI 环境中先校验配置（`cli-test validate config.json --output-format json`），再执行测试并输出 JUnit XML。`--workers` 并行执行，保持流水线速度。
+## 大型测试集与可选 TUI
 
-```yaml
-# .gitlab-ci.yml
-test:
-  script:
-    - cli-test validate test_cases.json
-    - cli-test run test_cases.json --parallel --workers 4 --junit-xml report.xml
-  artifacts:
-    reports:
-      junit: report.xml
-```
-
-### 长耗时测试的迭代调试
-
-对于每步要跑几分钟的多步仿真工作流：`--resume` 跳过已通过的步骤，直接从失败处继续。`--last-failed` 缩小范围。`--update-baseline` 按预期变更后刷新基线。
-
-```bash
-# BS-U_01 第 4/8 步失败后：
-cli-test run config.json -t BS-U_01 --resume            # ~0.14s 而不是 72s
-```
-
-### 管理大型测试套件
-
-测试用例上百后，用 `import` 拆分到多个文件，用 `extends` + `abstract` 共享公共结构，用 `--tag` 批量筛选，用 TUI 交互式浏览编辑。
+大型测试集可以拆分为多个子配置：
 
 ```json
 {
-    "test_cases": [
-        { "import": "cases/text_tests.json", "tags": ["text"] },
-        { "import": "cases/h5_tests.json",   "tags": ["h5", "fast"] }
-    ]
+  "test_cases": [
+    {"import": "cases/text_tests.json", "tags": ["text"]},
+    {"import": "cases/h5_tests.json", "tags": ["h5", "regression"]}
+  ]
 }
 ```
+
+可选 TUI 能在所有导入文件之上提供统一的可搜索视图，主要用于大型项目中定位用例和
+辅助检查场景覆盖情况，并不是日常执行测试的必要组件。
 
 ```bash
 cli-test tui main_config.json
 ```
+
+## 并行执行与资源
+
+```bash
+cli-test run test_cases.json --parallel --workers 4
+cli-test run test_cases.json --parallel --execution-mode process
+```
+
+线程模式目前支持 CPU 令牌分配、求解器线程环境变量注入，以及基于预估时间或历史
+耗时的 LPT 调度。进程模式提供执行隔离，但尚未接入资源调度器。真实内存约束、
+priority 语义和更完整的资源管理仍是后续演进方向。
+
+## CI 与报告
+
+```bash
+cli-test run test_cases.json \
+  --parallel --workers 4 \
+  --junit-xml report.xml
+```
+
+当前测试集包含 750 个单元、集成和端到端测试，行覆盖率为 83%。CI 在 Windows 和
+Linux 上覆盖 Python 3.9 至 3.13。
 
 ## Python API
 
 ```python
 from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
 
-# 顺序运行
-runner = JSONRunner(config_file="test_cases.json")
-success = runner.run_tests()
-
-# 并行运行
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
     max_workers=4,
     execution_mode="thread",
     history_dir="./hist",
-    last_failed=False,
-    resume=False,
-    update_baseline=False,
-    variables={"solver": "/opt/solver/bin/solver.exe"},
+    variables={"solver": "/opt/solver/bin/solver"},
 )
-success = runner.run_tests()
 
-# 获取结果
-runner.results["total"]
-runner.results["passed"]
-runner.results["failed"]
+success = runner.run_tests()
 for detail in runner.results["details"]:
     print(detail["name"], detail["status"], detail.get("duration"))
 ```
 
-## 文件比较（独立 CLI）
+## 独立文件比较
 
 ```bash
 compare-files result1.h5 result2.h5 --h5-table-regex "output_.*" --h5-rtol 1e-5
-compare-files data1.csv data2.csv --csv-rtol 1e-4 --csv-data-filter '>1e-6'
+compare-files data1.csv data2.csv --csv-rtol 1e-4 --csv-data-filter ">1e-6"
 compare-files data1.json data2.json --json-compare-mode key-based --json-key-field id
 ```
 
-📖 **完整使用说明**：[docs/user_manual.md](docs/user_manual.md)
+## AI 辅助 TDD：一个额外收益
 
-## 参与协作
+同一份配置也可以作为机器可读的验收契约。结构化校验失败、文件差异详情和定向重跑
+很适合组成 AI 辅助的 TDD 循环：
 
-欢迎各种形式的参与：
+```text
+定义验收条件
+    → 运行相关用例
+    → 阅读结构化失败信息
+    → 修改实现
+    → 使用 --last-failed 定向验证
+    → 执行完整回归测试
+```
 
-- **代码** — bug 修复、新功能、文档完善。Fork 本仓库，修改后提交 PR。请先确保测试通过：
+这是明确测试与结构化结果带来的额外收益，并不是使用框架的前提。
 
-  ```bash
-  python tests/run_all.py
-  ```
+## 文档
 
-- **自定义比较器与插件** — 为你的领域专属数据格式写了比较器？欢迎提交到官方插件库。直接开 PR 或提 issue 讨论。
+- [中文使用说明](docs/user_manual.md)
+- [中文设计文档](docs/design.md)
+- [插件示例](examples/plugins/README.md)
 
-- **使用场景与经验分享** — 用框架解决了什么有意思的问题？在某个求解器或仿真管线上有什么经验？在 issue 里分享你的工作流——真实的用户故事能帮我们在正确的方向上改进框架。
+## 开发
 
-- **Issues** — bug 报告、功能需求，或者只是提个问题，都欢迎。
+一次安装全部可选功能和测试依赖：
+
+```bash
+pip install -e ".[dev]"
+python -m pytest tests/unit tests/integration tests/e2e
+```
+
+欢迎提交缺陷修复、比较器插件和文档改进，也欢迎分享真实项目中的测试需求与使用经验。
 
 ## 许可证
 

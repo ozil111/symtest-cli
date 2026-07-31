@@ -28,8 +28,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[tui]"
-          pip install -r requirements.txt
+          pip install -e ".[dev]"
 
       - name: Run tests
         run: python tests/run_all.py

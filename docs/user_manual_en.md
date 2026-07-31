@@ -31,10 +31,16 @@ pip install cli-test-framework
 
 Requirement: Python >= 3.9
 
-YAML support requires additional installation:
+YAML support is available as an optional dependency:
 
 ```bash
-pip install pyyaml
+pip install "cli-test-framework[yaml]"
+```
+
+Install YAML, TUI, and all other optional features together:
+
+```bash
+pip install "cli-test-framework[all]"
 ```
 
 HDF5 file comparison depends on `h5py` (installed with the framework). If you need to use other comparison features without HDF5, you can uninstall it separately, but HDF5 comparison will become unavailable.
@@ -501,15 +507,15 @@ On error:
 
 ## TUI Interactive Manager
 
-When the number of test cases grows to dozens or hundreds, manually editing JSON/YAML config files is error-prone and inefficient. The TUI (Terminal User Interface) interactive manager provides a visual interface in the terminal for browsing, searching, editing, and running test cases — all via keyboard shortcuts, without switching windows or opening an editor.
+When a large project splits cases across many JSON/YAML sub-configurations, locating cases and reviewing scenario coverage across files becomes difficult. The TUI (Terminal User Interface) provides one view over all imported configurations for browsing, global search, and coverage review, with editing and case execution available when needed. It is an aid for large suites, not a requirement for normal test execution.
 
 ### Installation
 
-The TUI depends on the `textual` library, offered as an optional dependency to keep the core framework lightweight:
+The TUI depends on the `textual` library and is provided as an optional, on-demand dependency:
 
 ```bash
 # Install with TUI support
-pip install cli-test-framework[tui]
+pip install "cli-test-framework[tui]"
 
 # Or install textual separately on top of an existing framework
 pip install textual
@@ -679,8 +685,11 @@ cli-test run test_cases.json --last-failed
 cli-test run test_cases.json --resume
 cli-test run test_cases.json --resume -t BS-U_01
 
-# Auto-update baseline files on comparison failure
+# Update baseline files on comparison failure (type yes interactively)
 cli-test run test_cases.json --update-baseline
+
+# Non-interactive environments must confirm explicitly
+cli-test run test_cases.json --update-baseline --yes
 
 # Enable error analysis (full stats output for numerical comparisons)
 cli-test run test_cases.json --error-analysis
@@ -717,7 +726,7 @@ cli-test run config.json
 
 **How it works**:
 - After each step passes, the framework records step status in `<workspace>/.cli-test/sequence_state/<case_name>.json` and caches output to the `cache/` subdirectory
-- On the next `--resume`, a config hash (SHA256 of all step command/args/expected) is computed and compared against saved state
+- On the next `--resume`, a config hash (SHA256 of every step's command/args/expected/timeout/retry_count plus case-level expected) is computed and compared against saved state
 - Hash match → skip passed steps, rebuild `combined_output` from cache (so case-level `expected` assertions run correctly)
 - All steps pass → state file and cache automatically deleted to avoid stale data affecting subsequent runs
 - Hash mismatch (config changed) → full rerun automatically, old state discarded
@@ -739,7 +748,7 @@ cli-test run config.json
 
 **Limitations**:
 - Only applies to sequential step cases (`steps` mode); single-command mode ignored
-- The state file's config hash is invalidated by any change to any step's command/args/expected or case-level expected
+- The state file's config hash is invalidated by any change to a step's command/args/expected/timeout/retry_count or case-level expected
 - Cached output is primarily for rebuilding `combined_output`; the `output` field in the report still contains only the failed step's output
 
 ### Auto-Update Baseline Files (--update-baseline)
@@ -747,17 +756,22 @@ cli-test run config.json
 After algorithm improvements or parameter adjustments, you may expect output to change (and the new results to be more correct). `--update-baseline` automatically overwrites baseline files with actual output, avoiding manual copy-paste.
 
 ```bash
-# On comparison failure, auto-copy actual to baseline; mark the case passed
+# Interactive runs ask you to type yes before execution
 cli-test run config.json --update-baseline
+
+# Explicit confirmation for automation or CI
+cli-test run config.json --update-baseline --yes
 ```
 
 **Behavior**:
+- Interactive runs start only after the user types the full word `yes`
+- Non-interactive runs do not wait for input and require `--yes`
 - When file comparison fails, the `actual` file is copied to the `baseline` path
 - That assertion is treated as **passed**; the case status is `passed`
 - The report shows a `Baseline Updated` count and lists updated files
 - Both text and JSON reports list all updated baseline paths
 
-> **Note**: `--update-baseline` silently overwrites files. Use with version control (git) to roll back unwanted changes.
+> **Note**: Confirmation happens before test execution, while the files to update are only known after comparison. Keep baselines under version control and review the report's `Baseline Updated` list. Passing `update_baseline=True` through the Python API is treated as explicit confirmation by the caller.
 
 ### Configuration Validation JSON Output
 
@@ -906,7 +920,8 @@ The framework provides an out-of-the-box example script `examples/full_runner_ex
 | `--tag` | Filter cases by tag (OR relationship) |
 | `--last-failed` | Run only last-failed cases |
 | `--resume` | Resume sequence cases from last failed step |
-| `--update-baseline` | Auto-update baseline on comparison failure |
+| `--update-baseline` | Update baselines on comparison failure; requires interactive confirmation |
+| `--yes` / `-y` | Skip the baseline confirmation for automation or CI |
 | `--junit-xml` | JUnit XML report output path |
 | `--report` | Text report output path, default `test_report.txt` |
 | `--workers` / `-w` | Number of parallel workers, default 4 |
@@ -1913,6 +1928,9 @@ The project includes a unified test entry point `tests/run_all.py`. Use `--scope
 ```bash
 # Run all tests (default)
 python tests/run_all.py
+
+# Developers can install all optional and test dependencies at once
+pip install -e ".[dev]"
 
 # Run unit tests only
 python tests/run_all.py --scope unit

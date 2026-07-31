@@ -34,10 +34,43 @@ def _parse_vars(var_list):
     return variables
 
 
+def _confirm_baseline_update(args) -> bool:
+    """Require an explicit confirmation before baseline files may be replaced.
+
+    Interactive CLI users type ``yes``. Automation must pass ``--yes`` so a
+    non-interactive process never hangs while waiting for input.
+    """
+    if not getattr(args, 'update_baseline', False):
+        return True
+    if getattr(args, 'yes', False):
+        return True
+
+    if not sys.stdin.isatty():
+        logger.error(
+            "--update-baseline can overwrite reference files. "
+            "Re-run with --yes in non-interactive environments."
+        )
+        return False
+
+    try:
+        response = input(
+            "WARNING: --update-baseline may overwrite reference files when "
+            "comparisons fail.\nType 'yes' to continue: "
+        )
+    except (EOFError, KeyboardInterrupt):
+        logger.warning("Baseline update cancelled.")
+        return False
+
+    if response.strip().lower() != "yes":
+        logger.warning("Baseline update cancelled.")
+        return False
+    return True
+
+
 def create_parser():
     """Create and configure the argument parser"""
     parser = argparse.ArgumentParser(
-        description="CLI Testing Framework - A powerful tool for testing command-line applications",
+        description="Regression testing for command-line applications and scientific workflows",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -84,6 +117,9 @@ Examples:
                            help='Run only test cases that failed in the previous run')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
+    run_parser.add_argument('--yes', '-y', action='store_true',
+                           help='Confirm potentially destructive actions without prompting '
+                                '(required with --update-baseline in non-interactive environments)')
     run_parser.add_argument('--update-history', action='store_true',
                            help='Clear .symtest runtime history for run-involved cases before '
                                 'recording this run (requires --history-dir)')
@@ -113,6 +149,10 @@ Examples:
     tui_parser.add_argument(
         '--update-baseline', action='store_true',
         help='On comparison failure, overwrite baseline files with actual output'
+    )
+    tui_parser.add_argument(
+        '--yes', '-y', action='store_true',
+        help='Confirm baseline updates without prompting'
     )
     tui_parser.add_argument(
         '--history-dir',
@@ -216,6 +256,9 @@ def run_tests(args):
 
     if not config_file.exists():
         logger.error("Configuration file not found: %s", config_file)
+        return False
+
+    if not _confirm_baseline_update(args):
         return False
 
     # Determine file type
@@ -402,6 +445,9 @@ def run_tui(args):
     """Launch the TUI manager."""
     from .tui.app import run_tui as _run_tui
 
+    if not _confirm_baseline_update(args):
+        return False
+
     update_baseline = getattr(args, 'update_baseline', False)
     history_dir = getattr(args, 'history_dir', None)
     update_history = getattr(args, 'update_history', False)
@@ -409,6 +455,7 @@ def run_tui(args):
              update_baseline=update_baseline,
              history_dir=history_dir,
              update_history=update_history)
+    return True
 
 
 def run_validate(args):
@@ -480,7 +527,9 @@ def main():
         # 0 = all passed, 1 = test failures, 2 = config/framework errors
         sys.exit(0 if success else 1)
     elif args.command == 'tui':
-        run_tui(args)
+        success = run_tui(args)
+        if success is False:
+            sys.exit(1)
     elif args.command == 'validate':
         success = run_validate(args)
         # 0 = valid, 1 = validation errors found
