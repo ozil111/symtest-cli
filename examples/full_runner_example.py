@@ -8,7 +8,7 @@
 核心能力：
   - 支持 JSON 和 YAML 配置文件（自动按扩展名识别）
   - 全参数 CLI 透传：--test-target / --tag / --last-failed / --resume /
-    --update-baseline / --update-history / --junit-xml / --workers
+    --update-baseline / --yes / --update-history / --junit-xml / --workers
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
   - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 退出码处理
@@ -172,6 +172,12 @@ def main():
         help="比较失败时自动更新基线文件（建议搭配版本控制使用）",
     )
     parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        default=False,
+        help="不询问并确认更新基线（非交互环境中与 --update-baseline 一起使用）",
+    )
+    parser.add_argument(
         "--update-history",
         action="store_true",
         default=False,
@@ -250,6 +256,20 @@ def main():
 
     args = parser.parse_args()
 
+    if args.update_baseline and not args.yes:
+        if not sys.stdin.isatty():
+            parser.error("非交互环境使用 --update-baseline 时必须同时传入 --yes")
+        try:
+            confirmed = input(
+                "警告：--update-baseline 可能覆盖参考文件。\n"
+                "输入 'yes' 继续："
+            )
+        except (EOFError, KeyboardInterrupt):
+            confirmed = ""
+        if confirmed.strip().lower() != "yes":
+            print("已取消基线更新。", file=sys.stderr)
+            return 1
+
     # ---- 日志配置 ----
     log_level = logging.DEBUG if args.verbose else logging.INFO
     setup_console_logging(level=log_level)
@@ -308,8 +328,8 @@ def main():
         )
 
     # ---- 退出码 ----
-    sys.exit(0 if success else 1)
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

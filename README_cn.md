@@ -1,160 +1,240 @@
-# CLI 测试框架
+# CLI Test Framework
 
-轻量级命令行自动化测试框架，用 JSON/YAML 定义测试用例，一行命令跑完所有验证。
+中文 | [English](README.md)
 
-特别适合科学计算场景——对 HDF5 结果文件有深度支持：正则匹配表格、数据过滤、容差对比，轻松搞定仿真结果校验。
+一个面向命令行程序的功能型自动化测试框架。它服务于不能只检查退出码的回归测试：
+多步骤命令、数值结果对比、大型配置集、并行执行，以及可直接接入 CI 的报告。
 
-## 功能亮点
+项目最初来自有限元求解器开发。在这类场景中，一个测试可能需要依次运行多个程序，
+生成 HDF5 或 CSV 结果，按照数值容差与基线比较，并持续跟踪不同版本的运行耗时。
 
-- **Golden File 断言** — `compare_files` 嵌入测试 `expected`，运行后自动对比产物文件与基准文件，支持容差
-- **并行执行** — 多线程/多进程，3-5 倍加速
-- **资源感知调度** — 自动管理 CPU 核心分配，防止求解器线程失控
-- **顺序步骤测试** — 单个用例内多步执行，失败即停
-- **Setup 模块** — 测试前自动配置环境变量，测试后自动清理
-- **文件比较** — 文本 / JSON / CSV / XML / HDF5 / 二进制，支持 CLI 独立使用和内嵌断言两种方式
-- **筛选运行** — 按名称指定运行哪些用例
+## 解决什么问题
 
-## 快速开始
+CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程和验收标准：
+
+- **执行工作流**：支持单命令或失败即停止的步骤序列，以及超时、重试、变量、标签和
+  预期失败。
+- **验证结果**：支持返回码、输出文本、正则表达式，以及 text、JSON、CSV、XML、
+  HDF5、二进制和自定义脚本文件比较。
+- **管理大型测试集**：通过 `import` 拆分配置、通过 `extends` 复用模板、按名称或
+  标签筛选，并可在可选 TUI 中跨文件查看用例。
+- **迭代与集成**：支持并行执行、`--last-failed`、步骤级 `--resume`、耗时历史、
+  结构化报告和 JUnit XML。
+
+项目强调务实：功能来自真实 CLI 和科学计算项目中出现的测试需求。
+
+## 安装
+
+要求 Python 3.9 或更高版本。
 
 ```bash
 pip install cli-test-framework
 ```
 
-### 30 秒上手
+YAML 和 TUI 均为可选能力：
 
-1. 写测试用例 `test_cases.json`：
+```bash
+pip install "cli-test-framework[yaml]"
+pip install "cli-test-framework[tui]"
+pip install "cli-test-framework[all]"
+```
+
+默认安装包含 HDF5 和数值比较支持。
+
+## 快速开始
+
+创建 `test_cases.json`：
 
 ```json
 {
-    "test_cases": [
-        {
-            "name": "hello",
-            "command": "echo",
-            "args": ["Hello World"],
-            "expected": {
-                "return_code": 0,
-                "output_contains": ["Hello World"]
-            }
-        }
-    ]
+  "test_cases": [
+    {
+      "name": "hello",
+      "command": "echo",
+      "args": ["Hello World"],
+      "tags": ["smoke"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Hello World"]
+      }
+    }
+  ]
 }
 ```
 
-2. 运行：
+运行测试：
 
 ```bash
 cli-test run test_cases.json
 ```
 
-### 测试中对比 Golden File
+只校验配置而不执行：
 
-运行仿真命令，自动对比输出文件与基准：
-
-```json
-{
-    "test_cases": [
-        {
-            "name": "FEA 位移检查",
-            "command": "my_solver",
-            "args": ["--input", "case1.dat", "--output", "out.h5"],
-            "expected": {
-                "return_code": 0,
-                "compare_files": [
-                    {
-                        "actual": "out.h5",
-                        "baseline": "ref/golden.h5",
-                        "rtol": 1e-5,
-                        "atol": 1e-8,
-                        "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
-                    }
-                ]
-            }
-        }
-    ]
-}
+```bash
+cli-test validate test_cases.json
 ```
 
-- `actual` — 命令产出的文件
-- `baseline` — 用于对比的基准文件
-- `type` — 比较器类型（省略时从后缀自动检测：`.h5`→h5, `.json`→json, `.csv`→csv, `.xml`→xml, `.txt`→text）
-- 其余字段透传到对应比较器（`rtol`、`atol`、`tables`、`table_regex`、`data_filter`、`encoding`、`structure_only`、`delimiter`、`compare_mode`、`key_field` 等）
+## 数值 Golden File 测试
 
-支持同时对比多个文件，以及与已有断言混用：
+文件比较可以直接作为测试的验收条件。数值容差、表选择、数据过滤和编码等参数与命令
+一起声明：
 
 ```json
 {
-    "expected": {
+  "test_cases": [
+    {
+      "name": "有限元位移检查",
+      "command": "my_solver",
+      "args": ["--input", "case1.dat", "--output", "out.h5"],
+      "expected": {
         "return_code": 0,
-        "output_contains": ["仿真完成"],
+        "output_contains": ["simulation finished"],
         "compare_files": [
-            {"actual": "out.h5", "baseline": "ref/disp.h5", "rtol": 1e-5},
-            {"actual": "report.csv", "baseline": "ref/expected.csv", "rtol": 1e-6}
+          {
+            "actual": "out.h5",
+            "baseline": "ref/golden.h5",
+            "rtol": 1e-5,
+            "atol": 1e-8,
+            "tables": ["NASTRAN/RESULT/NODAL/DISPLACEMENT"]
+          },
+          {
+            "actual": "summary.csv",
+            "baseline": "ref/summary.csv",
+            "rtol": 1e-6
+          }
         ]
+      }
     }
+  ]
 }
 ```
 
-### 并行运行
+省略 `type` 时，框架会根据扩展名自动选择比较器。内置类型包括 `text`、`json`、
+`csv`、`xml`、`h5`、`binary` 和 `script`，也可以在工作区中增加自定义比较器。
+
+当结果变化合理、需要接受新基线时，可使用 `--update-baseline`。该操作可能覆盖参考
+文件，因此交互运行时必须输入 `yes`，非交互环境必须显式增加 `--yes`：
+
+```bash
+cli-test run test_cases.json --update-baseline
+cli-test run test_cases.json --update-baseline --yes   # 自动化或 CI
+```
+
+请将基线纳入版本控制，并审查每一次更新。
+
+## 多步骤与迭代工作流
+
+一个用例可以包含有序的 `steps` 列表，任一步骤失败后立即停止。对于长耗时流程，
+`--resume` 会复用保存的状态，跳过已经通过的步骤：
+
+```bash
+cli-test run solver_tests.json
+cli-test run solver_tests.json --last-failed
+cli-test run solver_tests.json -t long_case --resume
+```
+
+`--resume` 明确信任两次运行之间的工作区产物未被修改。
+
+## 大型测试集与可选 TUI
+
+大型测试集可以拆分为多个子配置：
+
+```json
+{
+  "test_cases": [
+    {"import": "cases/text_tests.json", "tags": ["text"]},
+    {"import": "cases/h5_tests.json", "tags": ["h5", "regression"]}
+  ]
+}
+```
+
+可选 TUI 能在所有导入文件之上提供统一的可搜索视图，主要用于大型项目中定位用例和
+辅助检查场景覆盖情况，并不是日常执行测试的必要组件。
+
+```bash
+cli-test tui main_config.json
+```
+
+## 并行执行与资源
 
 ```bash
 cli-test run test_cases.json --parallel --workers 4
+cli-test run test_cases.json --parallel --execution-mode process
 ```
 
-### Python API
+线程模式目前支持 CPU 令牌分配、求解器线程环境变量注入，以及基于预估时间或历史
+耗时的 LPT 调度。进程模式提供执行隔离，但尚未接入资源调度器。真实内存约束、
+priority 语义和更完整的资源管理仍是后续演进方向。
+
+## CI 与报告
+
+```bash
+cli-test run test_cases.json \
+  --parallel --workers 4 \
+  --junit-xml report.xml
+```
+
+当前测试集包含 750 个单元、集成和端到端测试，行覆盖率为 83%。CI 在 Windows 和
+Linux 上覆盖 Python 3.9 至 3.13。
+
+## Python API
 
 ```python
 from cli_test_framework.runners import JSONRunner, ParallelJSONRunner
 
-# 顺序
-runner = JSONRunner(config_file="test_cases.json")
-success = runner.run_tests()
+runner = ParallelJSONRunner(
+    config_file="test_cases.json",
+    max_workers=4,
+    execution_mode="thread",
+    history_dir="./hist",
+    variables={"solver": "/opt/solver/bin/solver"},
+)
 
-# 并行
-runner = ParallelJSONRunner(config_file="test_cases.json", max_workers=4, execution_mode="thread")
 success = runner.run_tests()
+for detail in runner.results["details"]:
+    print(detail["name"], detail["status"], detail.get("duration"))
 ```
 
-### 文件比较（独立 CLI）
+## 独立文件比较
 
 ```bash
 compare-files result1.h5 result2.h5 --h5-table-regex "output_.*" --h5-rtol 1e-5
+compare-files data1.csv data2.csv --csv-rtol 1e-4 --csv-data-filter ">1e-6"
+compare-files data1.json data2.json --json-compare-mode key-based --json-key-field id
 ```
 
-📖 **完整使用说明**：[docs/user_manual.md](docs/user_manual.md)
+## AI 辅助 TDD：一个额外收益
 
-## 更新日志
+同一份配置也可以作为机器可读的验收契约。结构化校验失败、文件差异详情和定向重跑
+很适合组成 AI 辅助的 TDD 循环：
 
-### 0.7.0
+```text
+定义验收条件
+    → 运行相关用例
+    → 阅读结构化失败信息
+    → 修改实现
+    → 使用 --last-failed 定向验证
+    → 执行完整回归测试
+```
 
-- **统一日志系统**：所有诊断输出（执行器、runner、scheduler、setup）统一走 Python 标准 `logging` 模块，命名空间 `cli_test_framework`。作为库引用时可通过 `logging.getLogger("cli_test_framework").setLevel(logging.WARNING)` 完全静默。移除了原有的 `print()` + `_print_lock` ad-hoc 模式 — `logging` 模块天然线程安全。
-- **默认 Handler**：首次导入时自动安装 `StreamHandler`（INFO 级别），CLI 行为不变。通过 `--verbose` / `--debug` 启用 DEBUG 级别输出。
-- **公开 API**：`get_logger(name)` 通过 `cli_test_framework.get_logger` 暴露，供扩展开发统一使用。
+这是明确测试与结构化结果带来的额外收益，并不是使用框架的前提。
 
-### 0.6.0
+## 文档
 
-- **Golden File 断言**：`compare_files` 成为测试 `expected` 中的一等断言，支持在测试定义中直接声明输出文件与基准文件的对比（带容差和全部比较器参数）。`file_comparator` 子系统现已集成到断言管线中，形成从命令执行到产物验证的完整闭环。
+- [中文使用说明](docs/user_manual.md)
+- [中文设计文档](docs/design.md)
+- [插件示例](examples/plugins/README.md)
 
-### 0.5.1
-- 支持按名称筛选运行指定用例（`-t` / `test_case_filter`）
+## 开发
 
-### 0.5.0
-- 新增 Steps 功能，单用例内按流程顺序执行多个命令，失败即停
-
-### 0.4.2
-- 智能资源调度：自动检测 CPU 核心数，信号量管理核心分配
-- 自动注入 `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC`，防止求解器线程失控
-- 支持每个用例设置 `timeout`，防止卡死
-
-### 0.4.1
-- 支持多线程、多进程并行执行，效率提升 3-5 倍
-
-## 参与协作
-
-提交 PR 前，请确保测试全部通过：
+一次安装全部可选功能和测试依赖：
 
 ```bash
-python tests\run_all.py
+pip install -e ".[dev]"
+python -m pytest tests/unit tests/integration tests/e2e
 ```
+
+欢迎提交缺陷修复、比较器插件和文档改进，也欢迎分享真实项目中的测试需求与使用经验。
 
 ## 许可证
 

@@ -1,0 +1,70 @@
+======================================================================
+WP3 HOURGLASS ANALYSIS: HG-M1_D1_A1e-4
+  description: (none)
+  matrix generation step: 2
+======================================================================
+
+[1] Native K (HG-M1_D1_A1e-4_STIF2.mtx):
+    BC-penalty entries           = 144 / 576
+    penalty-overwritten DOFs     = 24 / 24
+    directly observed entries    = 432 / 576
+    recovered ||K||_F            = 1.234567e+06
+    HG-M1_D1_A1e-4 translation residuals = 1.234e-12, 2.345e-12, 3.456e-12
+    BS-0 baseline ||K||_F       = 1.200000e+06
+
+[2] UEL log: 4 calls
+    seq= 1  kstep=1 kinc=1  lflags=[1, 1, 1]  ||amatrx||=1.2345e+06
+    seq= 2  kstep=1 kinc=2  lflags=[1, 1, 1]  ||amatrx||=1.2345e+06
+    seq= 3  kstep=2 kinc=1  lflags=[1, 1, 3]  ||amatrx||=1.2345e+06
+    seq= 4  kstep=2 kinc=2  lflags=[1, 1, 1]  ||amatrx||=1.2345e+06
+
+[3] Matrix generation call #3 (lflags=[1, 1, 3]):
+    ||K_uel||_F                         = 1.234567e+06
+    observed-entry error (432 entries) = 5.000000e-08
+    recovered-full-matrix error         = 8.000000e-08
+    max|ΔK| (observed)                  = 3.000000e-06
+    UEL asymmetry ||K-K^T||/||K||       = 2.000e-13
+
+  Top 5 recovered-full-matrix differences:
+    (1,1) <-> (1,1): native=+1.000000e+05  uel=+1.000001e+05  delta=+1.000000e-01
+    (5,5) <-> (5,5): native=+1.000000e+05  uel=+1.000001e+05  delta=+1.000000e-01
+    (3,3) <-> (3,3): native=+1.000000e+05  uel=+1.000001e+05  delta=+1.000000e-01
+    (7,7) <-> (7,7): native=+1.000000e+05  uel=+1.000001e+05  delta=+1.000000e-01
+    (2,2) <-> (2,2): native=+5.000000e+04  uel=+5.000001e+04  delta=+5.000000e-02
+
+======================================================================
+[4] R/A/H block projection (current-configuration basis)
+    block      ||native||          ||UEL||            ||delta||     relative
+    RR       1.000000e+06    1.000000e+06      1.000000e-01  8.10e-08 (+/- 0.00e+00)
+    RA       5.000000e+05    5.000000e+05      5.000000e-02  4.05e-08 (+/- 0.00e+00)
+    RH       1.000000e+05    1.000000e+05      1.000000e-02  8.10e-09 (+/- 0.00e+00)
+    AR       5.000000e+05    5.000000e+05      5.000000e-02  4.05e-08 (+/- 0.00e+00)
+    AA       2.000000e+05    2.000000e+05      2.000000e-02  1.62e-08 (+/- 0.00e+00)
+    AH       5.000000e+04    5.000000e+04      1.000000e-02  8.10e-09 (+/- 0.00e+00)
+    HR       1.000000e+05    1.000000e+05      1.000000e-02  8.10e-09 (+/- 0.00e+00)
+    HA       5.000000e+04    5.000000e+04      1.000000e-02  8.10e-09 (+/- 0.00e+00)
+    HH       1.000000e+04    1.000000e+04      1.000000e-03  8.10e-10 (+/- 0.00e+00)
+
+    full ||delta K||_F         = 5.000000e-01
+    error-energy contributions:
+      RR:    4.000%
+      RA:    1.000%
+      RH:    0.010%
+      AR:    1.000%
+      AA:    0.040%
+      AH:    0.010%
+      HR:    0.010%
+      HA:    0.010%
+      HH:    0.001%
+
+======================================================================
+SUMMARY
+======================================================================
+  Case: HG-M1_D1_A1e-4
+  Matrix generation call: #3
+  Recovered-full relative error: 8.000000e-08
+  K_AA relative error: 1.62e-08 (+/- 0.00e+00)
+  K_HH relative error: 8.10e-10 (+/- 0.00e+00)
+  Native ||K||_F          = 1.234567e+06
+  UEL ||K||_F             = 1.234567e+06
+  RESULT: PASS — UEL matches native within numerical tolerance

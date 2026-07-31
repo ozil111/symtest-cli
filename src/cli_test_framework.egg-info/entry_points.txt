@@ -1,3 +1,0 @@
-[console_scripts]
-cli-test = cli_test_framework.cli:main
-compare-files = cli_test_framework.commands.compare:main

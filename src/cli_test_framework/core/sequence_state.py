@@ -53,33 +53,32 @@ def compute_config_hash(
     changes, the hash will differ and ``--resume`` will fall back to a full
     re-run.
     """
-    hasher = hashlib.sha256()
-    for i, step in enumerate(steps):
-        cmd = (
-            getattr(step, "command", "")
-            if hasattr(step, "command")
-            else step.get("command", "")
-        )
-        args = (
-            getattr(step, "args", [])
-            if hasattr(step, "args")
-            else step.get("args", [])
-        )
-        expected = (
-            getattr(step, "expected", {})
-            if hasattr(step, "expected")
-            else step.get("expected", {})
-        )
-        hasher.update(
-            f"step{i}:{cmd}:{sorted(args)}:{sorted(expected.items())}".encode(
-                "utf-8"
-            )
-        )
-    if case_expected:
-        hasher.update(
-            f"case_expected:{sorted(case_expected.items())}".encode("utf-8")
-        )
-    return hasher.hexdigest()
+    def field(step: Any, name: str, default: Any) -> Any:
+        if hasattr(step, name):
+            return getattr(step, name)
+        return step.get(name, default)
+
+    payload = {
+        "steps": [
+            {
+                "command": field(step, "command", ""),
+                # Argument order is significant for command-line programs.
+                "args": field(step, "args", []),
+                "expected": field(step, "expected", {}),
+                "timeout": field(step, "timeout", None),
+                "retry_count": field(step, "retry_count", 0),
+            }
+            for step in steps
+        ],
+        "case_expected": case_expected or {},
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def load_sequence_state(

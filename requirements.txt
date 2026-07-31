@@ -1,3 +1,5 @@
 pytest
+pytest-asyncio
+pytest-cov
 PyYAML
-concurrent.futures
+textual>=0.40.0
