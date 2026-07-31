@@ -16,7 +16,7 @@ runtime.  Library users can enable console logging explicitly::
     setup_console_logging(level=logging.DEBUG)
 """
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 __author__ = "Xiaotong Wang"
 __email__ = "xiaotongwang98@gmail.com"
 
@@ -42,4 +42,4 @@ __all__ = [
     'get_logger',
     'setup_console_logging',
     'write_junit_xml',
-] 
+]
