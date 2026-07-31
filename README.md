@@ -2,6 +2,14 @@
 
 [中文](README_cn.md) | English
 
+> **This project has been renamed to [`symtest`](https://pypi.org/project/symtest/).**
+> `cli-test-framework` 1.2.4 is the final release under this name and receives
+> no further updates. Please switch to the new package:
+>
+> ```bash
+> pip install symtest
+> ```
+
 A feature-focused automated testing framework for command-line applications.
 It is built for regression suites that need more than an exit-code check:
 multi-step commands, numerical result comparison, large configuration sets,

@@ -16,7 +16,7 @@ runtime.  Library users can enable console logging explicitly::
     setup_console_logging(level=logging.DEBUG)
 """
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
 __author__ = "Xiaotong Wang"
 __email__ = "xiaotongwang98@gmail.com"
 
