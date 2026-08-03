@@ -1,0 +1,33 @@
+{
+    "test_cases": [
+        {
+            "name": "numerical_golden_file_test",
+            "command": "my_solver",
+            "args": ["--input", "case1.dat", "--output", "out.h5"],
+            "description": "Example: run solver and compare HDF5 + CSV outputs against baselines",
+            "tags": ["regression", "numerical"],
+            "timeout": 3600,
+            "expected": {
+                "return_code": 0,
+                "output_contains": ["simulation finished"],
+                "compare_files": [
+                    {
+                        "actual": "out.h5",
+                        "baseline": "baseline/golden.h5",
+                        "type": "h5",
+                        "rtol": 1e-5,
+                        "atol": 1e-8,
+                        "tables": ["/result/displacement", "/result/stress"]
+                    },
+                    {
+                        "actual": "summary.csv",
+                        "baseline": "baseline/summary.csv",
+                        "type": "csv",
+                        "rtol": 1e-6,
+                        "atol": 1e-9
+                    }
+                ]
+            }
+        }
+    ]
+}
