@@ -232,6 +232,8 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 - [中文使用说明](docs/user_manual.md)
 - [中文设计文档](docs/design.md)
 - [插件示例](examples/plugins/README.md)
+- [AI Skill 模板](examples/skill/) — 可将框架知识导入 AI 编程助手，
+  让 AI 直接使用框架编写测试用例、验收标准和 TDD 工作流
 
 ## 开发
 
