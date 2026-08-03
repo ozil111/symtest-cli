@@ -9,8 +9,8 @@ import h5py
 import pytest
 from pathlib import Path
 
-from cli_test_framework.file_comparator.h5_comparator import H5Comparator
-from cli_test_framework.file_comparator.result import Difference
+from symtest.file_comparator.h5_comparator import H5Comparator
+from symtest.file_comparator.result import Difference
 
 
 # ---------------------------------------------------------------------------

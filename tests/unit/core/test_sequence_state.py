@@ -1,4 +1,4 @@
-from cli_test_framework.core.sequence_state import (
+from symtest.core.sequence_state import (
     compute_config_hash,
     delete_sequence_state,
     load_sequence_state,
@@ -6,7 +6,7 @@ from cli_test_framework.core.sequence_state import (
     save_sequence_state,
     save_step_output,
 )
-from cli_test_framework.core.test_case import TestCaseStep
+from symtest.core.test_case import TestCaseStep
 
 
 def test_config_hash_is_stable_for_mapping_key_order():

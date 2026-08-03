@@ -2,7 +2,7 @@ import numpy as np
 import h5py
 import pytest
 
-from cli_test_framework.file_comparator.factory import ComparatorFactory
+from symtest.file_comparator.factory import ComparatorFactory
 
 
 def create_h5(tmp_path, name, datasets):

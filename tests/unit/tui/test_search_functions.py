@@ -2,8 +2,8 @@
 
 import pytest
 
-from cli_test_framework.core.test_case import TestCase
-from cli_test_framework.tui.controllers.case_controller import (
+from symtest.core.test_case import TestCase
+from symtest.tui.controllers.case_controller import (
     _substring_match,
     _regex_match,
     _fuzzy_score,

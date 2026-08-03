@@ -5,7 +5,7 @@
 import json
 import pytest
 
-from cli_test_framework.file_comparator.result import Difference, ComparisonResult
+from symtest.file_comparator.result import Difference, ComparisonResult
 
 
 # =============================================================================

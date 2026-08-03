@@ -6,7 +6,7 @@ import tempfile
 import os
 import pytest
 
-from cli_test_framework.config.config_io import (
+from symtest.config.config_io import (
     load_config,
     save_config,
     validate_config,
@@ -243,7 +243,7 @@ class TestConfigSchema:
     """The exported JSON Schema is the machine-readable config contract."""
 
     def test_schema_structure(self):
-        from cli_test_framework.config.config_schema import get_config_schema
+        from symtest.config.config_schema import get_config_schema
 
         schema = get_config_schema()
         assert schema["$schema"].startswith("https://json-schema.org/")
@@ -254,12 +254,12 @@ class TestConfigSchema:
             assert defname in schema["$defs"], f"missing $defs.{defname}"
 
     def test_schema_is_json_serializable(self):
-        from cli_test_framework.config.config_schema import get_config_schema
+        from symtest.config.config_schema import get_config_schema
 
         json.dumps(get_config_schema())  # must not raise
 
     def test_get_config_schema_returns_independent_copy(self):
-        from cli_test_framework.config.config_schema import get_config_schema
+        from symtest.config.config_schema import get_config_schema
 
         mutated = get_config_schema()
         mutated["title"] = "mutated"
@@ -267,7 +267,7 @@ class TestConfigSchema:
 
     def test_required_fields_match_validate_config(self):
         """singleCase/step required fields must match validate_config's checks."""
-        from cli_test_framework.config.config_schema import get_config_schema
+        from symtest.config.config_schema import get_config_schema
 
         defs = get_config_schema()["$defs"]
         # singleCase now uses allOf with if/then for conditional required

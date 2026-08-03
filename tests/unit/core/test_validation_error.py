@@ -4,13 +4,13 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.core.assertions import (
+from symtest.core.assertions import (
     Assertions,
     ValidationError,
     _build_diff_summary,
 )
-from cli_test_framework.core.execution import validate_result
-from cli_test_framework.file_comparator.result import Difference
+from symtest.core.execution import validate_result
+from symtest.file_comparator.result import Difference
 
 
 # ---------------------------------------------------------------------------

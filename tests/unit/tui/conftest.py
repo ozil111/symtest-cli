@@ -4,8 +4,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli_test_framework.core.test_case import TestCase, TestCaseStep
-from cli_test_framework.tui.controllers.case_controller import CaseController
+from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.tui.controllers.case_controller import CaseController
 
 
 @pytest.fixture

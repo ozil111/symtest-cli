@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from cli_test_framework.tui.app import run_tui, CaseManagerApp
-from cli_test_framework.tui.controllers.case_controller import CaseController
+from symtest.tui.app import run_tui, CaseManagerApp
+from symtest.tui.controllers.case_controller import CaseController
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ class TestTuiCLIArgs:
 
     def _build_parser(self):
         """Replicate the parser setup from cli.py (the relevant parts)."""
-        parser = argparse.ArgumentParser(prog="cli-test")
+        parser = argparse.ArgumentParser(prog="symtest")
         subparsers = parser.add_subparsers(dest="command")
 
         tui_parser = subparsers.add_parser(

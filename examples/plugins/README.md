@@ -15,8 +15,8 @@ CLI Test Framework 支持通过**工作区插件目录**扩展比较器能力。
 **comparators/hello_comparator.py**:
 
 ```python
-from cli_test_framework.file_comparator.base_comparator import BaseComparator
-from cli_test_framework.file_comparator.result import ComparisonResult, Difference
+from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator.result import ComparisonResult, Difference
 
 class HelloComparator(BaseComparator):
     """最简自定义比较器：永远通过。"""
@@ -68,7 +68,7 @@ def compare_files(self, file1=None, file2=None, **kwargs):
 使用 `ComparisonResult` 和 `Difference` 构造结构化结果：
 
 ```python
-from cli_test_framework.file_comparator.result import ComparisonResult, Difference
+from symtest.file_comparator.result import ComparisonResult, Difference
 
 result = ComparisonResult()
 result.identical = False
@@ -149,7 +149,7 @@ class MyAnalysisComparator(BaseComparator):
 
 ```bash
 # 指定额外插件目录（可多次使用）
-cli-test run test_config.json --plugin-dir ./extra_plugins
+symtest run test_config.json --plugin-dir ./extra_plugins
 
 # workspace/comparators/ 始终自动探测，无需手动指定
 ```

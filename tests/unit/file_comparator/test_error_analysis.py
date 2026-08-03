@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from cli_test_framework.file_comparator.csv_comparator import CsvComparator
+from symtest.file_comparator.csv_comparator import CsvComparator
 
 
 # ── CSV Error Analysis ──

@@ -45,19 +45,19 @@ import os
 import sys
 from pathlib import Path
 
-from cli_test_framework.runners import (
+from symtest.runners import (
     ParallelJSONRunner,
     ParallelYAMLRunner,
 )
-from cli_test_framework.utils.report_generator import ReportGenerator
-from cli_test_framework import write_junit_xml, setup_console_logging
+from symtest.utils.report_generator import ReportGenerator
+from symtest import write_junit_xml, setup_console_logging
 
 
 # ---------------------------------------------------------------------------
 # 可选：确保 venv 中的 console-script 命令可见
 # ---------------------------------------------------------------------------
 # 如果你的项目使用虚拟环境且测试配置文件中的 command 引用了 console-script
-# 命令（例如 compare-files、cli-test），在 Windows 下直接双击运行或通过
+# 命令（例如 compare-files、symtest），在 Windows 下直接双击运行或通过
 # 未激活的环境启动脚本时，子进程可能找不到这些命令，报错 WinError 2
 # （系统找不到指定的文件）。
 #

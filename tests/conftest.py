@@ -1,7 +1,7 @@
 """
 Test configuration shared across suites.
 
-Adds the project src directory to sys.path so tests can import cli_test_framework.
+Adds the project src directory to sys.path so tests can import symtest.
 """
 
 import sys

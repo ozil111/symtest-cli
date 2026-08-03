@@ -4,8 +4,8 @@ import sys
 import tempfile
 from unittest import SkipTest
 
-from cli_test_framework.runners.json_runner import JSONRunner
-from cli_test_framework.runners.yaml_runner import YAMLRunner
+from symtest.runners.json_runner import JSONRunner
+from symtest.runners.yaml_runner import YAMLRunner
 
 
 def test_json_runner_end_to_end():

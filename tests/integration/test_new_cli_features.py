@@ -6,12 +6,12 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from cli_test_framework.core.last_run_store import (
+from symtest.core.last_run_store import (
     save_last_run,
     load_last_run,
     get_last_failed_names,
 )
-from cli_test_framework.core.base_runner import BaseRunner
+from symtest.core.base_runner import BaseRunner
 
 
 class TestLastFailedFiltering:
@@ -55,7 +55,7 @@ class TestUpdateBaselineWorkflow:
             with open(baseline, "w") as f:
                 f.write("old,data,50\n")
 
-            from cli_test_framework.core.assertions import Assertions
+            from symtest.core.assertions import Assertions
             result = Assertions.compare_files(actual, baseline, file_type="csv", update_baseline=True)
 
             assert result["identical"] is True
@@ -86,7 +86,7 @@ class TestValidateJsonOutput:
             with open(config_path, "w") as f:
                 json.dump(config, f)
 
-            from cli_test_framework.config.config_io import validate_config
+            from symtest.config.config_io import validate_config
             report = validate_config(config_path)
 
             assert "valid" in report
@@ -107,7 +107,7 @@ class TestValidateJsonOutput:
             with open(config_path, "w") as f:
                 json.dump(config, f)
 
-            from cli_test_framework.config.config_io import validate_config
+            from symtest.config.config_io import validate_config
             report = validate_config(config_path)
 
             assert report["valid"] is False
