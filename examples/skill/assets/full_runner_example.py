@@ -11,6 +11,7 @@
     --update-baseline / --yes / --update-history / --junit-xml / --workers
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
+  - --error-analysis 启用 CSV/HDF5 数值比较的流式误差统计
   - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 退出码处理
 
 用法示例：
@@ -34,6 +35,9 @@
 
   # 清零历史耗时记录，重新建立回归基线
   python run_tests.py test_cases.json --update-history
+
+  # 启用误差分析（CSV/HDF5 数值比较的统计信息）
+  python run_tests.py test_cases.json --error-analysis
 
   # 输出 JUnit XML 供 Jenkins/GitLab CI 解析
   python run_tests.py test_cases.json --junit-xml report.xml
@@ -183,6 +187,14 @@ def main():
         default=False,
         help="清零本次运行涉及的 case 的历史耗时记录，重新建立回归基线",
     )
+    parser.add_argument(
+        "--error-analysis",
+        action="store_true",
+        default=False,
+        help="启用数值比较的流式误差统计（CSV/HDF5）："
+             "total_numeric_cells、mismatched_cells、"
+             "max_abs/rel_error、mean/rms_abs_error",
+    )
 
     # ---- 输出 ----
     parser.add_argument(
@@ -304,6 +316,7 @@ def main():
         regression_threshold=args.regression_threshold,
         variables=variables,
         plugin_dirs=args.plugin_dir,
+        error_analysis=args.error_analysis,
     )
 
     # ---- 运行测试 ----
