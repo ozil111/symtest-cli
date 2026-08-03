@@ -109,6 +109,12 @@ starting point.
    ```
 2. Choose the comparator `type`: `text`, `json`, `csv`, `xml`, `h5`, `binary`,
    or `script`. Omit `type` to auto-detect by file extension.
+   If the `type` is not one of the above, it refers to a **user-defined
+   comparator**. User-defined comparators are loaded from
+   `<workspace>/comparators/*_comparator.py`. When troubleshooting a
+   custom `type`, check that directory first — verify the plugin file
+   exists and its class imports succeed (use `from symtest.file_comparator...`,
+   not other package names).
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.

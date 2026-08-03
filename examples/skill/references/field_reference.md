@@ -61,7 +61,7 @@
 |-------|------|----------|-------------|
 | `actual` | string | Yes | Actual output file path |
 | `baseline` | string | Yes | Baseline/reference file path |
-| `type` | string | No | Comparator: text/json/csv/xml/h5/binary/script |
+| `type` | string | No | Comparator type. Built-in: text/json/csv/xml/h5/binary/script. Custom types map to user plugins in `<workspace>/comparators/*_comparator.py` — when troubleshooting an unknown type, inspect those plugin files first. |
 | `start_line` | int | No | Start line (1-based) |
 | `end_line` | int | No | End line (1-based) |
 | `start_column` | int | No | Start column (1-based) |
