@@ -259,7 +259,7 @@ load_test_cases() → _apply_test_case_filter() → setup_manager.setup_all()
 支持三种过滤方式（可组合）：
 - `test_case_filter`：按名称精确匹配
 - `test_case_tag_filter`：按 tags 匹配（交集逻辑）
-- `last_failed`：从 `.cli-test/last_run.json` 读取上次失败的用例名
+- `last_failed`：从 `.symtest/last_run.json` 读取上次失败的用例名
 
 **xfail 机制 `_apply_xfail_status()`**：
 
@@ -426,7 +426,7 @@ class PathResolver:
 `--last-failed` 状态存储模块（`core/last_run_store.py`）：
 
 ```python
-# 存储位置: <workspace>/.cli-test/last_run.json
+# 存储位置: <workspace>/.symtest/last_run.json
 # {
 #   "case_name": {"status": "passed"},
 #   ...
@@ -448,8 +448,8 @@ class PathResolver:
 `--resume` 断点续跑模块（`core/sequence_state.py`）：
 
 ```python
-# 状态文件: <workspace>/.cli-test/sequence_state/<case_name>.json
-# 输出缓存: <workspace>/.cli-test/sequence_state/cache/<case_name>.step<N>.log
+# 状态文件: <workspace>/.symtest/sequence_state/<case_name>.json
+# 输出缓存: <workspace>/.symtest/sequence_state/cache/<case_name>.step<N>.log
 ```
 
 核心接口：
@@ -684,7 +684,7 @@ CaseManagerApp (Textual App)
   _update_history()          # 回归检测 + 更新 .symtest
        │
        ▼
-  _save_last_run()           # 写入 .cli-test/last_run.json
+  _save_last_run()           # 写入 .symtest/last_run.json
        │
        ▼
   setup_manager.teardown_all() # 逆序清理
@@ -781,7 +781,7 @@ symtest compare file1 file2 [options]
 | LPT 调度策略 | 长任务先启动，减少尾延迟；优先使用 `.symtest` 历史数据 |
 | 累计平均更新历史 | 直觉简单，随运行次数增多单次异常自然稀释 |
 | 回归检测在更新前执行 | 先与旧均值比较再更新，确保对比的是"历史基线" |
-| `.symtest` 隐藏文件 + `.cli-test/` 目录 | 不干扰用户目录视图，JSON 格式便于调试；状态文件统一管理 |
+| `.symtest/` 目录 | 不干扰用户目录视图，JSON 格式便于调试；状态文件统一管理 |
 | 环境变量注入 | 科学计算求解器常忽略 Python 级线程控制 |
 | Comparator 工厂 + 插件发现 | 按文件类型创建比较器，workspace `comparators/` 目录自动发现插件 |
 | subprocess 隔离执行 | 每个 test case 独立子进程，保证测试间互不影响 |

@@ -259,7 +259,7 @@ load_test_cases() → _apply_test_case_filter() → setup_manager.setup_all()
 Supports three filter modes (combinable):
 - `test_case_filter`: exact name match
 - `test_case_tag_filter`: tag-based match (intersection logic)
-- `last_failed`: reads previously failed case names from `.cli-test/last_run.json`
+- `last_failed`: reads previously failed case names from `.symtest/last_run.json`
 
 **xfail mechanism `_apply_xfail_status()`**:
 
@@ -426,7 +426,7 @@ Core interfaces:
 `--last-failed` state storage module (`core/last_run_store.py`):
 
 ```python
-# Storage location: <workspace>/.cli-test/last_run.json
+# Storage location: <workspace>/.symtest/last_run.json
 # {
 #   "case_name": {"status": "passed"},
 #   ...
@@ -448,8 +448,8 @@ Each run **overwrites** the status of executed cases; unexecuted cases retain th
 `--resume` step-level resume module (`core/sequence_state.py`):
 
 ```python
-# State file: <workspace>/.cli-test/sequence_state/<case_name>.json
-# Output cache: <workspace>/.cli-test/sequence_state/cache/<case_name>.step<N>.log
+# State file: <workspace>/.symtest/sequence_state/<case_name>.json
+# Output cache: <workspace>/.symtest/sequence_state/cache/<case_name>.step<N>.log
 ```
 
 Core interfaces:
@@ -684,7 +684,7 @@ Config file (JSON/YAML)
   _update_history()          # Regression detection + update .symtest
        │
        ▼
-  _save_last_run()           # Write .cli-test/last_run.json
+  _save_last_run()           # Write .symtest/last_run.json
        │
        ▼
   setup_manager.teardown_all() # Reverse cleanup
@@ -781,7 +781,7 @@ Sequence test case execution
 | LPT scheduling strategy | Long tasks start first, reducing tail latency; prioritizes `.symtest` historical data |
 | Cumulative average history update | Simple and intuitive; single anomalies are naturally diluted over many runs |
 | Regression check before update | Compare against old average first, then update; ensures comparison is against the "historical baseline" |
-| `.symtest` hidden file + `.cli-test/` directory | Non-intrusive to the user's directory view; JSON format for easy debugging; state files centrally managed |
+| `.symtest/` directory | Non-intrusive to the user's directory view; JSON format for easy debugging; state files centrally managed |
 | Environment variable injection | Scientific computing solvers often ignore Python-level thread control |
 | Comparator factory + plugin discovery | Creates comparators by file type; workspace `comparators/` directory for auto-discovered plugins |
 | subprocess isolated execution | Each test case runs in an independent subprocess, ensuring tests don't affect each other |

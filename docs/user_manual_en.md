@@ -702,7 +702,7 @@ symtest run test_cases.json --error-analysis
 **xfail semantics**: Cases marked `expected_failure` that fail (`xfailed`) are _expected behavior_ and are **not** selected by `--last-failed` for rerun. However, if an xfail-marked case unexpectedly passes (`xpassed`), it is treated as a true failure and **is** selected.
 
 **How it works**:
-- After each run, the framework records each case's status in `<workspace>/.cli-test/last_run.json`
+- After each run, the framework records each case's status in `<workspace>/.symtest/last_run.json`
 - Recording uses **overwrite-update**: cases run this time get new results overwriting old ones; un-run cases retain their previous status
 - This means a fixed case won't show as "failed" in the next display
 - If the file doesn't exist (first run), `--last-failed` warns and runs all cases normally
@@ -725,7 +725,7 @@ symtest run config.json
 `--resume` is for **sequential step tests (sequence)**. It skips steps that passed in the previous run and continues directly from the failed step. Ideal for long-running multi-step cases — for example, in an FEM analysis where steps 1-3 passed (each taking tens of seconds or minutes), only step 4's assertion failed. `--resume` skips 1-3 and reruns only step 4.
 
 **How it works**:
-- After each step passes, the framework records step status in `<workspace>/.cli-test/sequence_state/<case_name>.json` and caches output to the `cache/` subdirectory
+- After each step passes, the framework records step status in `<workspace>/.symtest/sequence_state/<case_name>.json` and caches output to the `cache/` subdirectory
 - On the next `--resume`, a config hash (SHA256 of every step's command/args/expected/timeout/retry_count plus case-level expected) is computed and compared against saved state
 - Hash match → skip passed steps, rebuild `combined_output` from cache (so case-level `expected` assertions run correctly)
 - All steps pass → state file and cache automatically deleted to avoid stale data affecting subsequent runs

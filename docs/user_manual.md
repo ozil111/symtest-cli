@@ -702,7 +702,7 @@ symtest run test_cases.json --error-analysis
 **xfail 语义**：标记为 `expected_failure` 的用例如果失败（`xfailed`），是预期行为，**不会**被 `--last-failed` 选中重跑。但如果 xfail 标记的用例意外通过（`xpassed`），则被视为真正失败，**会**被选中。
 
 **工作原理**：
-- 每次运行结束后，框架在 `<workspace>/.cli-test/last_run.json` 中记录每个用例的状态
+- 每次运行结束后，框架在 `<workspace>/.symtest/last_run.json` 中记录每个用例的状态
 - 记录采用**覆盖式更新**：本次跑到的用例用新结果覆盖旧结果，没跑到的保留原状态
 - 这意味着修好的 case 在下一次显示中不再是"failed"
 - 如果文件不存在（首次运行），`--last-failed` 会提示并正常运行全部用例
@@ -725,7 +725,7 @@ symtest run config.json
 `--resume` 针对**顺序步骤测试（sequence）**，跳过上次运行中已通过的步骤，直接从失败步骤继续执行。适合耗时长的多步骤用例——例如有限元分析中 step 1-3 通过了（各耗时几十秒甚至分钟），只有 step 4 的断言失败，`--resume` 可以跳过 1-3、只重跑 step 4。
 
 **工作原理**：
-- 每个步骤通过后，框架在 `<workspace>/.cli-test/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
+- 每个步骤通过后，框架在 `<workspace>/.symtest/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
 - 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected/timeout/retry_count 及 case 级 expected 的 SHA256）与已保存状态比对
 - 哈希匹配 → 跳过已通过的步骤，从缓存重建 `combined_output`（确保 case 级 `expected` 断言能正常执行）
 - 用例全部通过 → 自动删除状态文件和缓存，避免残留影响后续运行

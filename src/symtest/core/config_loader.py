@@ -242,7 +242,7 @@ def execute_sequence(
         Forwarded to ``execute_single_test_case`` for each step.
     resume:
         If True, attempt to skip already-passed steps by loading persisted
-        state from ``.cli-test/sequence_state/<case_name>.json``.  When the
+        state from ``.symtest/sequence_state/<case_name>.json``.  When the
         config hash matches, previously passed steps are skipped and their
         cached outputs are spliced into ``combined_output``.  When the full
         case passes, the state file is deleted.  Uses a pure-trust model:

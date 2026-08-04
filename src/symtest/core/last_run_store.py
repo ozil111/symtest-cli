@@ -3,7 +3,7 @@
 """
 Last-run state store for ``--last-failed`` support.
 
-Stores per-case status in ``<workspace>/.cli-test/last_run.json``.
+Stores per-case status in ``<workspace>/.symtest/last_run.json``.
 Each run **overwrites** the status of every case that was executed,
 so "previously failed but now fixed" cases are immediately removed
 from the failed set.  Cases that were not executed in this run
@@ -14,7 +14,7 @@ import json
 import os
 from typing import Dict, List, Optional
 
-LAST_RUN_DIR = ".cli-test"
+LAST_RUN_DIR = ".symtest"
 LAST_RUN_FILENAME = "last_run.json"
 
 
