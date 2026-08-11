@@ -62,12 +62,20 @@ TUI, resource scheduling, etc.), consult `references/user_manual.md`.
 
 ### Workflow 2: TDD Iteration Loop
 
+Use ordinary failing tests for the red phase of TDD. Do **not** mark a newly
+written acceptance test as `expected_failure` merely because the
+implementation does not support it yet. The purpose of the red phase is to
+make the missing behavior visible and keep it in the work queue; the
+development goal is to turn every failure into a pass.
+
 The framework's structured failure output makes it ideal for AI-assisted TDD:
 
 ```
 1. Define acceptance criteria (write test_cases.json)
 2. Run:  symtest run test_cases.json
-3. Read structured failure info from the report:
+   Expect new acceptance cases to have status `failed` until the
+   implementation is ready.
+3. Read structured failure info from the report and choose the next fix:
    - failure_kind: return_code | output_contains | output_matches |
                    file_compare | timeout | execution_error
    - compare_failures: structured diff details (diff_summary, error_stats)
@@ -77,13 +85,16 @@ The framework's structured failure output makes it ideal for AI-assisted TDD:
    symtest run test_cases.json --last-failed
 6. For step sequences, skip already-passed steps:
    symtest run test_cases.json -t case_name --resume
-7. Full regression run to confirm no regressions:
+7. Repeat steps 3–6 until the targeted run is green.
+8. Full regression run to confirm no regressions:
    symtest run test_cases.json
 ```
 
 Key TDD-friendly features:
-- `--last-failed` only re-runs cases that truly failed (failed/timeout/xpassed),
-  skipping xfailed (expected failures).
+- `--last-failed` re-runs cases that truly failed (`failed`, `timeout`, and
+  `xpassed`). This is the normal iteration command after the initial run.
+- On the first run, when no previous result exists, the framework runs all
+  cases, so newly authored acceptance tests are discovered immediately.
 - `--resume` skips passed steps in sequence tests, reusing cached outputs.
 - JSON output format (`--output-format json`) gives machine-readable results.
 - `validate --output-format json` gives machine-readable config validation.
@@ -147,9 +158,16 @@ starting point.
 - Use `variables` for parameterization (`{placeholder}` substitution).
 
 ### When to use `expected_failure` (xfail)
-- When a case is known to fail due to an unresolved bug.
-- `xfailed` (fails as expected) does not affect exit code.
-- `xpassed` (unexpectedly passes) is treated as a failure — prompts removal
+- Use only for a separately tracked, known defect that is intentionally not
+  part of the current implementation scope—for example, a compatibility
+  issue blocked on an external dependency.
+- Do **not** use it for the initial red phase of TDD or to silence a failing
+  acceptance test. Those cases must remain ordinary `failed` cases so that
+  `--last-failed` keeps them in the development loop.
+- `xfailed` (fails as expected) does not affect the exit code and is not
+  selected by `--last-failed`; this is precisely why it is unsuitable for
+  unfinished feature work.
+- `xpassed` (unexpectedly passes) is treated as a failure and prompts removal
   of the xfail mark.
 
 ## Running Tests

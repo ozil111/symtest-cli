@@ -125,7 +125,13 @@ test_cases:
 
 ### Expected Failure (xfail)
 
-When a known defect prevents a test case from passing, you can mark `expected_failure: true`. The framework distinguishes between "expected failures" and "unexpected passes":
+When a separately tracked defect is intentionally outside the current
+implementation scope, you can mark `expected_failure: true`. Do not use this
+for a newly authored acceptance test in the red phase of TDD: that test must
+remain an ordinary failure so development can turn it into a pass and
+`--last-failed` will keep selecting it.
+
+The framework distinguishes between "expected failures" and "unexpected passes":
 
 | Scenario | Status | Exit Code Impact | Description |
 |---|---|---|---|
