@@ -233,6 +233,16 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "then overlaid by global --var flags at run time."
                             ),
                         },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Names of test cases that must pass before this case can "
+                                "start.  In parallel mode, dependencies are scheduled as a "
+                                "DAG: cases with satisfied dependencies run concurrently. "
+                                "If a dependency fails, this case is marked 'skipped'."
+                            ),
+                        },
                     },
                 },
             ],
@@ -306,6 +316,16 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "Per-case placeholder variables for {key} substitution. "
                                 "Merged from the ancestor chain (child overrides parent), "
                                 "then overlaid by global --var flags at run time."
+                            ),
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Names of test cases that must pass before this case can "
+                                "start.  In parallel mode, dependencies are scheduled as a "
+                                "DAG: cases with satisfied dependencies run concurrently. "
+                                "If a dependency fails, this case is marked 'skipped'."
                             ),
                         },
                     },

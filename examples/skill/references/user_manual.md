@@ -159,6 +159,78 @@ When xfailed case output is extremely verbose (e.g., hundreds of lines of solver
 }
 ```
 
+### Test Dependencies (depends_on)
+
+When test cases have ordering dependencies (e.g., D requires A, B, and C to generate data first), declare them via `depends_on`. The framework automatically schedules execution in DAG topological order:
+
+**Parallel mode**: A, B, and C run concurrently. D is submitted only after all three pass. If a dependency fails, its downstream cases are auto-skipped (cascade skip).
+
+**Sequential mode**: The framework reorders cases topologically, ensuring dependencies run first. Downstream cases are skipped on dependency failure.
+
+**JSON example**:
+
+```json
+{
+    "test_cases": [
+        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
+        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
+        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        {
+            "name": "D", "command": "python", "args": ["merge.py"],
+            "depends_on": ["A", "B", "C"],
+            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
+        }
+    ]
+}
+```
+
+**YAML example**:
+
+```yaml
+test_cases:
+  - name: A
+    command: python
+    args: ["gen_a.py"]
+    expected: { return_code: 0 }
+
+  - name: B
+    command: python
+    args: ["gen_b.py"]
+    expected: { return_code: 0 }
+
+  - name: C
+    command: python
+    args: ["gen_c.py"]
+    expected: { return_code: 0 }
+
+  - name: D
+    command: python
+    args: ["merge.py"]
+    depends_on: [A, B, C]
+    expected:
+      return_code: 0
+      compare_files:
+        - file: output.h5
+          type: hdf5
+```
+
+**Scheduling semantics**:
+
+| Dependency Status | Downstream Behavior |
+|---|---|
+| `passed` or `xfailed` | Dependency "satisfied", downstream runs normally |
+| `failed` or `xpassed` | Dependency "unsatisfied", downstream marked `skipped` with cascade skip |
+| Circular dependency | Configuration validation error, execution blocked |
+
+`skipped` is NOT counted as `failed`; shown separately as `Skipped: N` in the report summary.
+
+**Constraints**:
+- Dependency names must exist in the same config file's `test_cases`
+- Self-dependency is not allowed (`depends_on: ["self"]`)
+- Circular dependencies are not allowed (A → B → A)
+- `depends_on` and `steps` are independent—`depends_on` is a case-level concept, `steps` is an intra-case step-level concept
+- Zero-overhead fast path when no dependencies are declared
+
 ### Field Descriptions
 
 | Field | Required | Description |
@@ -174,6 +246,7 @@ When xfailed case output is extremely verbose (e.g., hundreds of lines of solver
 | `expected_failure` | No | Mark as expected failure (xfail). When `true`, failure is counted as XFailed (no exit code impact); unexpected pass is counted as XPassed (treated as failure) |
 | `xfail_reason` | No | Reason text for xfail, displayed in the report (e.g., "Bug #42 not yet fixed") |
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
+| `depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |

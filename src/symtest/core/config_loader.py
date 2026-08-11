@@ -135,6 +135,7 @@ def parse_test_cases(
                 expected_failure=case.get("expected_failure", False),
                 xfail_reason=case.get("xfail_reason", ""),
                 xfail_quiet=case.get("xfail_quiet", False),
+                depends_on=case.get("depends_on", []),
             ))
         else:
             # ── Single-command mode (backward-compatible) ──
@@ -161,6 +162,7 @@ def parse_test_cases(
                     expected_failure=case.get("expected_failure", False),
                     xfail_reason=case.get("xfail_reason", ""),
                     xfail_quiet=case.get("xfail_quiet", False),
+                    depends_on=case.get("depends_on", []),
                 ))
             else:
                 cases.append(TestCase(
@@ -176,6 +178,7 @@ def parse_test_cases(
                     expected_failure=case.get("expected_failure", False),
                     xfail_reason=case.get("xfail_reason", ""),
                     xfail_quiet=case.get("xfail_quiet", False),
+                    depends_on=case.get("depends_on", []),
                 ))
 
     return cases

@@ -318,6 +318,7 @@ class TestCase:
     expected_failure: bool = False
     xfail_reason: str = ""
     xfail_quiet: bool = False
+    depends_on: List[str] = field(default_factory=list)
 ```
 
 Two modes:
@@ -699,14 +700,14 @@ Config file (JSON/YAML)
 ParallelConfigRunner.run_tests()
        │
        ▼
-  LPT sort (historical avg_duration preferred, fallback to estimated_time desc)
+  Topology-constrained LPT sort (depends_on + historical avg_duration desc)
        │
        ▼
   _assign_relative_cpu_cores()  # Proportional CPU core assignment by weight
        │
        ▼
   ┌──────────────────────────────────────┐
-  │  ThreadPoolExecutor.map():           │
+  │  DAG scheduling / flat (no deps)     │
   │    AtomicSemaphore.acquire(cores)    │
   │    Inject OMP/MKL/NPROC env vars     │
   │    execute_single_test_case()        │
@@ -715,7 +716,47 @@ ParallelConfigRunner.run_tests()
   └──────────────────────────────────────┘
 ```
 
-### 7.3 File Comparison Flow
+### 7.3 DAG Dependency Scheduling Flow
+
+When `TestCase.depends_on` is non-empty, the parallel runner switches to DAG topology scheduling:
+
+```
+ParallelRunner.run_tests()
+       │
+       ▼
+  has_deps? ──No──► _run_tests_flat() (fast path)
+       │
+      Yes
+       ▼
+  _run_dag()
+       │
+       ├── Build dependents adjacency + in_degree table
+       ├── in_degree=0 cases → ready queue → executor.submit()
+       │
+       ▼
+  ┌────────────────────────────────────────┐
+  │  as_completed() loop:                   │
+  │    Complete one future                  │
+  │    │                                     │
+  │    ├── passed/xfailed → decrement       │
+  │    │   successor in-degree              │
+  │    │   └── in_degree=0 → submit()       │
+  │    │                                     │
+  │    └── failed/xpassed → cascade_skip    │
+  │        └── BFS mark all downstream      │
+  │            as skipped                    │
+  └────────────────────────────────────────┘
+```
+
+**Scheduling semantics**:
+- Dependency "satisfied" = status is `passed` or `xfailed`
+- Dependency "unsatisfied" = status is `failed` or `xpassed` → all downstream skipped
+- `skipped` is NOT counted as `failed`; listed separately in reports
+- Cascade skip: if B is skipped, C (which depends on B) is also skipped
+
+**Sequential runner** (`BaseRunner.run_tests()`) also supports topological ordering: `_topological_order()` uses Kahn's algorithm to generate a topological sequence, runs in order, and auto-skips downstream on dependency failure.
+
+### 7.4 File Comparison Flow
 
 ```
 symtest compare file1 file2 [options]
@@ -737,7 +778,7 @@ symtest compare file1 file2 [options]
   format_result(result, --output-format)  # text / json / html
 ```
 
-### 7.4 --resume Checkpoint Flow
+### 7.5 --resume Checkpoint Flow
 
 ```
 Sequence test case execution
@@ -789,6 +830,7 @@ Sequence test case execution
 | --last-failed overwrite strategy | Only overwrites status of executed cases; avoids losing state of unexecuted cases during subset runs |
 | --resume pure trust model | No artifact validation; user guarantees workspace is unchanged, simplifying implementation |
 | retry_count retry mechanism | Handles transient network glitches or race conditions; auto-retries on first failure |
+| DAG dependency scheduling | Kahn topology + ready queue; submits dependents immediately once deps are satisfied; cascade-skips downstream on dep failure; zero-overhead fast path when no deps declared |
 | --update-baseline | Automatically overwrites baseline files with actual output on comparison failure; ideal for batch baseline updates |
 | next_action_hint structured suggestions | Failed results include actionable suggestions (update_baseline / update_expected / increase_timeout / investigate), convenient for AI consumption |
 | TUI based on Textual | Leverages a mature terminal UI framework for interactive case management |

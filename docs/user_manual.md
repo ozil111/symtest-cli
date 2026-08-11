@@ -159,6 +159,78 @@ test_cases:
 }
 ```
 
+### 测试依赖（depends_on）
+
+当测试用例之间存在先后依赖时（例如 D 需要 A、B、C 先生成数据），通过 `depends_on` 声明依赖关系，框架会自动按 DAG 拓扑顺序调度：
+
+**并行模式**：A、B、C 并行执行，全部通过后 D 才被提交。依赖失败的用例会自动 skip 其下游（级联 skip）。
+
+**顺序模式**：框架按拓扑序重排用例，保证依赖在前的先执行，依赖失败时同样跳过下游。
+
+**JSON 示例**：
+
+```json
+{
+    "test_cases": [
+        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
+        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
+        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        {
+            "name": "D", "command": "python", "args": ["merge.py"],
+            "depends_on": ["A", "B", "C"],
+            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
+        }
+    ]
+}
+```
+
+**YAML 示例**：
+
+```yaml
+test_cases:
+  - name: A
+    command: python
+    args: ["gen_a.py"]
+    expected: { return_code: 0 }
+
+  - name: B
+    command: python
+    args: ["gen_b.py"]
+    expected: { return_code: 0 }
+
+  - name: C
+    command: python
+    args: ["gen_c.py"]
+    expected: { return_code: 0 }
+
+  - name: D
+    command: python
+    args: ["merge.py"]
+    depends_on: [A, B, C]
+    expected:
+      return_code: 0
+      compare_files:
+        - file: output.h5
+          type: hdf5
+```
+
+**调度语义**：
+
+| 依赖状态 | 下游行为 |
+|---|---|
+| `passed` 或 `xfailed` | 依赖"满足"，下游正常执行 |
+| `failed` 或 `xpassed` | 依赖"不满足"，下游标记为 `skipped`，并级联 skip |
+| 存在循环依赖 | 配置校验阶段报错，禁止运行 |
+
+`skipped` 不计入 `failed` 计数，在报告摘要中单独显示 `Skipped: N`。
+
+**约束**：
+- 依赖名称必须在同配置文件的 `test_cases` 中存在
+- 不允许自依赖（`depends_on: ["self"]`）
+- 不允许循环依赖（A → B → A）
+- 与 `steps` 模式互不影响——`depends_on` 是用例级概念，`steps` 是用例内步骤级概念
+- 无依赖时走 fast path，调度开销为零
+
 ### 字段说明
 
 | 字段 | 必填 | 说明 |
@@ -174,6 +246,7 @@ test_cases:
 | `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
+| `depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |

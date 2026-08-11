@@ -7,7 +7,7 @@ logic into ``ParallelConfigRunner``, accepting a ``config_loader`` callable.
 import sys
 import os
 import logging
-from typing import Optional, Dict, Any, Callable, BinaryIO
+from typing import Optional, Dict, Any, Callable, BinaryIO, List
 
 from ..core.parallel_runner import ParallelRunner, AtomicSemaphore
 from ..core.config_loader import parse_test_cases, execute_sequence
@@ -112,6 +112,64 @@ class ParallelConfigRunner(ParallelRunner):
             allocated += share
 
     # ------------------------------------------------------------------
+    #  Topology-constrained LPT sort
+    # ------------------------------------------------------------------
+
+    def _topology_lpt_sort(self, get_estimated_time) -> List[TestCase]:
+        """Sort cases by LPT (Longest Processing Time first) within DAG constraints.
+
+        Cases are grouped into topological "levels". Within each level,
+        cases are sorted by estimated time descending. This preserves
+        dependency order while maximizing parallel resource utilization.
+        """
+        from collections import deque
+        from typing import Dict, Set
+
+        cases = self.test_cases
+        name_to_case: Dict[str, TestCase] = {c.name: c for c in cases}
+
+        # Compute in-degree
+        in_degree: Dict[str, int] = {}
+        dependents: Dict[str, List[str]] = {}
+        for c in cases:
+            deps = [d for d in c.depends_on if d in name_to_case]
+            in_degree[c.name] = len(deps)
+            for dep in deps:
+                dependents.setdefault(dep, []).append(c.name)
+
+        # BFS to compute depth levels
+        depth: Dict[str, int] = {}
+        queue: deque = deque()
+        for c in cases:
+            if in_degree[c.name] == 0:
+                depth[c.name] = 0
+                queue.append(c.name)
+
+        while queue:
+            name = queue.popleft()
+            for dep_name in dependents.get(name, []):
+                new_depth = depth[name] + 1
+                if dep_name not in depth or depth[dep_name] < new_depth:
+                    depth[dep_name] = new_depth
+                    # Only enqueue once all predecessors are processed
+                    # (simple max-depth approach is sufficient for sorting)
+                in_degree[dep_name] -= 1
+                if in_degree[dep_name] == 0:
+                    queue.append(dep_name)
+
+        # Fallback: ensure all cases have a depth
+        for c in cases:
+            if c.name not in depth:
+                depth[c.name] = 0
+
+        # Sort: depth ascending, then estimated_time descending within same depth
+        result = sorted(
+            cases,
+            key=lambda c: (depth.get(c.name, 0), -get_estimated_time(c)),
+        )
+        return result
+
+    # ------------------------------------------------------------------
     #  Test loading (format-agnostic)
     # ------------------------------------------------------------------
 
@@ -140,7 +198,7 @@ class ParallelConfigRunner(ParallelRunner):
             logger.info("Successfully loaded %d test cases",
                         len(self.test_cases))
 
-            # Heuristic scheduling: longest-estimated first
+            # Heuristic scheduling: longest-estimated first (topology-aware)
             if self.test_cases:
                 history_cases: Dict[str, Any] = {}
                 if self.history_dir:
@@ -160,7 +218,14 @@ class ParallelConfigRunner(ParallelRunner):
                 logger.info(
                     "Optimizing execution order based on estimated duration...",
                 )
-                self.test_cases.sort(key=get_estimated_time, reverse=True)
+
+                has_deps = any(c.depends_on for c in self.test_cases)
+                if has_deps:
+                    # Topology-constrained LPT: sort within each "level" of the DAG
+                    self.test_cases = self._topology_lpt_sort(get_estimated_time)
+                else:
+                    self.test_cases.sort(key=get_estimated_time, reverse=True)
+
                 top_case = self.test_cases[0]
                 top_est = get_estimated_time(top_case)
                 source = (

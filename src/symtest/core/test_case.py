@@ -27,6 +27,7 @@ class TestCase:
     expected_failure: bool = False
     xfail_reason: str = ""
     xfail_quiet: bool = False
+    depends_on: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert test case to dictionary format"""
