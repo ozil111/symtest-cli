@@ -94,6 +94,19 @@ class BaseComparator(ABC):
             self.logger.debug(f"Comparing content")
             identical, differences, truncated = self.compare_content(content1, content2)
             
+            # Adjust line numbers in differences to reflect original file line numbers
+            # compare_content reports positions relative to the sliced content (1-based),
+            # but we need to offset by start_line to reflect positions in the original file
+            if start_line > 0:
+                import re
+                for diff in differences:
+                    if diff.position and isinstance(diff.position, str):
+                        # Position format is "line N"
+                        match = re.match(r'^line (\d+)$', diff.position)
+                        if match:
+                            original_line = int(match.group(1)) + start_line
+                            diff.position = f"line {original_line}"
+            
             # Update result
             result.identical = identical
             result.differences = differences

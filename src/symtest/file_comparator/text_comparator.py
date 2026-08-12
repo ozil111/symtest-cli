@@ -124,54 +124,78 @@ class TextComparator(BaseComparator):
                 line_diffs.append(('context', line[1:]))
         
         # Convert diff to our difference format
+        # In unified_diff(content1, content2):
+        #   '-' lines come from content1 (= actual file)
+        #   '+' lines come from content2 (= baseline file)
+        # So: expected = '+' lines (baseline), actual = '-' lines (actual file)
         line_num1 = 0
         line_num2 = 0
-        for i, (action, line) in enumerate(line_diffs):
+        i = 0
+        while i < len(line_diffs):
+            action, line = line_diffs[i]
             if action == 'hunk':
                 # Reset to real line numbers from the hunk header (convert 1-based to 0-based)
                 line_num1 = line[0] - 1
                 line_num2 = line[1] - 1
+                i += 1
                 continue
             elif action == 'remove':
-                # Look ahead for a corresponding 'add'
-                add_match = None
-                for j in range(i+1, min(i+5, len(line_diffs))):
-                    if line_diffs[j][0] == 'add':
-                        add_match = line_diffs[j][1]
-                        del line_diffs[j]
-                        break
-                
-                if add_match is not None:
-                    # Content difference
-                    differences.append(Difference(
-                        position=f"line {line_num1+1}",
-                        expected=line,
-                        actual=add_match,
-                        diff_type="content"
-                    ))
-                else:
-                    # Missing line
-                    differences.append(Difference(
-                        position=f"line {line_num1+1}",
-                        expected=line,
-                        actual=None,
-                        diff_type="missing"
-                    ))
-                line_num1 += 1
-                
+                # Collect consecutive remove block (actual file lines)
+                removes = []
+                while i < len(line_diffs) and line_diffs[i][0] == 'remove':
+                    removes.append(line_diffs[i][1])
+                    i += 1
+                # Collect following add block (baseline file lines)
+                adds = []
+                while i < len(line_diffs) and line_diffs[i][0] == 'add':
+                    adds.append(line_diffs[i][1])
+                    i += 1
+                # Pair by position
+                max_len = max(len(removes), len(adds))
+                for k in range(max_len):
+                    act_val = removes[k] if k < len(removes) else None
+                    exp_val = adds[k] if k < len(adds) else None
+                    if act_val is not None and exp_val is not None:
+                        # Content difference: both sides have a line, values differ
+                        differences.append(Difference(
+                            position=f"line {line_num1+k+1}",
+                            expected=exp_val,
+                            actual=act_val,
+                            diff_type="content"
+                        ))
+                    elif exp_val is not None:
+                        # Missing: baseline has a line, actual doesn't
+                        differences.append(Difference(
+                            position=f"line {line_num2+k+1}",
+                            expected=exp_val,
+                            actual=None,
+                            diff_type="missing"
+                        ))
+                    else:
+                        # Extra: actual has a line, baseline doesn't
+                        differences.append(Difference(
+                            position=f"line {line_num1+k+1}",
+                            expected=None,
+                            actual=act_val,
+                            diff_type="extra"
+                        ))
+                line_num1 += len(removes)
+                line_num2 += len(adds)
+                continue
             elif action == 'add':
-                # Extra line
+                # Standalone add (baseline has line, actual doesn't)
                 differences.append(Difference(
                     position=f"line {line_num2+1}",
-                    expected=None,
-                    actual=line,
-                    diff_type="extra"
+                    expected=line,
+                    actual=None,
+                    diff_type="missing"
                 ))
                 line_num2 += 1
-                
+                i += 1
             elif action == 'context':
                 line_num1 += 1
                 line_num2 += 1
+                i += 1
         
         # Limit the number of differences reported
         max_diffs = 10
