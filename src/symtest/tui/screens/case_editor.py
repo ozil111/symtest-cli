@@ -51,6 +51,10 @@ class CaseEditorScreen(Screen):
     CaseEditorScreen #case-timeout {
         width: 15;
     }
+    CaseEditorScreen #case-env {
+        height: 3;
+        margin-bottom: 1;
+    }
     CaseEditorScreen #mode-indicator {
         color: $accent;
         text-style: bold;
@@ -92,6 +96,8 @@ class CaseEditorScreen(Screen):
                 Input(placeholder="", id="case-timeout"),
                 Label("Retry count:", id="retry-label"),
                 Input(placeholder="0", id="case-retry-count"),
+                Label("Environment variables (one per line, KEY=VALUE):", id="env-label"),
+                TextArea("", id="case-env"),
                 ExpectedEditor(id="expected-editor"),
                 StepsEditor(id="steps-editor"),
                 id="editor-fields",
@@ -130,6 +136,7 @@ class CaseEditorScreen(Screen):
         self.query_one("#case-description", TextArea).text = tc.description or ""
         self.query_one("#case-timeout", Input).value = str(tc.timeout) if tc.timeout else ""
         self.query_one("#case-retry-count", Input).value = str(tc.retry_count) if tc.retry_count else ""
+        self.query_one("#case-env", TextArea).text = self._format_env_text(tc.env)
 
         self.query_one("#expected-editor", ExpectedEditor).load(tc.expected or {})
 
@@ -154,6 +161,7 @@ class CaseEditorScreen(Screen):
         retry_count = int(retry_text) if retry_text else 0
 
         description = self.query_one("#case-description", TextArea).text.strip()
+        env = self._parse_env_text(self.query_one("#case-env", TextArea).text)
 
         if self._is_sequence:
             steps = self.query_one("#steps-editor", StepsEditor).to_steps()
@@ -167,6 +175,7 @@ class CaseEditorScreen(Screen):
                 resources=self._case.resources if self._case else None,
                 tags=tags,
                 retry_count=retry_count,
+                env=env,
             )
         else:
             command = self.query_one("#case-command", Input).value.strip()
@@ -184,7 +193,36 @@ class CaseEditorScreen(Screen):
                 resources=self._case.resources if self._case else None,
                 tags=tags,
                 retry_count=retry_count,
+                env=env,
             )
+
+    @staticmethod
+    def _format_env_text(env: dict | None) -> str:
+        """Serialize an ``env`` dict to ``KEY=VALUE`` lines."""
+        if not env:
+            return ""
+        return "\n".join(f"{k}={v}" for k, v in env.items())
+
+    @staticmethod
+    def _parse_env_text(text: str) -> dict:
+        """Parse ``KEY=VALUE`` lines into a dict, skipping blanks/comments.
+
+        Invalid lines (no ``=`` or empty key) are ignored silently so the
+        editor stays forgiving; a malformed line is simply not exported.
+        """
+        result: dict = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            result[key] = value.strip()
+        return result
 
     def _update_mode_visibility(self) -> None:
         """Show/hide fields based on current mode."""

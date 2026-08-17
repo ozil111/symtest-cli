@@ -357,10 +357,16 @@ def _execute_command_once(
     }
 
     # Prepare environment variables
-    # Default to current environment, merge with provided env if any
+    # Default to current environment, merge with provided env if any.
+    # Case-level ``env`` (if present) is applied last so it takes the highest
+    # precedence, allowing it to override both inherited environment variables
+    # and scheduler-injected values (e.g. OMP_NUM_THREADS).
     current_env = os.environ.copy()
     if env:
         current_env.update(env)
+    case_env = case.get("env")
+    if case_env:
+        current_env.update(case_env)
 
     try:
         process = subprocess.Popen(

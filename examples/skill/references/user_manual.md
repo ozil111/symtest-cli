@@ -4,6 +4,7 @@
 
 - [Installation](#installation)
 - [Test Case Definition](#test-case-definition)
+- [Case-Level Environment Variables](#case-level-environment-variables-env)
 - [Configuration Splitting](#configuration-splitting)
 - [Configuration Inheritance](#configuration-inheritance)
 - [Configuration Validation](#configuration-validation)
@@ -125,13 +126,7 @@ test_cases:
 
 ### Expected Failure (xfail)
 
-When a separately tracked defect is intentionally outside the current
-implementation scope, you can mark `expected_failure: true`. Do not use this
-for a newly authored acceptance test in the red phase of TDD: that test must
-remain an ordinary failure so development can turn it into a pass and
-`--last-failed` will keep selecting it.
-
-The framework distinguishes between "expected failures" and "unexpected passes":
+When a known defect prevents a test case from passing, you can mark `expected_failure: true`. The framework distinguishes between "expected failures" and "unexpected passes":
 
 | Scenario | Status | Exit Code Impact | Description |
 |---|---|---|---|
@@ -253,6 +248,7 @@ test_cases:
 | `xfail_reason` | No | Reason text for xfail, displayed in the report (e.g., "Bug #42 not yet fixed") |
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
 | `depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
+| `env` | No | Case-level environment variable mapping (e.g. `{"UEL_SYSID_SCALE": "1.0"}`), injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |
@@ -294,6 +290,62 @@ Fields for each comparison rule:
     ]
 }
 ```
+
+## Case-Level Environment Variables (env)
+
+Use the `env` field (same level as `name`) to inject environment variables into a single case's subprocess. The variables apply only to that case (all steps in sequence mode) and do not affect other cases.
+
+### JSON
+
+```json
+{
+    "name": "UEL scale test",
+    "command": "solver",
+    "args": ["-i", "input.dat"],
+    "env": {
+        "UEL_SYSID_SCALE": "1.0",
+        "OMP_NUM_THREADS": "8"
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### YAML
+
+```yaml
+- name: UEL scale test
+  command: solver
+  args: ["-i", "input.dat"]
+  env:
+    UEL_SYSID_SCALE: "1.0"
+  expected: { return_code: 0 }
+```
+
+### Sequence Mode
+
+`env` is defined at the case level (same level as `steps`) and applies to **all steps** of that case:
+
+```json
+{
+    "name": "multi-step with env",
+    "env": { "UEL_SYSID_SCALE": "1.0" },
+    "steps": [
+        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+    ]
+}
+```
+
+### Semantics
+
+| Aspect | Behavior |
+|---|---|
+| Injection mechanism | Injected via subprocess `env`, never mutates the global `os.environ`; process-isolated and thread-safe |
+| Precedence | `os.environ` (incl. `setup.environment_variables`) < scheduler-injected (`OMP/MKL/NPROC`) < **case `env` (highest)** — case env can override `OMP_NUM_THREADS` |
+| Scope | Current case only, no cross-case pollution (unlike global `setup.environment_variables`) |
+| Placeholders | Auto-supported; `"env": {"SCALE": "{scale}"}` is substituted via `variables`/`--var` |
+| Inheritance (extends) | Auto-supported; `env` is a dict, deep-merged with child keys overriding parent |
+| Value type | Strings; numeric/boolean values are coerced with `str()` at parse time |
 
 ## Configuration Splitting
 

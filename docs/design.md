@@ -319,6 +319,7 @@ class TestCase:
     xfail_reason: str = ""
     xfail_quiet: bool = False
     depends_on: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
 ```
 
 两种模式：
@@ -330,6 +331,7 @@ class TestCase:
 - `retry_count`：失败重试次数
 - `expected_failure` / `xfail_reason` / `xfail_quiet`：预期失败标记
 - `depends_on`：用例级依赖声明，支持 DAG 拓扑调度
+- `env`：case 级环境变量，注入该 case（序列模式为所有 step）的子进程，优先级高于 `setup` 与调度器注入
 
 ### 4.3 Assertions
 
@@ -823,6 +825,7 @@ symtest compare file1 file2 [options]
 | 回归检测在更新前执行 | 先与旧均值比较再更新，确保对比的是"历史基线" |
 | `.symtest/` 目录 | 不干扰用户目录视图，JSON 格式便于调试；状态文件统一管理 |
 | 环境变量注入 | 科学计算求解器常忽略 Python 级线程控制 |
+| case 级 env 通过 subprocess 注入 | 不改进程全局 `os.environ`，进程隔离、并行线程安全；优先级 `os.environ` < 调度器 < case env |
 | Comparator 工厂 + 插件发现 | 按文件类型创建比较器，workspace `comparators/` 目录自动发现插件 |
 | subprocess 隔离执行 | 每个 test case 独立子进程，保证测试间互不影响 |
 | xfail 机制 | 支持预期失败的测试（CI 中不阻塞流水线），意外通过时告警 |

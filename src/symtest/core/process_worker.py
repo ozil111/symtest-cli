@@ -31,6 +31,7 @@ def _run_sequence_in_process(
         update_baseline=update_baseline,
         error_analysis=error_analysis,
         resume=resume,
+        env=case_data.get("env"),
     )
 
 
@@ -75,6 +76,7 @@ def run_test_in_process(
         "timeout": case_data.get("timeout"),
         "resources": case_data.get("resources"),
         "retry_count": case_data.get("retry_count", 0),
+        "env": case_data.get("env", {}),
     }
 
     command_preview = f"{case['command']} {' '.join(case['args'])}".strip()

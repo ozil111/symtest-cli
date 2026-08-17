@@ -78,6 +78,17 @@ def _split_and_resolve(
     )
 
 
+def _parse_env(raw_env: Any) -> Dict[str, str]:
+    """Normalize a case-level ``env`` mapping to a ``{str: str}`` dict.
+
+    Environment variables are strings by nature; numeric/boolean values are
+    coerced with ``str()`` to match ``EnvironmentSetup`` behaviour.
+    """
+    if not raw_env:
+        return {}
+    return {str(k): str(v) for k, v in raw_env.items()}
+
+
 def parse_test_cases(
     config: Dict[str, Any],
     workspace: Optional[Path] = None,
@@ -136,6 +147,7 @@ def parse_test_cases(
                 xfail_reason=case.get("xfail_reason", ""),
                 xfail_quiet=case.get("xfail_quiet", False),
                 depends_on=case.get("depends_on", []),
+                env=_parse_env(case.get("env")),
             ))
         else:
             # ── Single-command mode (backward-compatible) ──
@@ -163,6 +175,7 @@ def parse_test_cases(
                     xfail_reason=case.get("xfail_reason", ""),
                     xfail_quiet=case.get("xfail_quiet", False),
                     depends_on=case.get("depends_on", []),
+                    env=_parse_env(case.get("env")),
                 ))
             else:
                 cases.append(TestCase(
@@ -179,6 +192,7 @@ def parse_test_cases(
                     xfail_reason=case.get("xfail_reason", ""),
                     xfail_quiet=case.get("xfail_quiet", False),
                     depends_on=case.get("depends_on", []),
+                    env=_parse_env(case.get("env")),
                 ))
 
     return cases
@@ -211,6 +225,7 @@ def execute_sequence(
     update_baseline: bool = False,
     error_analysis: bool = False,
     resume: bool = False,
+    env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -276,7 +291,7 @@ def execute_sequence(
             save_sequence_state,
         )
 
-        config_hash = compute_config_hash(steps, case_expected)
+        config_hash = compute_config_hash(steps, case_expected, env)
         state = load_sequence_state(workspace, case_name)
 
         if state and state.get("config_hash") == config_hash:
@@ -358,6 +373,7 @@ def execute_sequence(
             "timeout": _step_attr(step, "timeout"),
             "resources": None,
             "retry_count": _step_attr(step, "retry_count", 0),
+            "env": env or {},
         }
 
         command_preview = (
@@ -402,7 +418,7 @@ def execute_sequence(
             )
 
             if state is None:
-                config_hash = compute_config_hash(steps, case_expected)
+                config_hash = compute_config_hash(steps, case_expected, env)
                 state = {
                     "case": case_name,
                     "config_hash": config_hash,

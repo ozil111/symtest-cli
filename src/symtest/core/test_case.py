@@ -28,6 +28,7 @@ class TestCase:
     xfail_reason: str = ""
     xfail_quiet: bool = False
     depends_on: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert test case to dictionary format"""
@@ -41,6 +42,8 @@ class TestCase:
             "tags": self.tags,
             "retry_count": self.retry_count,
         }
+        if self.env:
+            result["env"] = self.env
         if self.expected_failure:
             result["expected_failure"] = self.expected_failure
             result["xfail_reason"] = self.xfail_reason
@@ -74,4 +77,5 @@ class TestCase:
             "timeout": self.timeout,
             "resources": self.resources,
             "retry_count": self.retry_count,
+            "env": self.env,
         }

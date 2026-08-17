@@ -190,6 +190,15 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                             "description": "Tags for --tag filtering.",
                         },
                         "resources": {"$ref": "#/$defs/resources"},
+                        "env": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Case-level environment variables injected into this "
+                                "case's command (subprocess). Overrides setup-level and "
+                                "scheduler-injected environment variables."
+                            ),
+                        },
                         "expected_failure": {
                             "type": "boolean",
                             "description": (
@@ -275,6 +284,15 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                         "description": {"type": ["string", "null"]},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "resources": {"$ref": "#/$defs/resources"},
+                        "env": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Case-level environment variables injected into every "
+                                "step of this case (subprocess). Overrides setup-level "
+                                "and scheduler-injected environment variables."
+                            ),
+                        },
                         "expected_failure": {
                             "type": "boolean",
                             "description": (

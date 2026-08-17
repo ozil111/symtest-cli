@@ -46,6 +46,7 @@ def _step_output_path(workspace: str, case_name: str, step_idx: int) -> str:
 def compute_config_hash(
     steps: List[Any],
     case_expected: Optional[Dict[str, Any]] = None,
+    case_env: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Compute a deterministic SHA-256 hash of the step configuration.
 
@@ -71,6 +72,7 @@ def compute_config_hash(
             for step in steps
         ],
         "case_expected": case_expected or {},
+        "case_env": case_env or {},
     }
     canonical = json.dumps(
         payload,

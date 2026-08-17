@@ -4,6 +4,7 @@
 
 - [安装](#安装)
 - [测试用例定义](#测试用例定义)
+- [Case 级环境变量](#case-级环境变量env)
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
@@ -247,10 +248,67 @@ test_cases:
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
 | `depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
+| `env` | 否 | case 级环境变量字典（如 `{"UEL_SYSID_SCALE": "1.0"}`），仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
 | `expected.compare_files` | 否 | 文件比较断言列表，见下文 |
+
+## Case 级环境变量（env）
+
+通过 case 下与 `name` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。
+
+### JSON
+
+```json
+{
+    "name": "UEL 缩放测试",
+    "command": "solver",
+    "args": ["-i", "input.dat"],
+    "env": {
+        "UEL_SYSID_SCALE": "1.0",
+        "OMP_NUM_THREADS": "8"
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### YAML
+
+```yaml
+- name: UEL 缩放测试
+  command: solver
+  args: ["-i", "input.dat"]
+  env:
+    UEL_SYSID_SCALE: "1.0"
+  expected: { return_code: 0 }
+```
+
+### 序列模式
+
+`env` 定义在 case 级（与 `steps` 同级），对该 case 的**所有 step** 生效：
+
+```json
+{
+    "name": "多步骤+环境变量",
+    "env": { "UEL_SYSID_SCALE": "1.0" },
+    "steps": [
+        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+    ]
+}
+```
+
+### 语义
+
+| 决策点 | 行为 |
+|---|---|
+| 生效方式 | 通过子进程 `env` 注入，不修改进程全局 `os.environ`，天然进程隔离、线程安全 |
+| 优先级 | `os.environ`（含 `setup.environment_variables`）< 调度器注入（`OMP/MKL/NPROC`）< **case `env`（最高）**，即 case env 可覆盖调度器的 `OMP_NUM_THREADS` |
+| 作用范围 | 仅当前 case，不污染其他 case（区别于全局 `setup.environment_variables`） |
+| 占位符 | 自动支持，`"env": {"SCALE": "{scale}"}` 会被 `variables`/`--var` 替换 |
+| 继承（extends） | 自动支持，`env` 为 dict，深合并、子类覆盖父类同名 key |
+| 值类型 | 字符串；数字/布尔在解析时自动 `str()` 化 |
 
 ### 文件比较断言（compare_files）
 
