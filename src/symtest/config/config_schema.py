@@ -190,6 +190,15 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                             "description": "Tags for --tag filtering.",
                         },
                         "resources": {"$ref": "#/$defs/resources"},
+                        "env": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Case-level environment variables injected into this "
+                                "case's command (subprocess). Overrides setup-level and "
+                                "scheduler-injected environment variables."
+                            ),
+                        },
                         "expected_failure": {
                             "type": "boolean",
                             "description": (
@@ -231,6 +240,16 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "Per-case placeholder variables for {key} substitution. "
                                 "Merged from the ancestor chain (child overrides parent), "
                                 "then overlaid by global --var flags at run time."
+                            ),
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Names of test cases that must pass before this case can "
+                                "start.  In parallel mode, dependencies are scheduled as a "
+                                "DAG: cases with satisfied dependencies run concurrently. "
+                                "If a dependency fails, this case is marked 'skipped'."
                             ),
                         },
                     },
@@ -265,6 +284,15 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                         "description": {"type": ["string", "null"]},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "resources": {"$ref": "#/$defs/resources"},
+                        "env": {
+                            "type": "object",
+                            "additionalProperties": {"type": ["string", "number", "boolean"]},
+                            "description": (
+                                "Case-level environment variables injected into every "
+                                "step of this case (subprocess). Overrides setup-level "
+                                "and scheduler-injected environment variables."
+                            ),
+                        },
                         "expected_failure": {
                             "type": "boolean",
                             "description": (
@@ -306,6 +334,16 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "Per-case placeholder variables for {key} substitution. "
                                 "Merged from the ancestor chain (child overrides parent), "
                                 "then overlaid by global --var flags at run time."
+                            ),
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Names of test cases that must pass before this case can "
+                                "start.  In parallel mode, dependencies are scheduled as a "
+                                "DAG: cases with satisfied dependencies run concurrently. "
+                                "If a dependency fails, this case is marked 'skipped'."
                             ),
                         },
                     },

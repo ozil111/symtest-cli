@@ -333,6 +333,79 @@ def validate_config(
 
     _validate_inheritance()
 
+    # ── depends_on validation (name existence + self-reference + cycle) ──
+    def _validate_depends_on() -> None:
+        """Check depends_on references: target existence, no self-reference, no cycles."""
+        # Build name→case mapping from all cases (including abstract)
+        names: Dict[str, tuple] = {}
+        for case_dict, source in all_cases:
+            name = case_dict.get("name")
+            if name:
+                names[name] = (case_dict, source)
+
+        for case_dict, source in all_cases:
+            case_name = case_dict.get("name", "<unnamed>")
+            deps = case_dict.get("depends_on", [])
+            if not deps:
+                continue
+            if not isinstance(deps, list):
+                errors.append(
+                    f"[{source}] case '{case_name}': "
+                    f"depends_on must be an array of strings"
+                )
+                continue
+            for dep in deps:
+                if not isinstance(dep, str):
+                    errors.append(
+                        f"[{source}] case '{case_name}': "
+                        f"depends_on entries must be strings, got {type(dep).__name__}"
+                    )
+                    continue
+                if dep == case_name:
+                    errors.append(
+                        f"[{source}] case '{case_name}': "
+                        f"cannot depend on itself ('{dep}')"
+                    )
+                    continue
+                if dep not in names:
+                    errors.append(
+                        f"[{source}] case '{case_name}': "
+                        f"depends_on target '{dep}' not found"
+                    )
+
+        # Cycle detection in depends_on graph
+        for name, (case_dict, source) in names.items():
+            visited: List[str] = []
+            current = name
+            while current in names:
+                deps = names[current][0].get("depends_on", [])
+                if not deps or not isinstance(deps, list):
+                    break
+                # Check each dependency for a cycle
+                for dep in deps:
+                    if dep in visited:
+                        chain = " -> ".join(visited + [dep])
+                        errors.append(
+                            f"Circular depends_on detected: {chain}"
+                        )
+                        # Mark as broken to avoid infinite loop
+                        visited.append(dep)
+                        break
+                if len(visited) > 0 and visited[-1] == name:
+                    break
+                # Move to next: pick the first dep (any cycle will be caught)
+                next_dep = None
+                for dep in deps:
+                    if isinstance(dep, str):
+                        next_dep = dep
+                        break
+                if next_dep is None or next_dep in visited:
+                    break
+                visited.append(current)
+                current = next_dep
+
+    _validate_depends_on()
+
     valid = len(errors) == 0
     return {
         "valid": valid,

@@ -4,6 +4,7 @@
 
 - [安装](#安装)
 - [测试用例定义](#测试用例定义)
+- [Case 级环境变量](#case-级环境变量env)
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
@@ -159,6 +160,78 @@ test_cases:
 }
 ```
 
+### 测试依赖（depends_on）
+
+当测试用例之间存在先后依赖时（例如 D 需要 A、B、C 先生成数据），通过 `depends_on` 声明依赖关系，框架会自动按 DAG 拓扑顺序调度：
+
+**并行模式**：A、B、C 并行执行，全部通过后 D 才被提交。依赖失败的用例会自动 skip 其下游（级联 skip）。
+
+**顺序模式**：框架按拓扑序重排用例，保证依赖在前的先执行，依赖失败时同样跳过下游。
+
+**JSON 示例**：
+
+```json
+{
+    "test_cases": [
+        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
+        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
+        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        {
+            "name": "D", "command": "python", "args": ["merge.py"],
+            "depends_on": ["A", "B", "C"],
+            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
+        }
+    ]
+}
+```
+
+**YAML 示例**：
+
+```yaml
+test_cases:
+  - name: A
+    command: python
+    args: ["gen_a.py"]
+    expected: { return_code: 0 }
+
+  - name: B
+    command: python
+    args: ["gen_b.py"]
+    expected: { return_code: 0 }
+
+  - name: C
+    command: python
+    args: ["gen_c.py"]
+    expected: { return_code: 0 }
+
+  - name: D
+    command: python
+    args: ["merge.py"]
+    depends_on: [A, B, C]
+    expected:
+      return_code: 0
+      compare_files:
+        - file: output.h5
+          type: hdf5
+```
+
+**调度语义**：
+
+| 依赖状态 | 下游行为 |
+|---|---|
+| `passed` 或 `xfailed` | 依赖"满足"，下游正常执行 |
+| `failed` 或 `xpassed` | 依赖"不满足"，下游标记为 `skipped`，并级联 skip |
+| 存在循环依赖 | 配置校验阶段报错，禁止运行 |
+
+`skipped` 不计入 `failed` 计数，在报告摘要中单独显示 `Skipped: N`。
+
+**约束**：
+- 依赖名称必须在同配置文件的 `test_cases` 中存在
+- 不允许自依赖（`depends_on: ["self"]`）
+- 不允许循环依赖（A → B → A）
+- 与 `steps` 模式互不影响——`depends_on` 是用例级概念，`steps` 是用例内步骤级概念
+- 无依赖时走 fast path，调度开销为零
+
 ### 字段说明
 
 | 字段 | 必填 | 说明 |
@@ -174,10 +247,68 @@ test_cases:
 | `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
+| `depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
+| `env` | 否 | case 级环境变量字典（如 `{"UEL_SYSID_SCALE": "1.0"}`），仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
 | `expected.compare_files` | 否 | 文件比较断言列表，见下文 |
+
+## Case 级环境变量（env）
+
+通过 case 下与 `name` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。
+
+### JSON
+
+```json
+{
+    "name": "UEL 缩放测试",
+    "command": "solver",
+    "args": ["-i", "input.dat"],
+    "env": {
+        "UEL_SYSID_SCALE": "1.0",
+        "OMP_NUM_THREADS": "8"
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### YAML
+
+```yaml
+- name: UEL 缩放测试
+  command: solver
+  args: ["-i", "input.dat"]
+  env:
+    UEL_SYSID_SCALE: "1.0"
+  expected: { return_code: 0 }
+```
+
+### 序列模式
+
+`env` 定义在 case 级（与 `steps` 同级），对该 case 的**所有 step** 生效：
+
+```json
+{
+    "name": "多步骤+环境变量",
+    "env": { "UEL_SYSID_SCALE": "1.0" },
+    "steps": [
+        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+    ]
+}
+```
+
+### 语义
+
+| 决策点 | 行为 |
+|---|---|
+| 生效方式 | 通过子进程 `env` 注入，不修改进程全局 `os.environ`，天然进程隔离、线程安全 |
+| 优先级 | `os.environ`（含 `setup.environment_variables`）< 调度器注入（`OMP/MKL/NPROC`）< **case `env`（最高）**，即 case env 可覆盖调度器的 `OMP_NUM_THREADS` |
+| 作用范围 | 仅当前 case，不污染其他 case（区别于全局 `setup.environment_variables`） |
+| 占位符 | 自动支持，`"env": {"SCALE": "{scale}"}` 会被 `variables`/`--var` 替换 |
+| 继承（extends） | 自动支持，`env` 为 dict，深合并、子类覆盖父类同名 key |
+| 值类型 | 字符串；数字/布尔在解析时自动 `str()` 化 |
 
 ### 文件比较断言（compare_files）
 
@@ -702,7 +833,7 @@ symtest run test_cases.json --error-analysis
 **xfail 语义**：标记为 `expected_failure` 的用例如果失败（`xfailed`），是预期行为，**不会**被 `--last-failed` 选中重跑。但如果 xfail 标记的用例意外通过（`xpassed`），则被视为真正失败，**会**被选中。
 
 **工作原理**：
-- 每次运行结束后，框架在 `<workspace>/.cli-test/last_run.json` 中记录每个用例的状态
+- 每次运行结束后，框架在 `<workspace>/.symtest/last_run.json` 中记录每个用例的状态
 - 记录采用**覆盖式更新**：本次跑到的用例用新结果覆盖旧结果，没跑到的保留原状态
 - 这意味着修好的 case 在下一次显示中不再是"failed"
 - 如果文件不存在（首次运行），`--last-failed` 会提示并正常运行全部用例
@@ -725,7 +856,7 @@ symtest run config.json
 `--resume` 针对**顺序步骤测试（sequence）**，跳过上次运行中已通过的步骤，直接从失败步骤继续执行。适合耗时长的多步骤用例——例如有限元分析中 step 1-3 通过了（各耗时几十秒甚至分钟），只有 step 4 的断言失败，`--resume` 可以跳过 1-3、只重跑 step 4。
 
 **工作原理**：
-- 每个步骤通过后，框架在 `<workspace>/.cli-test/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
+- 每个步骤通过后，框架在 `<workspace>/.symtest/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
 - 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected/timeout/retry_count 及 case 级 expected 的 SHA256）与已保存状态比对
 - 哈希匹配 → 跳过已通过的步骤，从缓存重建 `combined_output`（确保 case 级 `expected` 断言能正常执行）
 - 用例全部通过 → 自动删除状态文件和缓存，避免残留影响后续运行

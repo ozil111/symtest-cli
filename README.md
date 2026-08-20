@@ -249,6 +249,9 @@ requirement for using the framework.
 - [User manual](docs/user_manual_en.md)
 - [Design document](docs/design_en.md)
 - [Plugin examples](examples/plugins/README.md)
+- [AI Skill template](examples/skill/) — import framework knowledge into AI coding
+  assistants so they can author test cases, acceptance criteria,
+  and TDD workflows directly
 
 ## Development
 
