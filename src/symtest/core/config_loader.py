@@ -107,39 +107,47 @@ def parse_test_cases(
     resolve = workspace is not None and path_resolver is not None
 
     for case in config.get("test_cases", []):
-        if "steps" in case:
-            # ── Sequence mode ──
-            steps: List[TestCaseStep] = []
-            for step in case.get("steps", []):
-                if resolve:
-                    step_required = ["command", "args", "expected"]
-                    if not all(field in step for field in step_required):
-                        raise ValueError(
-                            f"Step in test case '{case.get('name', 'unnamed')}' "
-                            f"is missing required fields"
-                        )
-                    executable, resolved_args = _split_and_resolve(
-                        step["command"], step["args"], workspace, path_resolver
+        # Normalize both modes to a single ``steps`` list.  A single-command
+        # case is represented as a single-element list; a sequence case uses
+        # its ``steps`` directly.  This makes the single command a special
+        # case of a sequence at the data-model level while keeping the flat
+        # config format backward-compatible.
+        is_sequence = "steps" in case
+        if is_sequence:
+            step_configs: List[Dict[str, Any]] = list(case.get("steps", []))
+            case_expected: Dict[str, Any] = case.get("expected", {})
+        else:
+            step_configs = [case]
+            case_expected = {}
+
+        steps: List[TestCaseStep] = []
+        for step in step_configs:
+            if resolve:
+                step_required = ["command", "args", "expected"]
+                if not all(field in step for field in step_required):
+                    raise ValueError(
+                        f"Step in test case '{case.get('name', 'unnamed')}' "
+                        f"is missing required fields"
                     )
-                    steps.append(TestCaseStep(
-                        command=executable,
-                        args=resolved_args,
-                        expected=step["expected"],
-                        timeout=step.get("timeout"),
-                        retry_count=step.get("retry_count", 0),
-                    ))
-                else:
-                    steps.append(TestCaseStep(
-                        command=step.get("command", ""),
-                        args=step.get("args", []),
-                        expected=step.get("expected", {}),
-                        timeout=step.get("timeout"),
-                        retry_count=step.get("retry_count", 0),
-                    ))
+                executable, resolved_args = _split_and_resolve(
+                    step["command"], step["args"], workspace, path_resolver
+                )
+            else:
+                executable = step.get("command", "")
+                resolved_args = step.get("args", [])
+            steps.append(TestCaseStep(
+                command=executable,
+                args=resolved_args,
+                expected=step["expected"] if "expected" in step else step.get("expected", {}),
+                timeout=step.get("timeout"),
+                retry_count=step.get("retry_count", 0),
+            ))
+
+        if is_sequence:
             cases.append(TestCase(
                 name=case.get("name", ""),
                 steps=steps,
-                expected=case.get("expected", {}),
+                expected=case_expected,
                 description=case.get("description", ""),
                 resources=case.get("resources"),
                 tags=case.get("tags", []),
@@ -150,7 +158,7 @@ def parse_test_cases(
                 env=_parse_env(case.get("env")),
             ))
         else:
-            # ── Single-command mode (backward-compatible) ──
+            # ── Single-command mode: flat fields are forwarded to steps[0] ──
             if resolve:
                 required_fields = ["name", "command", "args", "expected"]
                 if not all(field in case for field in required_fields):
@@ -158,42 +166,23 @@ def parse_test_cases(
                         f"Test case {case.get('name', 'unnamed')} "
                         f"is missing required fields"
                     )
-                executable, resolved_args = _split_and_resolve(
-                    case["command"], case["args"], workspace, path_resolver
-                )
-                cases.append(TestCase(
-                    name=case["name"],
-                    command=executable,
-                    args=resolved_args,
-                    expected=case["expected"],
-                    description=case.get("description", ""),
-                    timeout=case.get("timeout"),
-                    resources=case.get("resources"),
-                    tags=case.get("tags", []),
-                    retry_count=case.get("retry_count", 0),
-                    expected_failure=case.get("expected_failure", False),
-                    xfail_reason=case.get("xfail_reason", ""),
-                    xfail_quiet=case.get("xfail_quiet", False),
-                    depends_on=case.get("depends_on", []),
-                    env=_parse_env(case.get("env")),
-                ))
-            else:
-                cases.append(TestCase(
-                    name=case.get("name", ""),
-                    command=case.get("command", ""),
-                    args=case.get("args", []),
-                    expected=case.get("expected", {}),
-                    description=case.get("description", ""),
-                    timeout=case.get("timeout"),
-                    resources=case.get("resources"),
-                    tags=case.get("tags", []),
-                    retry_count=case.get("retry_count", 0),
-                    expected_failure=case.get("expected_failure", False),
-                    xfail_reason=case.get("xfail_reason", ""),
-                    xfail_quiet=case.get("xfail_quiet", False),
-                    depends_on=case.get("depends_on", []),
-                    env=_parse_env(case.get("env")),
-                ))
+            cases.append(TestCase(
+                name=case.get("name", ""),
+                steps=None,
+                command=steps[0].command,
+                args=steps[0].args,
+                expected=steps[0].expected,
+                description=case.get("description", ""),
+                timeout=steps[0].timeout,
+                resources=case.get("resources"),
+                tags=case.get("tags", []),
+                retry_count=steps[0].retry_count,
+                expected_failure=case.get("expected_failure", False),
+                xfail_reason=case.get("xfail_reason", ""),
+                xfail_quiet=case.get("xfail_quiet", False),
+                depends_on=case.get("depends_on", []),
+                env=_parse_env(case.get("env")),
+            ))
 
     return cases
 
