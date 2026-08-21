@@ -1921,13 +1921,18 @@ symtest run test_config.json --plugin-dir ./extra_plugins
 
 Plugins are also automatically inherited by process-mode child processes via the `CLITEST_PLUGIN_DIRS` environment variable.
 
+A complete, runnable starting point is `assets/templates/my_analysis_comparator.py` — copy it into your `comparators/` directory and adapt the logic. It demonstrates all the pitfalls below (constructor forwarding, `ComparisonResult` population, `command_output`).
+
 **Plugin development notes**:
 - Inherit from `symtest.file_comparator.BaseComparator`
 - Class name must end with `Comparator` (e.g., `MyAnalysisComparator`)
 - The registered type name = class name without `Comparator`, lowercased (e.g., `myanalysis`)
-- Prefer overriding the `compare_files(file1, file2, **kwargs)` method over `read_content`/`compare_content` (if your comparator doesn't use the two-file model)
-- Construct structured results via `from symtest.file_comparator import ComparisonResult, Difference`
+- Prefer overriding the `compare_files(file1, file2, **kwargs)` method over `read_content`/`compare_content` (if your comparator doesn't use the two-file model). Note that `read_content` and `compare_content` are `@abstractmethod` on `BaseComparator`, so you MUST provide a concrete implementation (even a stub that raises `NotImplementedError`) or the class cannot be instantiated.
+- Construct structured results via `from symtest.file_comparator import ComparisonResult` and `from symtest.file_comparator.result import Difference` (note: `Difference` is not re-exported from the package root)
 - `extra_kwargs` are auto-passed from the config `compareSpec`
+- **Constructor**: the framework instantiates your comparator with `verbose=True`, `error_analysis=...` plus every extra config kwarg. If you define `__init__`, it MUST accept `**kwargs` and forward them to `super().__init__(**kwargs)` — otherwise construction raises `TypeError`.
+- **`compare_files` argument order**: the framework calls `compare_files(baseline_path, actual_path, **method_params)`, i.e. `file1` is the baseline and `file2` is the actual output. It may also pass `start_line`/`end_line`/`start_column`/`end_column` as keywords.
+- **`ComparisonResult`**: build it with `ComparisonResult(file1=..., file2=...)`; `identical`, `differences`, `error_stats`, and `command_output` are attributes set AFTER construction (they are not constructor parameters). Set `command_output` to a subprocess stdout string to show it in the report's `Comparator Output` section.
 
 Use the registered type name directly in your config:
 
@@ -2017,7 +2022,7 @@ comparator = ComparatorFactory.create_comparator("foo")
 
 Usage: copy the plugin file into your workspace's `comparators/` directory for auto-discovery — no framework code changes needed.
 
-> **More plugin development guidance**: See `examples/plugins/README.md`. Entry points (pip install → just works) will be supported in a future iteration.
+> **More plugin development guidance**: See `assets/templates/my_analysis_comparator.py` for a minimal runnable template. Entry points (pip install → just works) will be supported in a future iteration.
 
 ### Assertions & File Comparison
 

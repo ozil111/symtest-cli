@@ -125,7 +125,9 @@ starting point.
    `<workspace>/comparators/*_comparator.py`. When troubleshooting a
    custom `type`, check that directory first — verify the plugin file
    exists and its class imports succeed (use `from symtest.file_comparator...`,
-   not other package names).
+   not other package names). To author a new one, start from
+   `assets/templates/my_analysis_comparator.py` (see
+   `references/user_manual.md` → "Custom File Comparator").
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
@@ -256,5 +258,7 @@ For a complete project entry script with all CLI options, copy and adapt
 - `assets/templates/test_cases_steps.json` — Multi-step sequence test.
 - `assets/templates/test_cases_golden_file.json` — Numerical golden file test
   with HDF5/CSV comparison.
+- `assets/templates/my_analysis_comparator.py` — Minimal runnable template
+  for a user-defined custom comparator plugin.
 - `assets/full_runner_example.py` — Full project entry script with all CLI
   options, report generation, and JUnit XML output.
