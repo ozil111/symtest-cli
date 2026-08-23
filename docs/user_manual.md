@@ -248,7 +248,7 @@ test_cases:
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
 | `depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
-| `env` | 否 | case 级环境变量字典（如 `{"UEL_SYSID_SCALE": "1.0"}`），仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
+| `env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
@@ -262,11 +262,11 @@ test_cases:
 
 ```json
 {
-    "name": "UEL 缩放测试",
+    "name": "case 级环境变量示例",
     "command": "solver",
     "args": ["-i", "input.dat"],
     "env": {
-        "UEL_SYSID_SCALE": "1.0",
+        "MYAPP_SCALE": "1.0",
         "OMP_NUM_THREADS": "8"
     },
     "expected": { "return_code": 0 }
@@ -276,11 +276,11 @@ test_cases:
 ### YAML
 
 ```yaml
-- name: UEL 缩放测试
+- name: case 级环境变量示例
   command: solver
   args: ["-i", "input.dat"]
   env:
-    UEL_SYSID_SCALE: "1.0"
+    MYAPP_SCALE: "1.0"
   expected: { return_code: 0 }
 ```
 
@@ -291,7 +291,7 @@ test_cases:
 ```json
 {
     "name": "多步骤+环境变量",
-    "env": { "UEL_SYSID_SCALE": "1.0" },
+    "env": { "MYAPP_SCALE": "1.0" },
     "steps": [
         { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
         { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
@@ -814,7 +814,7 @@ symtest run test_cases.json --last-failed
 
 # 断点续跑：跳过已通过的步骤，从失败步骤继续
 symtest run test_cases.json --resume
-symtest run test_cases.json --resume -t BS-U_01
+symtest run test_cases.json --resume -t long_pipeline
 
 # 比较失败时更新基线文件（交互运行需输入 yes）
 symtest run test_cases.json --update-baseline
@@ -865,11 +865,11 @@ symtest run config.json
 **信任模型**：`--resume` **不校验工作区产物**（输入文件、前置步骤生成的文件等）。使用 `--resume` 即表示用户确认输入文件未被修改。如果怀疑工作区被污染，应不带 `--resume` 全量重跑。
 
 ```bash
-# 首次全量运行，BS-U_01 的 step 4 失败（总耗时 72s）
+# 首次全量运行，long_pipeline 的 step 4 失败（总耗时 72s）
 symtest run config.json
 
-# 修复后只重跑 BS-U_01，跳过 step 1-3（仅耗时 ~0.14s）
-symtest run config.json -t BS-U_01 --resume
+# 修复后只重跑 long_pipeline，跳过 step 1-3（仅耗时 ~0.14s）
+symtest run config.json -t long_pipeline --resume
 
 # 全部通过后，跑一次全量确认无回归
 symtest run config.json
@@ -2005,8 +2005,8 @@ comparator = ComparatorFactory.create_comparator("foo")
 ```json
 {
   "type": "hourglass_tangent",
-  "script": "case/.../analyze_HG-M1_D1_A1e-4_tangent.py",
-  "case_dir": "case/.../WP31_pure/HG-M1_D1_A1e-4",
+  "script": "case/.../analyze_case01_tangent.py",
+  "case_dir": "case/.../case01",
   "pass_threshold": 1e-6,
   "timeout": 600
 }
@@ -2083,9 +2083,9 @@ python tests/run_all.py --scope unit --extra "-v -k assertions"
 
 `--extra` 接收的字符串会经 `shlex` 拆分后追加到 pytest 命令行。脚本通过当前解释器（`sys.executable -m pytest`）调用 pytest，确保使用激活的环境而非 PATH 中首个 `pytest`。
 
-测试环境需先激活 conda 环境：
+测试环境需先激活你的 Python 环境（如 conda）：
 
 ```bash
-conda activate xiaotong
+conda activate <你的环境名>
 python tests/run_all.py
 ```
