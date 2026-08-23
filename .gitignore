@@ -21,7 +21,8 @@ dist_package
 build
 test_output.txt
 /tests/test_report.txt
-/.codebuddy/rules
+/.codebuddy/
 .coverage
 case/
 *.egg-info/
+.symtest

@@ -11,7 +11,7 @@ import json
 import os
 from typing import Dict, Optional
 
-SYMTEST_FILENAME = ".symtest"
+SYMTEST_FILENAME = "history.json"
 
 
 def _empty_history() -> dict:

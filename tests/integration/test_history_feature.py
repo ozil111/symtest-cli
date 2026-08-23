@@ -28,12 +28,14 @@ def _fast_case(name="fast_test"):
 
 
 class TestJSONRunnerHistory:
-    def test_no_history_dir_no_symtest(self, tmp_path):
+    def test_no_history_dir_no_history_json(self, tmp_path):
         config = _make_json_config(tmp_path, [_fast_case()])
         runner = JSONRunner(config_file=config, workspace=str(tmp_path))
         runner.run_tests()
-        # No .symtest created
-        assert not os.path.exists(str(tmp_path / ".symtest"))
+        # last_run.json is always written to .symtest/,
+        # but history.json should NOT be created without history_dir
+        assert not os.path.exists(str(tmp_path / ".symtest" / SYMTEST_FILENAME))
+        assert os.path.exists(str(tmp_path / ".symtest" / "last_run.json"))
 
     def test_history_dir_creates_symtest(self, tmp_path):
         config = _make_json_config(tmp_path, [_fast_case()])

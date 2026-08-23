@@ -61,7 +61,7 @@ def test_sequence_state_round_trip_and_corruption(tmp_path, caplog):
     save_sequence_state(str(tmp_path), "case_a", state)
 
     assert load_sequence_state(str(tmp_path), "case_a") == state
-    state_path = tmp_path / ".cli-test" / "sequence_state" / "case_a.json"
+    state_path = tmp_path / ".symtest" / "sequence_state" / "case_a.json"
     state_path.write_text("{broken", encoding="utf-8")
 
     assert load_sequence_state(str(tmp_path), "case_a") is None

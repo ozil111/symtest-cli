@@ -1,8 +1,9 @@
 import time
 import logging
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from .test_case import TestCase
 from .assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
@@ -135,11 +136,50 @@ class BaseRunner(ABC):
             
             total_start_time = time.time()
             
+            # ── Topological sort for depends_on ──
+            ordered_cases = self._topological_order()
+            
             logger.info("Starting test execution... Total tests: %d", self.results["total"])
             logger.info("=" * 50)
             
-            for i, case in enumerate(self.test_cases, 1):
+            for i, case in enumerate(ordered_cases, 1):
                 logger.info("Running test %d/%d: %s", i, self.results["total"], case.name)
+                
+                # Check if dependencies failed → skip
+                if hasattr(case, 'depends_on') and case.depends_on:
+                    dep_failed = any(
+                        d["status"] not in ("passed", "xfailed")
+                        for d in self.results["details"]
+                        if d["name"] in case.depends_on
+                    )
+                    if dep_failed:
+                        failed_dep = next(
+                            d["name"] for d in self.results["details"]
+                            if d["name"] in case.depends_on
+                            and d["status"] not in ("passed", "xfailed")
+                        )
+                        skip_result = {
+                            "name": case.name,
+                            "status": "skipped",
+                            "message": f"Skipped: dependency '{failed_dep}' failed",
+                            "output": "",
+                            "command": case.command if case.command
+                                       else " -> ".join(
+                                           f"{s.command} {' '.join(s.args)}".strip()
+                                           for s in (case.steps or [])
+                                       ),
+                            "return_code": None,
+                            "duration": 0,
+                            "expected": case.expected if case.expected else None,
+                            "description": case.description or None,
+                            "tags": case.tags or [],
+                        }
+                        self._fill_hint_command(skip_result, case.name)
+                        self.results["details"].append(skip_result)
+                        logger.warning("⊘ Test %d skipped: %s", i, case.name)
+                        logger.warning("  Reason: %s", skip_result["message"])
+                        continue
+                
                 result = self.run_single_test(case)
                 
                 # Apply xfail status mapping before counting
@@ -190,13 +230,14 @@ class BaseRunner(ABC):
                         logger.error("  Error: %s", result["message"])
                     
             total_duration = time.time() - total_start_time
+            skipped = sum(1 for d in self.results["details"] if d["status"] == "skipped")
             logger.info("=" * 50)
             logger.info(
                 "Test execution completed in %.2fs. "
-                "Passed: %d, Failed: %d, XFailed: %d, XPassed: %d",
+                "Passed: %d, Failed: %d, XFailed: %d, XPassed: %d, Skipped: %d",
                 total_duration,
                 self.results["passed"], self.results["failed"],
-                self.results["xfailed"], self.results["xpassed"],
+                self.results["xfailed"], self.results["xpassed"], skipped,
             )
 
             # Update history & regression detection
@@ -210,6 +251,50 @@ class BaseRunner(ABC):
         finally:
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
+
+    def _topological_order(self) -> List[TestCase]:
+        """Return test cases in topological order respecting ``depends_on``.
+
+        Cases without dependencies keep their original relative order.
+        Cases with dependencies are placed after all their dependencies.
+        Uses Kahn's algorithm with stable ordering for determinism.
+        """
+        cases = self.test_cases
+        has_deps = any(c.depends_on for c in cases)
+        if not has_deps:
+            return list(cases)
+
+        name_to_case: Dict[str, TestCase] = {c.name: c for c in cases}
+
+        # in_degree and dependents
+        in_degree: Dict[str, int] = {}
+        dependents: Dict[str, List[str]] = {}
+        for c in cases:
+            deps = [d for d in c.depends_on if d in name_to_case]
+            in_degree[c.name] = len(deps)
+            for dep in deps:
+                dependents.setdefault(dep, []).append(c.name)
+
+        # Kahn: start with zero in-degree cases in original order
+        result: List[TestCase] = []
+        ready: deque = deque(c for c in cases if in_degree[c.name] == 0)
+
+        while ready:
+            case = ready.popleft()
+            result.append(case)
+            for dep_name in dependents.get(case.name, []):
+                in_degree[dep_name] -= 1
+                if in_degree[dep_name] == 0:
+                    ready.append(name_to_case[dep_name])
+
+        # If any case remains (shouldn't happen after cycle validation),
+        # append them in original order as fallback
+        seen: Set[str] = {c.name for c in result}
+        for c in cases:
+            if c.name not in seen:
+                result.append(c)
+
+        return result
 
     def _fill_hint_command(self, result: Dict[str, Any], case_name: str) -> None:
         """Fill in the concrete CLI command inside ``next_action_hint``.
@@ -291,6 +376,7 @@ class BaseRunner(ABC):
             workspace=str(self.workspace) if self.workspace else None,
             case_expected=case.expected if case.expected else None,
             resume=self.resume,
+            env=case.env,
         )
 
     @abstractmethod

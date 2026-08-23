@@ -41,6 +41,7 @@ class TestCaseData(TypedDict, total=False):
     expected_failure: bool
     xfail_reason: Optional[str]
     xfail_quiet: bool
+    env: Dict[str, str]
 
 
 class SetupConfig(TypedDict):

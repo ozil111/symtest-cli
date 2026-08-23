@@ -195,7 +195,7 @@ class Assertions:
                 error_analysis=error_analysis,
                 **comparator_kwargs,
             )
-            result = comparator.compare_files(actual_path, baseline_path, **method_params)
+            result = comparator.compare_files(baseline_path, actual_path, **method_params)
 
             # Build structured response
             diff_summary = _build_diff_summary(result)

@@ -5,8 +5,8 @@ Stores intermediate step results so that when a sequence test case fails,
 re-running with ``--resume`` skips already-passed steps and reconstructs
 ``combined_output`` from cached step outputs.
 
-State file: ``<workspace>/.cli-test/sequence_state/<case_name>.json``
-Output cache: ``<workspace>/.cli-test/sequence_state/cache/<case_name>.step<N>.log``
+State file: ``<workspace>/.symtest/sequence_state/<case_name>.json``
+Output cache: ``<workspace>/.symtest/sequence_state/cache/<case_name>.step<N>.log``
 
 **Trust model**: ``--resume`` trusts that workspace artifacts (input files,
 pre-step outputs) have not been modified between runs.  No artifact
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("symtest.core.sequence_state")
 
-SEQUENCE_STATE_DIR = ".cli-test/sequence_state"
+SEQUENCE_STATE_DIR = ".symtest/sequence_state"
 CACHE_SUBDIR = "cache"
 
 
@@ -46,6 +46,7 @@ def _step_output_path(workspace: str, case_name: str, step_idx: int) -> str:
 def compute_config_hash(
     steps: List[Any],
     case_expected: Optional[Dict[str, Any]] = None,
+    case_env: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Compute a deterministic SHA-256 hash of the step configuration.
 
@@ -71,6 +72,7 @@ def compute_config_hash(
             for step in steps
         ],
         "case_expected": case_expected or {},
+        "case_env": case_env or {},
     }
     canonical = json.dumps(
         payload,

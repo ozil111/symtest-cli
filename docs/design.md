@@ -259,7 +259,7 @@ load_test_cases() → _apply_test_case_filter() → setup_manager.setup_all()
 支持三种过滤方式（可组合）：
 - `test_case_filter`：按名称精确匹配
 - `test_case_tag_filter`：按 tags 匹配（交集逻辑）
-- `last_failed`：从 `.cli-test/last_run.json` 读取上次失败的用例名
+- `last_failed`：从 `.symtest/last_run.json` 读取上次失败的用例名
 
 **xfail 机制 `_apply_xfail_status()`**：
 
@@ -318,6 +318,8 @@ class TestCase:
     expected_failure: bool = False
     xfail_reason: str = ""
     xfail_quiet: bool = False
+    depends_on: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
 ```
 
 两种模式：
@@ -328,6 +330,8 @@ class TestCase:
 - `tags`：标签过滤
 - `retry_count`：失败重试次数
 - `expected_failure` / `xfail_reason` / `xfail_quiet`：预期失败标记
+- `depends_on`：用例级依赖声明，支持 DAG 拓扑调度
+- `env`：case 级环境变量，注入该 case（序列模式为所有 step）的子进程，优先级高于 `setup` 与调度器注入
 
 ### 4.3 Assertions
 
@@ -426,7 +430,7 @@ class PathResolver:
 `--last-failed` 状态存储模块（`core/last_run_store.py`）：
 
 ```python
-# 存储位置: <workspace>/.cli-test/last_run.json
+# 存储位置: <workspace>/.symtest/last_run.json
 # {
 #   "case_name": {"status": "passed"},
 #   ...
@@ -448,8 +452,8 @@ class PathResolver:
 `--resume` 断点续跑模块（`core/sequence_state.py`）：
 
 ```python
-# 状态文件: <workspace>/.cli-test/sequence_state/<case_name>.json
-# 输出缓存: <workspace>/.cli-test/sequence_state/cache/<case_name>.step<N>.log
+# 状态文件: <workspace>/.symtest/sequence_state/<case_name>.json
+# 输出缓存: <workspace>/.symtest/sequence_state/cache/<case_name>.step<N>.log
 ```
 
 核心接口：
@@ -684,7 +688,7 @@ CaseManagerApp (Textual App)
   _update_history()          # 回归检测 + 更新 .symtest
        │
        ▼
-  _save_last_run()           # 写入 .cli-test/last_run.json
+  _save_last_run()           # 写入 .symtest/last_run.json
        │
        ▼
   setup_manager.teardown_all() # 逆序清理
@@ -699,14 +703,14 @@ CaseManagerApp (Textual App)
 ParallelConfigRunner.run_tests()
        │
        ▼
-  LPT 排序 (历史 avg_duration 优先，fallback 到 estimated_time 降序)
+  拓扑 LPT 排序 (depends_on 约束 + 历史 avg_duration 降序)
        │
        ▼
   _assign_relative_cpu_cores()  # 按权重比例分配 CPU 核心
        │
        ▼
   ┌──────────────────────────────────────┐
-  │  ThreadPoolExecutor.map():           │
+  │  DAG 调度 / 或直接并行 (无依赖时)    │
   │    AtomicSemaphore.acquire(cores)    │
   │    注入 OMP/MKL/NPROC 环境变量       │
   │    execute_single_test_case()        │
@@ -715,7 +719,45 @@ ParallelConfigRunner.run_tests()
   └──────────────────────────────────────┘
 ```
 
-### 7.3 文件比较流
+### 7.3 DAG 依赖调度流
+
+当 `TestCase.depends_on` 非空时，并行 runner 自动切换为 DAG 拓扑调度：
+
+```
+ParallelRunner.run_tests()
+       │
+       ▼
+  has_deps? ──No──► _run_tests_flat() (fast path)
+       │
+      Yes
+       ▼
+  _run_dag()
+       │
+       ├── 构建 dependents 邻接表 + in_degree 入度表
+       ├── 入度=0 的用例 → 就绪队列 → executor.submit()
+       │
+       ▼
+  ┌────────────────────────────────────────┐
+  │  as_completed() 循环:                   │
+  │    完成一个 future                       │
+  │    │                                     │
+  │    ├── passed/xfailed → 后继入度-1      │
+  │    │   └── 入度=0 → submit(后继)        │
+  │    │                                     │
+  │    └── failed/xpassed → cascade_skip    │
+  │        └── BFS 标记下游全部 skipped      │
+  └────────────────────────────────────────┘
+```
+
+**调度语义**：
+- 依赖"满足" = 状态为 `passed` 或 `xfailed`
+- 依赖"不满足" = 状态为 `failed` 或 `xpassed` → 下游全部 skip
+- `skipped` 不计入 `failed` 计数，报告中单独列出
+- 级联 skip：若 B 被 skip，则依赖 B 的 C 也自动 skip
+
+**顺序 runner**（`BaseRunner.run_tests()`）同样支持拓扑排序：`_topological_order()` 使用 Kahn 算法生成拓扑序列，按序执行，依赖失败时自动跳过下游。
+
+### 7.4 文件比较流
 
 ```
 symtest compare file1 file2 [options]
@@ -737,7 +779,7 @@ symtest compare file1 file2 [options]
   format_result(result, --output-format)  # text / json / html
 ```
 
-### 7.4 --resume 断点续跑流
+### 7.5 --resume 断点续跑流
 
 ```
 序列测试用例执行
@@ -781,14 +823,16 @@ symtest compare file1 file2 [options]
 | LPT 调度策略 | 长任务先启动，减少尾延迟；优先使用 `.symtest` 历史数据 |
 | 累计平均更新历史 | 直觉简单，随运行次数增多单次异常自然稀释 |
 | 回归检测在更新前执行 | 先与旧均值比较再更新，确保对比的是"历史基线" |
-| `.symtest` 隐藏文件 + `.cli-test/` 目录 | 不干扰用户目录视图，JSON 格式便于调试；状态文件统一管理 |
+| `.symtest/` 目录 | 不干扰用户目录视图，JSON 格式便于调试；状态文件统一管理 |
 | 环境变量注入 | 科学计算求解器常忽略 Python 级线程控制 |
+| case 级 env 通过 subprocess 注入 | 不改进程全局 `os.environ`，进程隔离、并行线程安全；优先级 `os.environ` < 调度器 < case env |
 | Comparator 工厂 + 插件发现 | 按文件类型创建比较器，workspace `comparators/` 目录自动发现插件 |
 | subprocess 隔离执行 | 每个 test case 独立子进程，保证测试间互不影响 |
 | xfail 机制 | 支持预期失败的测试（CI 中不阻塞流水线），意外通过时告警 |
 | --last-failed 覆写策略 | 只覆写本次执行的用例状态，避免子集运行时丢失未执行用例的状态 |
 | --resume 纯信任模型 | 不验证 artifact，由用户保证 workspace 未被修改，简化实现 |
 | retry_count 重试机制 | 应对偶发性网络抖动或竞态条件，首次失败后自动重试 |
+| DAG 依赖调度 | 基于 Kahn 拓扑 + 就绪队列，依赖满足后立即提交；依赖失败级联 skip 下游；无依赖时走 fast path 零开销 |
 | --update-baseline | 比较失败时自动将实际输出覆盖 baseline，适合批量更新基准 |
 | next_action_hint 结构化建议 | 失败结果附带下一步操作建议（update_baseline / update_expected / increase_timeout / investigate），便于 AI 消费 |
 | TUI 基于 Textual | 利用成熟的终端 UI 框架，提供交互式用例管理 |
