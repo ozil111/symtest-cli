@@ -58,6 +58,73 @@ def test_print_report_outputs_generated_report(caplog):
     assert "Test Results Summary" in caplog.text
 
 
+# ── error_analysis_all (--error-analysis-all) ──
+
+def _make_passed_detail_with_error_stats():
+    """构造一个带有 error_stats 的通过用例 detail dict"""
+    return {
+        "name": "pass_csv",
+        "status": "passed",
+        "duration": 0.5,
+        "assertion_results": [
+            {
+                "assertion": "compare_files",
+                "passed": True,
+                "actual": "data_actual.csv",
+                "baseline": "data_base.csv",
+                "type": "csv",
+                "error_stats": {
+                    "total_numeric_cells": 4,
+                    "mismatched_cells": 0,
+                    "max_abs_error": 1.2e-7,
+                    "max_abs_error_at": "row 2, column 3",
+                    "max_rel_error": 3.4e-9,
+                    "max_rel_error_at": "row 1, column 1",
+                    "mean_abs_error": 2.5e-8,
+                    "rms_abs_error": 5.0e-8,
+                },
+            }
+        ],
+    }
+
+
+def test_error_analysis_all_reports_stats_for_passed():
+    """--error-analysis-all 时，通过用例应输出 error_stats"""
+    generator = ReportGenerator(
+        {
+            "total": 1, "passed": 1, "failed": 0,
+            "error_analysis_all": True,
+            "details": [_make_passed_detail_with_error_stats()],
+        },
+        "unused.txt",
+    )
+    report = generator.generate_report()
+    assert "pass_csv" in report
+    assert "error_stats:" in report
+    assert "total_numeric_cells: 4" in report
+    assert "mismatched_cells: 0" in report
+    assert "max_abs_error: 1.2e-07" in report
+    assert "max_abs_error_at: row 2, column 3" in report
+    assert "max_rel_error: 3.4e-09" in report
+    assert "mean_abs_error: 2.5e-08" in report
+    assert "rms_abs_error: 5e-08" in report
+
+
+def test_error_analysis_all_disabled_omits_stats_for_passed():
+    """未启用 --error-analysis-all 时，通过用例不应输出 error_stats"""
+    generator = ReportGenerator(
+        {
+            "total": 1, "passed": 1, "failed": 0,
+            "error_analysis_all": False,
+            "details": [_make_passed_detail_with_error_stats()],
+        },
+        "unused.txt",
+    )
+    report = generator.generate_report()
+    assert "pass_csv" in report
+    assert "error_stats" not in report
+
+
 # ── xfail_quiet ──
 
 def _make_xfailed_detail(*, xfail_quiet=True):

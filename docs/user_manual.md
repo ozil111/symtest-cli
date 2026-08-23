@@ -1742,13 +1742,25 @@ CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内�
 | `mean_abs_error` | 平均绝对误差 |
 | `rms_abs_error` | 均方根绝对误差（RMSE） |
 
-统计是**流式**计算的，不依赖差异截断，覆盖全体数值单元格。仅失败的比较输出统计，通过的比较不输出。
+统计是**流式**计算的，不依赖差异截断，覆盖全体数值单元格。默认仅失败的比较输出统计，通过的比较不输出。
+
+如需让**通过**的用例也输出统计信息（例如用于监控容差余量），可改用 `--error-analysis-all`（它会隐含启用 `--error-analysis`）：
+
+```bash
+# 对所有用例（含通过的）输出误差统计
+symtest run config.json --error-analysis-all
+```
+
+启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline vs actual):` 的形式列出上述统计量（与失败用例的 `error_stats` 字段一致）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`，便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
 
 **CLI 用法**：
 
 ```bash
 # 启用误差分析
 symtest run config.json --error-analysis
+
+# 启用误差分析并对通过的用例也输出统计
+symtest run config.json --error-analysis-all
 
 # 与比较参数组合使用
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'

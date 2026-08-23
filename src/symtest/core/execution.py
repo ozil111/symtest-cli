@@ -294,6 +294,7 @@ def _dispatch_file_compare(
             return {
                 "assertion": "compare_files",
                 "passed": True,
+                "error_stats": cf_result.get("error_stats"),
                 "compare_failures": [],
                 "baseline_updated": [baseline_path],
                 "message": "",
@@ -301,6 +302,7 @@ def _dispatch_file_compare(
         return {
             "assertion": "compare_files",
             "passed": True,
+            "error_stats": cf_result.get("error_stats"),
             "compare_failures": [],
             "baseline_updated": [],
             "message": "",

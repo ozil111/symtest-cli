@@ -23,6 +23,7 @@ class BaseRunner(ABC):
                  update_baseline: bool = False,
                  update_history: bool = False,
                  error_analysis: bool = False,
+                 error_analysis_all: bool = False,
                  last_failed: bool = False,
                  resume: bool = False,
                  plugin_dirs: Optional[List[str]] = None):
@@ -45,7 +46,8 @@ class BaseRunner(ABC):
         self.regression_threshold = regression_threshold
         self.update_baseline = update_baseline
         self.update_history = update_history
-        self.error_analysis = error_analysis
+        self.error_analysis = error_analysis or error_analysis_all
+        self.error_analysis_all = error_analysis_all
         self.last_failed = last_failed
         self.resume = resume
 
@@ -62,6 +64,7 @@ class BaseRunner(ABC):
             "xfailed": 0,
             "xpassed": 0,
             "updated": 0,
+            "error_analysis_all": error_analysis_all,
             "details": []
         }
         self.assertions = Assertions()

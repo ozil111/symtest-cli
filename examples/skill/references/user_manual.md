@@ -1740,13 +1740,25 @@ When enabled, each failed file comparison appends `error_stats` to the Compare F
 | `mean_abs_error` | Mean absolute error |
 | `rms_abs_error` | Root-mean-square absolute error (RMSE) |
 
-Statistics are computed **in streaming fashion**, independent of the difference truncation, covering all numeric cells. Only failed comparisons output statistics; passed comparisons do not.
+Statistics are computed **in streaming fashion**, independent of the difference truncation, covering all numeric cells. By default only failed comparisons output statistics; passed comparisons do not.
+
+To also output statistics for **passed** cases (e.g. to monitor tolerance headroom), use `--error-analysis-all` instead (it implicitly enables `--error-analysis`):
+
+```bash
+# Output error statistics for all cases (including passed ones)
+symtest run config.json --error-analysis-all
+```
+
+When enabled, each **passed** case lists the above statistics in the Detailed Results section as `error_stats:`. For passed cases the statistics are also written to the `assertion_results[].error_stats` field of the `--output json` report for programmatic consumption. Statistics for passed cases are produced only when `--error-analysis-all` is enabled; otherwise behavior is unchanged.
 
 **CLI Usage**:
 
 ```bash
 # Enable error analysis
 symtest run config.json --error-analysis
+
+# Enable error analysis and also output statistics for passed cases
+symtest run config.json --error-analysis-all
 
 # Combine with comparison parameters
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
