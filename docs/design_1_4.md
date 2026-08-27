@@ -1,6 +1,6 @@
 # Symtest 1.4 开发计划 — Core Model Refactoring
 
-> 状态：规划中
+> 状态：Phase 0 已完成（2026-08-27）
 > 版本：1.4
 > 分支：develop_1.4
 
@@ -32,6 +32,10 @@
 ## 二、核心架构宪法
 
 六条不可破坏的依赖规则。后续任何 feature 讨论先对照此宪法归属，再写代码。
+
+> **Phase 0 定稿说明**：本节内容经评审定稿，正式契约已迁入
+> docs/design.md §10 与 docs/design_en.md §10（含依赖方向细则与可执行化条款）；
+> 本开发阶段文档保留原始推导，两处以正式契约为准。
 
 ### 原则 1：TestCase 是声明，不执行任何事情
 
@@ -235,7 +239,7 @@ src/symtest/
 
 | Phase | 内容 | 验收标准 |
 |---|---|---|
-| 0 | 本设计文档评审定稿 | 文档合入 |
+| 0 | 本设计文档评审定稿 | ✅ 已完成（2026-08-27）：宪法合入 design.md / design_en.md §10 |
 | 1 | TestCase v2 数据模型 + ExecutionResult/ValidationResult/TestResult 类型 | 模型单元测试 |
 | 2 | execution/validation 解耦（hint 搬家、sequence 搬家、accept 步骤、retry 上移） | executor 无 assertions import；guard 测试绿；suite 全绿 |
 | 3 | Schema v2 + parser + 三处同步（config_schema / parse_test_cases / config_io.validate_config）+ runner 适配（sequential/parallel/DAG/resume/steps 仅改取值路径） | 现有 suite 全过 |
