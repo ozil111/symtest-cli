@@ -5,8 +5,8 @@
 
 import logging
 from typing import Dict, Any, List
-from .config_loader import execute_sequence
-from .execution import execute_single_test_case
+from .orchestration.sequence import execute_sequence
+from .orchestration.single import execute_single_test_case
 from .types import TestCaseData
 
 logger = logging.getLogger("symtest.core.process_worker")

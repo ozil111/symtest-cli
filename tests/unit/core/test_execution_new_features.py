@@ -4,13 +4,11 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
-from symtest.core.execution import (
-    execute_single_test_case,
-    validate_result,
-    _build_next_action_hint,
-    _trim_output,
-    DEFAULT_OUTPUT_MAX_CHARS,
-)
+from symtest.core.orchestration.single import execute_single_test_case
+from symtest.core.validation.validator import validate_result
+from symtest.core.execution.result import ExecutionResult
+from symtest.core.execution.executor import _trim_output, DEFAULT_OUTPUT_MAX_CHARS
+from symtest.reporting.diagnosis import build_next_action_hint
 
 
 class TestRetryFeatures:
@@ -185,14 +183,12 @@ class TestAssertionResults:
             assert "message" in ar[2]
 
     def test_validate_result_returns_assertion_results_on_success(self):
-        mini = {
-            "name": "t", "status": "failed", "message": "", "command": "c",
-            "output": "abc", "return_code": 0, "duration": 0.0,
-        }
-        ar = validate_result(
+        mini = ExecutionResult(name="t", command="c", output="abc", return_code=0)
+        vr = validate_result(
             {"return_code": 0, "output_contains": ["abc"]}, mini,
         )
-        assert ar == [
+        assert vr.passed is True
+        assert vr.assertion_results == [
             {"assertion": "return_code", "passed": True},
             {"assertion": "output_contains", "passed": True, "text": "abc"},
         ]
@@ -215,15 +211,15 @@ class TestNextActionHint:
         }
 
     def test_hint_mapping(self):
-        assert _build_next_action_hint(None) is None
-        assert _build_next_action_hint("file_compare")["action"] == "update_baseline"
-        assert _build_next_action_hint("file_compare", update_baseline=True)["action"] == "investigate"
-        assert _build_next_action_hint("return_code")["action"] == "update_expected"
-        assert _build_next_action_hint("output_contains")["action"] == "update_expected"
-        assert _build_next_action_hint("output_matches")["action"] == "update_expected"
-        assert _build_next_action_hint("timeout")["action"] == "increase_timeout"
-        assert _build_next_action_hint("execution_error")["action"] == "investigate"
-        assert _build_next_action_hint("something_else")["action"] == "investigate"
+        assert build_next_action_hint(None) is None
+        assert build_next_action_hint("file_compare")["action"] == "update_baseline"
+        assert build_next_action_hint("file_compare", update_baseline=True)["action"] == "investigate"
+        assert build_next_action_hint("return_code")["action"] == "update_expected"
+        assert build_next_action_hint("output_contains")["action"] == "update_expected"
+        assert build_next_action_hint("output_matches")["action"] == "update_expected"
+        assert build_next_action_hint("timeout")["action"] == "increase_timeout"
+        assert build_next_action_hint("execution_error")["action"] == "investigate"
+        assert build_next_action_hint("something_else")["action"] == "investigate"
 
     def test_assertion_failure_attaches_hint(self, case):
         with patch("subprocess.Popen") as mock_popen:

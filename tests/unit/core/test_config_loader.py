@@ -7,8 +7,9 @@ import pytest
 from symtest.core.config_loader import (
     substitute_placeholders,
     parse_test_cases,
-    execute_sequence,
 )
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.validation.result import ValidationResult
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +328,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["one"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -349,7 +350,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["MISSING_TEXT"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "hello world\n")
             result = execute_sequence(
@@ -369,7 +370,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["SHOULD_NOT_RUN"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -392,7 +393,7 @@ class TestExecuteSequenceCaseExpected:
         ]
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -409,7 +410,7 @@ class TestExecuteSequenceCaseExpected:
         ]
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -431,7 +432,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"output_contains": ["MISSING"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -457,7 +458,7 @@ class TestExecuteSequenceCaseExpected:
         case_expected = {"return_code": 0}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -479,12 +480,20 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    passed=True,
+                    assertion_results=[
+                        {"assertion": "compare_files", "passed": True,
+                         "error_stats": None, "compare_failures": [],
+                         "baseline_updated": [], "message": ""},
+                    ],
+                )
                 result = execute_sequence(
                     case_name="case-compare-files",
                     steps=steps,
@@ -506,11 +515,11 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "symtest.core.execution.validate_result",
+                "symtest.core.orchestration.sequence.validate_result",
                 side_effect=AssertionError("Files differ"),
             ):
                 result = execute_sequence(

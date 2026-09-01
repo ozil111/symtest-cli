@@ -3,8 +3,9 @@ from unittest.mock import patch
 
 import pytest
 
-from symtest.core.config_loader import execute_sequence
-from symtest.core.assertions import ValidationError
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.validation.assertions import ValidationError
+from symtest.core.validation.result import ValidationResult
 
 
 def _passed_result(name, output="ok\n"):
@@ -26,7 +27,7 @@ class TestSequenceOutputSliming:
             {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -43,7 +44,7 @@ class TestSequenceOutputSliming:
             {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "step_one_output_long_string\n"),
@@ -61,7 +62,7 @@ class TestSequenceOutputSliming:
             {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "long_output_from_step\n"),
@@ -81,7 +82,7 @@ class TestSequenceOutputSliming:
             {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1"),
@@ -102,7 +103,7 @@ class TestSequenceOutputSliming:
             {"command": "e3", "args": ["c"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1"),
@@ -131,7 +132,7 @@ class TestSequenceStructuredDiagnostics:
             {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1"), failed]
             result = execute_sequence("case", steps)
@@ -144,11 +145,11 @@ class TestSequenceStructuredDiagnostics:
             {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
                 mock_validate.side_effect = ValidationError(
                     "compare failed",
@@ -172,15 +173,16 @@ class TestSequenceStructuredDiagnostics:
             {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
-                mock_validate.return_value = [
-                    {"assertion": "return_code", "passed": True}
-                ]
+                mock_validate.return_value = ValidationResult(
+                    passed=True,
+                    assertion_results=[{"assertion": "return_code", "passed": True}],
+                )
                 result = execute_sequence(
                     "case",
                     steps,
@@ -201,13 +203,13 @@ class TestSequenceExpectedEcho:
             {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
         ]
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             # validate_result is imported locally inside execute_sequence as
             #   from .execution import validate_result
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
                 mock_validate.side_effect = ValidationError(
                     "compare failed",

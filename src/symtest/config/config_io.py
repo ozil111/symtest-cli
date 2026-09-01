@@ -129,7 +129,7 @@ def _command_warning(command: Any, workspace: Path) -> Optional[str]:
     if not isinstance(command, str) or not command.strip():
         return "empty command"
 
-    from ..core.execution import _SHELL_BUILTINS
+    from ..core.execution.executor import _SHELL_BUILTINS
 
     first = command.strip().split()[0]
     if "{" in first or "}" in first:

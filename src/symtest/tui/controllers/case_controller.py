@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...core.test_case import TestCase, TestCaseStep
-from ...core.execution import execute_single_test_case
-from ...core.config_loader import parse_test_cases, execute_sequence
+from ...core.orchestration.single import execute_single_test_case
+from ...core.orchestration.sequence import execute_sequence
+from ...core.config_loader import parse_test_cases
 from ...config.config_io import load_config, save_config
 
 logger = logging.getLogger("symtest.tui.controller")
@@ -168,8 +169,10 @@ class CaseController:
         self._file_path = path
         self._workspace = workspace
 
-        # Parse test cases via unified entry point (skip path resolution for TUI display)
-        self._cases = parse_test_cases(config)
+        # Parse test cases via unified entry point. TUI owns the relaxed
+        # form explicitly (1.4 原则 6)：no path resolution for display and
+        # strict=False so incomplete cases get sensible defaults.
+        self._cases = parse_test_cases(config, strict=False)
         self._dirty = False
         return len(self._cases)
 
@@ -286,10 +289,11 @@ class CaseController:
                 update_baseline=self._update_baseline,
             )
         else:
-            # Single-command mode — unified to_execution_dict()
+            # Single-command mode — ExecutionSpec + expectation 直供编排层
             result = execute_single_test_case(
-                case.to_execution_dict(),
+                case.execution,
                 self._workspace,
+                expectation=case.expected,
                 update_baseline=self._update_baseline,
             )
         self._record_history(case.name, result)

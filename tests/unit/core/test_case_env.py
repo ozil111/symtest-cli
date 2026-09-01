@@ -11,11 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from symtest.core.config_loader import (
-    parse_test_cases,
-    execute_sequence,
-)
-from symtest.core.execution import execute_single_test_case
+from symtest.core.config_loader import parse_test_cases
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.orchestration.single import execute_single_test_case
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +56,8 @@ class TestParseEnv:
     def test_env_absent_defaults_to_empty(self):
         config = {
             "test_cases": [
-                {"name": "t", "command": "solver", "expected": {"return_code": 0}},
+                {"name": "t", "command": "solver", "args": [],
+                 "expected": {"return_code": 0}},
             ]
         }
         cases = parse_test_cases(config)
@@ -70,6 +69,7 @@ class TestParseEnv:
                 {
                     "name": "t",
                     "command": "solver",
+                    "args": [],
                     "expected": {"return_code": 0},
                     "env": {"NPROC": 4, "DEBUG": True},
                 }
@@ -78,19 +78,22 @@ class TestParseEnv:
         cases = parse_test_cases(config)
         assert cases[0].env == {"NPROC": "4", "DEBUG": "True"}
 
-    def test_env_survives_to_execution_dict(self):
+    def test_env_lives_on_execution_spec(self):
         config = {
             "test_cases": [
                 {
                     "name": "t",
                     "command": "solver",
+                    "args": [],
                     "expected": {"return_code": 0},
                     "env": {"A": "1"},
                 }
             ]
         }
         cases = parse_test_cases(config)
-        assert cases[0].to_execution_dict()["env"] == {"A": "1"}
+        # 1.4：env 属于 ExecutionSpec（case 级 env，作用于所有 step）
+        assert cases[0].execution.env == {"A": "1"}
+        assert cases[0].env == {"A": "1"}
 
 
 # ---------------------------------------------------------------------------

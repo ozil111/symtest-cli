@@ -25,7 +25,7 @@ from .runners.json_runner import JSONRunner
 from .runners.parallel_json_runner import ParallelJSONRunner
 from .runners.yaml_runner import YAMLRunner
 from .core.test_case import TestCase
-from .core.assertions import Assertions
+from .core.validation.assertions import Assertions
 from .core.setup import BaseSetup, EnvironmentSetup, SetupManager
 from .logging_config import get_logger, setup_console_logging
 from .utils.junit_xml_writer import write_junit_xml

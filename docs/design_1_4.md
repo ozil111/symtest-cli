@@ -1,6 +1,6 @@
 # Symtest 1.4 开发计划 — Core Model Refactoring
 
-> 状态：Phase 0 已完成（2026-08-27）
+> 状态：Phase 0 已完成（2026-08-27）；Phase 1 已完成（2026-08-31）；Phase 2 已完成（2026-08-31）
 > 版本：1.4
 > 分支：develop_1.4
 
@@ -200,6 +200,19 @@ subprocess 内部实现多丑都不管——1.4 是职责拆分，不是能力�
 注意：retry 上移后，`attempt_history` / flaky 聚合逻辑从 execution 搬到
 runner，属纯搬迁，行为必须逐位保持；现有 retry/flaky 测试是回归门。
 
+Phase 2 实施备注（2026-08-31）：
+- 已知怪癖逐位保持：`--update-baseline` 成功 accept 后
+  `result["baseline_updated"]` 保持 `[]`（baseline_updated 只出现在
+  assertion_results 的 compare_files 条目里），`results["updated"]` 计数
+  不增长、文本报告不显示 "(baseline updated)"。此为 1.3 既有行为，
+  本次重构未修复，留待后续版本单独决策。
+- `reporting/diagnosis.py` 是 core→reporting 的唯一 import 点
+  （orchestration 调用它填充 wire format 的 `next_action_hint`），
+  guard 测试将其登记为登记在册的例外；严格分层（hint 完全移出结果
+  dict、由 reporter 侧生成）留待后续版本。
+- `execute_single_test_case` 兼容旧 dict 形态（sequence 引擎、
+  process_worker 仍传 dict），Phase 3 Schema v2 落地后移除。
+
 ---
 
 ## 五、目标模块布局
@@ -240,8 +253,8 @@ src/symtest/
 | Phase | 内容 | 验收标准 |
 |---|---|---|
 | 0 | 本设计文档评审定稿 | ✅ 已完成（2026-08-27）：宪法合入 design.md / design_en.md §10 |
-| 1 | TestCase v2 数据模型 + ExecutionResult/ValidationResult/TestResult 类型 | 模型单元测试 |
-| 2 | execution/validation 解耦（hint 搬家、sequence 搬家、accept 步骤、retry 上移） | executor 无 assertions import；guard 测试绿；suite 全绿 |
+| 1 | TestCase v2 数据模型 + ExecutionResult/ValidationResult/TestResult 类型 | ✅ 已完成（2026-08-31）：test_model_v2.py 22 用例；全量回归绿 |
+| 2 | execution/validation 解耦（hint 搬家、sequence 搬家、accept 步骤、retry 上移） | ✅ 已完成（2026-08-31）：executor 无 assertions/validation import（guard 测试强制）；全量回归绿（862 passed） |
 | 3 | Schema v2 + parser + 三处同步（config_schema / parse_test_cases / config_io.validate_config）+ runner 适配（sequential/parallel/DAG/resume/steps 仅改取值路径） | 现有 suite 全过 |
 | 4 | `symtest migrate` + 迁移等价性测试 + AI Skill | 见下节不变量 |
 

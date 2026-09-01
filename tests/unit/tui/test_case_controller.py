@@ -373,11 +373,13 @@ class TestDirtyFlag:
 
 
 class TestParseFromDict:
+    """TUI 侧显式宽松形态（1.4 原则 6：strict=False，非隐式 workspace 嗅探）。"""
+
     def test_single_cmd_case(self):
         result = parse_test_cases({"test_cases": [
             {"name": "simple", "command": "echo", "args": ["hello"],
              "expected": {"return_code": 0}, "tags": ["demo"]},
-        ]})
+        ]}, strict=False)
         assert len(result) == 1
         tc = result[0]
         assert tc.name == "simple"
@@ -392,7 +394,7 @@ class TestParseFromDict:
                  {"command": "step1", "args": ["a"], "expected": {}},
                  {"command": "step2", "args": ["b"], "expected": {"return_code": 1}},
              ]},
-        ]})
+        ]}, strict=False)
         assert len(result) == 1
         tc = result[0]
         assert tc.name == "seq"
@@ -404,7 +406,7 @@ class TestParseFromDict:
     def test_missing_fields_get_defaults(self):
         result = parse_test_cases({"test_cases": [
             {"name": "minimal"},
-        ]})
+        ]}, strict=False)
         tc = result[0]
         assert tc.command == ""
         assert tc.args == []
@@ -420,6 +422,6 @@ class TestParseFromDict:
             {"name": "with_timeout",
              "steps": [{"command": "sleep", "args": ["10"], "expected": {},
                         "timeout": 30.0}]},
-        ]})
+        ]}, strict=False)
         tc = result[0]
         assert tc.steps[0].timeout == 30.0
