@@ -44,23 +44,42 @@ class TestLastFailedFiltering:
 
 
 class TestUpdateBaselineWorkflow:
-    """Integration test for --update-baseline flag."""
+    """Integration test for --update-baseline flag.
+
+    1.4：Validator 只读；baseline 覆盖由编排层 accept 步骤完成
+    （execute_single_test_case(update_baseline=True)）。
+    """
 
     def test_update_baseline_overwrites_file(self):
+        import sys
+
         with tempfile.TemporaryDirectory() as d:
-            actual = os.path.join(d, "result.csv")
             baseline = os.path.join(d, "baseline.csv")
-            with open(actual, "w") as f:
-                f.write("new,data,100\n")
             with open(baseline, "w") as f:
                 f.write("old,data,50\n")
 
-            from symtest.core.assertions import Assertions
-            result = Assertions.compare_files(actual, baseline, file_type="csv", update_baseline=True)
+            gen = (
+                "import pathlib\n"
+                "pathlib.Path('result.csv').write_text('new,data,100\\n')\n"
+            )
+            from symtest.core.test_case import ExecutionSpec
+            spec = ExecutionSpec(
+                name="ub_case", command=sys.executable, args=["-c", gen],
+            )
+            expectation = {
+                "return_code": 0,
+                "compare_files": [
+                    {"actual": "result.csv", "baseline": "baseline.csv",
+                     "type": "csv"},
+                ],
+            }
 
-            assert result["identical"] is True
-            assert result["baseline_updated"] is True
+            from symtest.core.orchestration.single import execute_single_test_case
+            result = execute_single_test_case(
+                spec, workspace=d, expectation=expectation, update_baseline=True,
+            )
 
+            assert result["status"] == "passed"
             # Verify baseline was overwritten
             with open(baseline, "r") as f:
                 assert "new,data,100" in f.read()
@@ -77,8 +96,7 @@ class TestValidateJsonOutput:
                 "test_cases": [
                     {
                         "name": "valid_case",
-                        "command": "echo",
-                        "args": ["hello"],
+                        "execution": {"command": "echo", "args": ["hello"]},
                         "expected": {"return_code": 0},
                     }
                 ]

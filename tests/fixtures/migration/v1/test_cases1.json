@@ -1,0 +1,182 @@
+{
+    "test_cases": [
+        {
+            "name": "text_identical_default",
+            "description": "默认文本比较（相同文件）",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.bdf", "./test/1_copy.bdf"],
+            "expected": {
+                "output_contains": ["Files are identical"]
+                
+            }
+        },
+        {
+            "name": "text_different_range",
+            "description": "带行范围限制的文本比较",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.bdf", 
+                "./test/1_copy.bdf",
+                "--start-line=93",
+                "--end-line=96",
+                "--start-column=1",
+                "--end-column=30"
+            ],
+            "expected": {
+                "output_contains": ["Files are identical"]
+                
+            }
+        },
+        {
+            "name": "json_exact_match",
+            "description": "严格JSON比较（相同文件）",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.json",
+                "./test/1_copy.json",
+                "--file-type=json",
+                "--json-compare-mode=exact"
+            ],
+            "expected": {
+                "output_contains": ["Files are identical"]
+                
+            }
+        },
+        {
+            "name": "json_key_based_match",
+            "description": "JSON键值比较（结构不同但关键字段匹配）",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.json",
+                "./test/2.json",
+                "--file-type=json",
+                "--json-compare-mode=key-based",
+                "--json-key-field=\"phone\""
+            ],
+            "expected": {
+                "output_contains": ["Files are identical"]
+                
+            }
+        },
+        {
+            "name": "binary_comparison",
+            "description": "二进制文件比较（带相似度计算）",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.bdf",
+                "./test/2.bdf",
+                "--file-type=binary",
+                "--similarity",
+                "--chunk-size=4096"
+            ],
+            "expected": {
+                "output_contains": ["Similarity Index"]
+                
+            }
+        },
+        {
+            "name": "multi_thread_comparison",
+            "description": "多线程文本比较",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.bdf",
+                "./test/1_copy.bdf",
+                "--num-threads=8",
+                "--verbose"
+            ],
+            "expected": {
+                "output_contains": ["Files are identical"]
+                
+            }
+        },
+        {
+            "name": "different_output_format",
+            "description": "JSON输出格式测试",
+            "command": "python ./compare_text.py",
+            "args": [
+                "./test/1.json",
+                "./test/2.json",
+                "--output-format=json"
+            ],
+            "expected": {
+                "output_contains": ["\"position\""]
+                
+            }
+        },
+        {
+            "name": "auto_detect_filetype",
+            "description": "自动文件类型检测",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.bdf", "./test/1_copy.bdf"],
+            "expected": {
+                "output_contains": ["Auto-detected file type: text"]
+                
+            }
+        },
+        {
+            "name": "h5_comparison",
+            "description": "HDF5文件比较特定表格",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/2.h5", "--file-type=h5", "--h5-table=NASTRAN/RESULT/NODAL/DISPLACEMENT"],
+            "expected": {
+                "output_contains": ["Files are different"]
+                
+            }
+        },
+        {
+            "name": "h5_comparison_all_tables",
+            "description": "HDF5文件比较所有表格",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/2.h5"],
+            "expected": {
+                "output_contains": ["Files are different."]
+                
+            }
+        },
+        {
+            "name": "h5_comparison_with_wrong_table",
+            "description": "HDF5文件比较，错误表格路径",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/2.h5", "--file-type=h5", "--h5-table=NASTRAN/RESULT/NODALl/DISPLACEMENT"],
+            "expected": {
+                "matches": ["WARNING - Table .* not found"]                
+            }
+        },
+        {
+            "name": "h5_comparison_with_strucutre_mode",
+            "description": "HDF5文件比较，结构模式",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/2.h5", "--h5-structure-only"],
+            "expected": {
+                "output_contains": ["Files are identical."]                
+            }
+        },
+        {
+            "name": "h5_comparison_with_content_mode",
+            "description": "HDF5文件比较，内容模式",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/2.h5", "--h5-show-content-diff"],
+            "expected": {
+                "output_contains": ["Difference at"]
+            }
+        },
+        {
+            "name": "h5_comparison_with_content_mode",
+            "description": "HDF5文件比较，内容模式",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/1_copy.h5", "--h5-rtol=1e-5", "--h5-atol=1e-8"],
+            "expected": {
+                "output_contains": ["Files are identical"]
+            }
+        },
+        {
+            "name": "h5_comparison_with_table_regex",
+            "description": "HDF5文件比较，表格正则表达式",
+            "command": "python ./compare_text.py",
+            "args": ["./test/1.h5", "./test/1_copy.h5", "--h5-table-regex=NASTRAN/RESULT/\\b\\w*al\\b/STRESS"],
+            "expected": {
+                "output_contains": ["Files are identical"]
+            }
+        }
+    ]
+}

@@ -16,14 +16,18 @@ def test_json_runner_end_to_end():
         "test_cases": [
             {
                 "name": "echo with env",
-                "command": f'"{sys.executable}" -c "import os; print(os.environ.get(\'E2E_ENV\'))"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import os; print(os.environ.get(\'E2E_ENV\'))"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0, "output_contains": ["json_e2e"]},
             },
             {
                 "name": "simple echo",
-                "command": f'"{sys.executable}" -c "print(\'hello-e2e\')"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "print(\'hello-e2e\')"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0, "output_contains": ["hello-e2e"]},
             },
         ],
@@ -54,8 +58,10 @@ def test_yaml_runner_end_to_end():
         "test_cases": [
             {
                 "name": "yaml echo",
-                "command": f'"{sys.executable}" -c "import os; print(os.environ.get(\'E2E_ENV\'))"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import os; print(os.environ.get(\'E2E_ENV\'))"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0, "output_contains": ["yaml_e2e"]},
             }
         ],

@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from symtest.core import process_worker
+from symtest.core.test_case import TestCase, TestCaseStep
 
 
 def passed_result(name="case", output="ok\n"):
@@ -28,12 +29,12 @@ def failed_result(name="case"):
 
 
 def test_run_test_in_process_executes_single_case(caplog):
-    case = {
-        "name": "single",
-        "command": "echo",
-        "args": ["ok"],
-        "expected": {"return_code": 0},
-    }
+    case = TestCase(
+        name="single",
+        command="echo",
+        args=["ok"],
+        expected={"return_code": 0},
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.return_value = passed_result("single")
@@ -45,12 +46,12 @@ def test_run_test_in_process_executes_single_case(caplog):
 
 
 def test_run_test_in_process_prints_single_case_failure(caplog):
-    case = {
-        "name": "single",
-        "command": "tool",
-        "args": [],
-        "expected": {"return_code": 0},
-    }
+    case = TestCase(
+        name="single",
+        command="tool",
+        args=[],
+        expected={"return_code": 0},
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.return_value = failed_result("single")
@@ -61,13 +62,13 @@ def test_run_test_in_process_prints_single_case_failure(caplog):
 
 
 def test_run_sequence_in_process_aggregates_successful_steps():
-    case = {
-        "name": "sequence",
-        "steps": [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
+    case = TestCase(
+        name="sequence",
+        steps=[
+            TestCaseStep(command="echo", args=["one"], expected={"return_code": 0}),
+            TestCaseStep(command="echo", args=["two"], expected={"return_code": 0}),
         ],
-    }
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.side_effect = [
@@ -83,14 +84,14 @@ def test_run_sequence_in_process_aggregates_successful_steps():
 
 
 def test_run_sequence_in_process_stops_on_first_failure():
-    case = {
-        "name": "sequence",
-        "steps": [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "tool", "args": ["fail"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["three"], "expected": {"return_code": 0}},
+    case = TestCase(
+        name="sequence",
+        steps=[
+            TestCaseStep(command="echo", args=["one"], expected={"return_code": 0}),
+            TestCaseStep(command="tool", args=["fail"], expected={"return_code": 0}),
+            TestCaseStep(command="echo", args=["three"], expected={"return_code": 0}),
         ],
-    }
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.side_effect = [
@@ -106,38 +107,37 @@ def test_run_sequence_in_process_stops_on_first_failure():
 
 
 def test_single_case_retry_count_is_passed_through():
-    """``retry_count`` from the serialized case dict must reach
-    the ``TestCaseData`` that is handed to ``execute_single_test_case``."""
-    case = {
-        "name": "flaky",
-        "command": "tool",
-        "args": [],
-        "expected": {"return_code": 0},
-        "retry_count": 3,
-    }
+    """``retry_count`` from the v2 wire dict must reach the ExecutionSpec
+    that is handed to ``execute_single_test_case``."""
+    case = TestCase(
+        name="flaky",
+        command="tool",
+        args=[],
+        expected={"return_code": 0},
+        retry_count=3,
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.return_value = passed_result("flaky")
         process_worker.run_test_in_process(5, case, "workspace")
 
     execute.assert_called_once()
-    call_case = execute.call_args[0][0]
-    assert call_case["retry_count"] == 3
+    call_spec = execute.call_args[0][0]
+    assert call_spec.retry_count == 3
 
 
 def test_single_case_default_retry_count():
     """When ``retry_count`` is absent, it should default to 0."""
-    case = {
-        "name": "stable",
-        "command": "tool",
-        "args": [],
-        "expected": {"return_code": 0},
-    }
+    case = TestCase(
+        name="stable",
+        command="tool",
+        args=[],
+        expected={"return_code": 0},
+    ).to_dict()
 
     with patch.object(process_worker, "execute_single_test_case") as execute:
         execute.return_value = passed_result("stable")
         process_worker.run_test_in_process(6, case, "workspace")
 
-    call_case = execute.call_args[0][0]
-    assert call_case["retry_count"] == 0
-
+    call_spec = execute.call_args[0][0]
+    assert call_spec.retry_count == 0

@@ -1,12 +1,20 @@
-"""JSON Schema (draft 2020-12) for symtest configuration files.
+"""JSON Schema (draft 2020-12) for symtest configuration files (Schema v2).
 
 Single source of truth for AI agents (and humans) that *generate* test
 configs.  Exposed via ``symtest schema``.
 
+Schema v2 (1.4 Core Model Refactoring) — intentionally breaking layered DSL:
+- top level keeps metadata: ``name / description / tags / expected_failure /
+  xfail_reason / xfail_quiet / abstract / extends / variables / import``;
+- execution semantics move into ``execution`` (single-command shorthand or
+  the full ``steps`` form — 二选一);
+- validation semantics stay at top level in ``expected``;
+- scheduling semantics move into ``scheduling`` (``depends_on`` / ``resources``).
+
 Keep in sync with:
 - ``core.config_loader.parse_test_cases`` (accepted fields)
 - ``config.config_io.validate_config`` (required fields)
-- ``docs/user_manual.md`` (documented behavior)
+- ``docs/user_manual.md`` / ``docs/user_manual_en.md`` (documented behavior)
 """
 
 from __future__ import annotations
@@ -18,7 +26,8 @@ CONFIG_SCHEMA: Dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "symtest configuration",
     "description": (
-        "Test suite configuration for the symtest framework. "
+        "Test suite configuration for the symtest framework (Schema v2, "
+        "layered execution/expected/scheduling). "
         "YAML files follow the same structure (YAML is a JSON superset)."
     ),
     "type": "object",
@@ -138,6 +147,10 @@ CONFIG_SCHEMA: Dict[str, Any] = {
             "type": "object",
             "required": ["command", "args", "expected"],
             "additionalProperties": False,
+            "description": (
+                "One atomic execution+validation pair within execution.steps. "
+                "Step-level retry is driven by the orchestration layer."
+            ),
             "properties": {
                 "command": {"type": "string"},
                 "args": {
@@ -149,55 +162,92 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                 "retry_count": {"type": "integer", "minimum": 0, "description": "Per-step retry count on failure."},
             },
         },
+        "executionSpec": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": (
+                "Execution semantics (v2): single-command shorthand "
+                "(command/args/timeout/retry_count/env) OR the full steps form "
+                "(steps[]) — 二选一. Case-level env applies to all steps."
+            ),
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "Command to execute. May include leading arguments "
+                        "(e.g. 'python ./run.py'); the framework splits and "
+                        "path-resolves them."
+                    ),
+                },
+                "args": {
+                    "type": "array",
+                    "items": {"type": ["string", "number", "boolean"]},
+                },
+                "timeout": {
+                    "type": ["number", "null"],
+                    "description": "Timeout in seconds (default 3600); null = no limit.",
+                },
+                "retry_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["string", "number", "boolean"]},
+                    "description": (
+                        "Case-level environment variables injected into this "
+                        "case's command(s) (subprocess). Overrides setup-level "
+                        "and scheduler-injected environment variables."
+                    ),
+                },
+                "steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"$ref": "#/$defs/step"},
+                    "description": "Steps run in order with fail-fast semantics.",
+                },
+            },
+        },
+        "schedulingSpec": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Scheduling semantics (v2): dependencies and resource hints.",
+            "properties": {
+                "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Names of test cases that must pass before this case can "
+                        "start.  In parallel mode, dependencies are scheduled as a "
+                        "DAG: cases with satisfied dependencies run concurrently. "
+                        "If a dependency fails, this case is marked 'skipped'."
+                    ),
+                },
+                "resources": {"$ref": "#/$defs/resources"},
+            },
+        },
         "singleCase": {
             "allOf": [
                 {
                     "if": {"required": ["extends"]},
                     "then": {"required": ["name"]},
-                    "else": {"required": ["name", "command", "args", "expected"]},
+                    "else": {"required": ["name", "execution", "expected"]},
                 },
                 {
                     "type": "object",
                     "additionalProperties": False,
+                    "description": "Single-command case (Schema v2 layered form).",
                     "properties": {
                         "name": {"type": "string", "description": "Unique test case name."},
-                        "command": {
-                            "type": "string",
-                            "description": (
-                                "Command to execute. May include leading arguments "
-                                "(e.g. 'python ./run.py'); the framework splits and "
-                                "path-resolves them."
-                            ),
-                        },
-                        "args": {
-                            "type": "array",
-                            "items": {"type": ["string", "number", "boolean"]},
-                        },
+                        "execution": {"$ref": "#/$defs/executionSpec"},
                         "expected": {"$ref": "#/$defs/expected"},
+                        "scheduling": {"$ref": "#/$defs/schedulingSpec"},
                         "description": {"type": ["string", "null"]},
-                        "timeout": {
-                            "type": ["number", "null"],
-                            "description": "Timeout in seconds (default 3600); null = no limit.",
-                        },
-                        "retry_count": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Retries after the first failure; passing after retry marks the result flaky.",
-                        },
                         "tags": {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Tags for --tag filtering.",
-                        },
-                        "resources": {"$ref": "#/$defs/resources"},
-                        "env": {
-                            "type": "object",
-                            "additionalProperties": {"type": ["string", "number", "boolean"]},
-                            "description": (
-                                "Case-level environment variables injected into this "
-                                "case's command (subprocess). Overrides setup-level and "
-                                "scheduler-injected environment variables."
-                            ),
                         },
                         "expected_failure": {
                             "type": "boolean",
@@ -240,16 +290,6 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "Per-case placeholder variables for {key} substitution. "
                                 "Merged from the ancestor chain (child overrides parent), "
                                 "then overlaid by global --var flags at run time."
-                            ),
-                        },
-                        "depends_on": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Names of test cases that must pass before this case can "
-                                "start.  In parallel mode, dependencies are scheduled as a "
-                                "DAG: cases with satisfied dependencies run concurrently. "
-                                "If a dependency fails, this case is marked 'skipped'."
                             ),
                         },
                     },
@@ -261,38 +301,29 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                 {
                     "if": {"required": ["extends"]},
                     "then": {"required": ["name"]},
-                    "else": {"required": ["name", "steps"]},
+                    "else": {"required": ["name", "execution"]},
                 },
                 {
                     "type": "object",
                     "additionalProperties": False,
                     "description": (
-                        "Multi-step case: steps run in order with fail-fast semantics. "
+                        "Multi-step case (Schema v2 layered form): steps live in "
+                        "execution.steps and run in order with fail-fast semantics. "
                         "The case-level 'expected' is evaluated once after all steps pass."
                     ),
                     "properties": {
                         "name": {"type": "string"},
-                        "steps": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {"$ref": "#/$defs/step"},
+                        "execution": {
+                            "$ref": "#/$defs/executionSpec",
+                            "description": "Must use the steps form (execution.steps).",
                         },
                         "expected": {
                             "$ref": "#/$defs/expected",
                             "description": "Optional case-level assertions (e.g. compare_files on produced files), evaluated after all steps pass.",
                         },
+                        "scheduling": {"$ref": "#/$defs/schedulingSpec"},
                         "description": {"type": ["string", "null"]},
                         "tags": {"type": "array", "items": {"type": "string"}},
-                        "resources": {"$ref": "#/$defs/resources"},
-                        "env": {
-                            "type": "object",
-                            "additionalProperties": {"type": ["string", "number", "boolean"]},
-                            "description": (
-                                "Case-level environment variables injected into every "
-                                "step of this case (subprocess). Overrides setup-level "
-                                "and scheduler-injected environment variables."
-                            ),
-                        },
                         "expected_failure": {
                             "type": "boolean",
                             "description": (
@@ -334,16 +365,6 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                                 "Per-case placeholder variables for {key} substitution. "
                                 "Merged from the ancestor chain (child overrides parent), "
                                 "then overlaid by global --var flags at run time."
-                            ),
-                        },
-                        "depends_on": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Names of test cases that must pass before this case can "
-                                "start.  In parallel mode, dependencies are scheduled as a "
-                                "DAG: cases with satisfied dependencies run concurrently. "
-                                "If a dependency fails, this case is marked 'skipped'."
                             ),
                         },
                     },

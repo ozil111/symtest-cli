@@ -1,0 +1,10 @@
+name: Sample Test Case
+command: python script.py
+args:
+  - --input
+  - input.txt
+expected:
+  return_code: 0
+  output_contains:
+    - "Success"
+    - "Processed"

@@ -4,12 +4,13 @@ import tempfile
 
 import pytest
 
-from symtest.core.assertions import (
+from symtest.core.validation.assertions import (
     Assertions,
     ValidationError,
     _build_diff_summary,
 )
-from symtest.core.execution import validate_result
+from symtest.core.validation.validator import validate_result
+from symtest.core.execution.result import ExecutionResult
 from symtest.file_comparator.result import Difference
 
 
@@ -142,7 +143,12 @@ class TestCompareFilesStructuredResponse:
             assert "diff_summary" in cf
             assert "differences" in cf
 
-    def test_update_baseline_copies_file(self):
+    def test_compare_files_is_read_only_on_mismatch(self):
+        """原则 3：compare_files 永远只读 —— 失败时不写 baseline。
+
+        ``--update-baseline`` 的写盘由编排层 accept 步骤完成
+        （见 test_orchestration_accept.py）。
+        """
         with tempfile.TemporaryDirectory() as d:
             a = os.path.join(d, "actual.txt")
             b = os.path.join(d, "baseline.txt")
@@ -150,24 +156,17 @@ class TestCompareFilesStructuredResponse:
                 f.write("new_content\n")
             with open(b, "w") as f:
                 f.write("old_content\n")
-            result = Assertions.compare_files(a, b, file_type="text", update_baseline=True)
-            assert result["identical"] is True
-            assert result["baseline_updated"] is True
-            # Verify baseline was overwritten
+            with pytest.raises(ValidationError):
+                Assertions.compare_files(a, b, file_type="text")
+            # baseline 未被改写
             with open(b, "r") as f:
-                assert f.read() == "new_content\n"
+                assert f.read() == "old_content\n"
 
-    def test_update_baseline_when_already_identical(self):
-        with tempfile.TemporaryDirectory() as d:
-            a = os.path.join(d, "a.txt")
-            b = os.path.join(d, "b.txt")
-            with open(a, "w") as f:
-                f.write("same\n")
-            with open(b, "w") as f:
-                f.write("same\n")
-            result = Assertions.compare_files(a, b, file_type="text", update_baseline=True)
-            assert result["identical"] is True
-            assert result["baseline_updated"] is False
+    def test_compare_files_signature_has_no_update_baseline(self):
+        """1.4 移除 update_baseline 写盘分支。"""
+        import inspect
+        params = inspect.signature(Assertions.compare_files).parameters
+        assert "update_baseline" not in params
 
 
 # ---------------------------------------------------------------------------
@@ -175,16 +174,16 @@ class TestCompareFilesStructuredResponse:
 # ---------------------------------------------------------------------------
 
 class TestValidateResultCollectionMode:
+    """validate_result 收集全部失败并返回 ValidationResult（不抛异常）。"""
+
     def _mini_result(self, **kw):
-        return {
-            "name": kw.get("name", "test"),
-            "status": kw.get("status", "failed"),
-            "message": "",
-            "command": "cmd",
-            "output": kw.get("output", ""),
-            "return_code": kw.get("return_code", 0),
-            "duration": 0.0,
-        }
+        return ExecutionResult(
+            name=kw.get("name", "test"),
+            command="cmd",
+            output=kw.get("output", ""),
+            return_code=kw.get("return_code", 0),
+            duration=0.0,
+        )
 
     def test_collects_all_failures(self):
         """validate_result should collect all failures, not fail-fast."""
@@ -195,24 +194,27 @@ class TestValidateResultCollectionMode:
                 f.write("X\n")
             with open(b, "w") as f:
                 f.write("Y\n")
-            with pytest.raises(ValidationError) as exc:
-                validate_result(
-                    {
-                        "return_code": 0,
-                        "output_contains": ["missing_string"],
-                        "compare_files": [
-                            {"actual": a, "baseline": b, "type": "text"}
-                        ],
-                    },
-                    self._mini_result(output="hello", return_code=1),
-                    workspace=d,
-                )
-            err = exc.value
+            vr = validate_result(
+                {
+                    "return_code": 0,
+                    "output_contains": ["missing_string"],
+                    "compare_files": [
+                        {"actual": a, "baseline": b, "type": "text"}
+                    ],
+                },
+                self._mini_result(output="hello", return_code=1),
+                workspace=d,
+            )
+            assert vr.passed is False
             # Should report both return_code AND output_contains AND file_compare failures
-            msg = str(err)
+            msg = vr.message
             assert "return code" in msg.lower()
             assert "contain" in msg.lower()
             assert "File comparison failed" in msg
+            failed = [ar for ar in vr.assertion_results if ar["passed"] is False]
+            assert {ar["assertion"] for ar in failed} == {
+                "return_code", "output_contains", "compare_files",
+            }
 
     def test_first_failure_sets_failure_kind(self):
         with tempfile.TemporaryDirectory() as d:
@@ -222,19 +224,18 @@ class TestValidateResultCollectionMode:
                 f.write("content\n")
             with open(b, "w") as f:
                 f.write("content\n")
-            with pytest.raises(ValidationError) as exc:
-                validate_result(
-                    {
-                        "return_code": 0,
-                        "output_contains": ["nonexistent"],
-                        "compare_files": [
-                            {"actual": a, "baseline": b, "type": "text"}
-                        ],
-                    },
-                    self._mini_result(output="hello", return_code=0),
-                    workspace=d,
-                )
-            assert exc.value.failure_kind == "output_contains"
+            vr = validate_result(
+                {
+                    "return_code": 0,
+                    "output_contains": ["nonexistent"],
+                    "compare_files": [
+                        {"actual": a, "baseline": b, "type": "text"}
+                    ],
+                },
+                self._mini_result(output="hello", return_code=0),
+                workspace=d,
+            )
+            assert vr.failure_kind == "output_contains"
 
     def test_compare_files_as_first_failure(self):
         with tempfile.TemporaryDirectory() as d:
@@ -244,11 +245,21 @@ class TestValidateResultCollectionMode:
                 f.write("X\n")
             with open(b, "w") as f:
                 f.write("Y\n")
-            with pytest.raises(ValidationError) as exc:
-                validate_result(
-                    {"compare_files": [{"actual": a, "baseline": b, "type": "text"}]},
-                    self._mini_result(return_code=0),
-                    workspace=d,
-                )
-            assert exc.value.failure_kind == "file_compare"
-            assert len(exc.value.compare_failures) > 0
+            vr = validate_result(
+                {"compare_files": [{"actual": a, "baseline": b, "type": "text"}]},
+                self._mini_result(return_code=0),
+                workspace=d,
+            )
+            assert vr.failure_kind == "file_compare"
+            assert len(vr.compare_failures) > 0
+
+    def test_timeout_is_reported_as_failure_kind(self):
+        """超时只报告执行事实，是否算失败由 Validator 判定（原则 2/3）。"""
+        vr = validate_result(
+            {"return_code": 0},
+            ExecutionResult(name="t", command="c", timed_out=True, timeout_limit=7),
+        )
+        assert vr.passed is False
+        assert vr.failure_kind == "timeout"
+        assert vr.message == "Timeout reached! Killed after 7 seconds."
+        assert vr.assertion_results == []

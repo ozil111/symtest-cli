@@ -1,0 +1,27 @@
+test_cases:
+  - name: json_exact
+    command: python
+    args:
+      - ./compare_json.py
+      - "--mode"
+      - "exact"
+    expected:
+      return_code: 0
+    tags:
+      - json
+  - name: json_steps
+    description: Sequence-mode test case
+    tags:
+      - json
+      - pipeline
+    steps:
+      - command: python
+        args:
+          - ./step1.py
+        expected:
+          return_code: 0
+      - command: python
+        args:
+          - ./step2.py
+        expected:
+          return_code: 0

@@ -1,0 +1,22 @@
+{
+  "test_cases": [
+    {
+      "name": "valid_case",
+      "command": "echo",
+      "args": ["hello"]
+    },
+    {
+      "name": "valid_sequence",
+      "steps": [
+        {
+          "command": "echo",
+          "args": ["step1"],
+          "expected": {
+            "return_code": 0
+          }
+        }
+      ],
+      "tags": ["valid"]
+    }
+  ]
+}

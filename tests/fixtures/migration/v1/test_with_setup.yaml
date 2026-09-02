@@ -1,0 +1,42 @@
+setup:
+  environment_variables:
+    YAML_TEST_ENV: "yaml_environment"
+    DATABASE_HOST: "localhost"
+    DATABASE_PORT: "5432"
+    LOG_LEVEL: "info"
+    FEATURE_FLAGS: "experimental,beta"
+
+test_cases:
+  - name: "Test YAML environment setup"
+    command: "python"
+    args:
+      - "-c"
+      - "import os; print(f'YAML env: {os.environ.get(\"YAML_TEST_ENV\", \"NOT_SET\")}')"
+    expected:
+      return_code: 0
+      output_contains:
+        - "YAML env: yaml_environment"
+    description: "Verify YAML-defined environment variables work correctly"
+
+  - name: "Test database configuration"
+    command: "python"
+    args:
+      - "-c"
+      - "import os; print(f'DB: {os.environ.get(\"DATABASE_HOST\")}:{os.environ.get(\"DATABASE_PORT\")}')"
+    expected:
+      return_code: 0
+      output_contains:
+        - "DB: localhost:5432"
+    description: "Test database connection parameters from environment"
+
+  - name: "Test feature flags parsing"
+    command: "python"
+    args:
+      - "-c"
+      - "import os; flags = os.environ.get('FEATURE_FLAGS', '').split(','); print(f'Features: {len(flags)} flags, experimental={\"experimental\" in flags}')"
+    expected:
+      return_code: 0
+      output_contains:
+        - "Features: 2 flags"
+        - "experimental=True"
+    description: "Test parsing of comma-separated feature flags" 

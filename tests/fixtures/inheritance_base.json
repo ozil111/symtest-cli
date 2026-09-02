@@ -3,8 +3,10 @@
     {
       "name": "_base_echo",
       "abstract": true,
-      "command": "echo",
-      "args": ["{msg}"],
+      "execution": {
+        "command": "echo",
+        "args": ["{msg}"]
+      },
       "expected": {
         "output_contains": ["{msg}"]
       },

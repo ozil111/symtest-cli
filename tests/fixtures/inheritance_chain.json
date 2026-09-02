@@ -3,8 +3,10 @@
     {
       "name": "_A",
       "abstract": true,
-      "command": "python",
-      "args": ["-c"],
+      "execution": {
+        "command": "python",
+        "args": ["-c"]
+      },
       "expected": {},
       "variables": {
         "a": "1",
@@ -31,7 +33,9 @@
         "c": "3",
         "shared": "from_c"
       },
-      "args": ["print('{a} {b} {c}')"]
+      "execution": {
+        "args": ["print('{a} {b} {c}')"]
+      }
     }
   ]
 }

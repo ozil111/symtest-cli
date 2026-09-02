@@ -79,6 +79,7 @@ Examples:
   symtest run test_cases.yaml --workspace /path/to/project
   symtest tui test_cases.json
   symtest validate main_config.json
+  symtest migrate old.json --output new.json
   symtest compare file1.json file2.json
   symtest compare file1.txt file2.txt --output-format json
         """
@@ -187,6 +188,24 @@ Examples:
         'schema',
         help='Print the JSON Schema for test configuration files '
              '(machine-readable contract for generating configs)',
+    )
+
+    # ---- Migrate command ----
+    migrate_parser = subparsers.add_parser(
+        'migrate',
+        help='Migrate a v1 (flat) test configuration to the v2 layered '
+             'schema (execution / expected / scheduling)',
+    )
+    migrate_parser.add_argument(
+        'config_file',
+        help='Path to the v1 configuration file (JSON or YAML)',
+    )
+    migrate_parser.add_argument(
+        '--workspace', '-w', help='Working directory for path resolution',
+    )
+    migrate_parser.add_argument(
+        '--output', '-o',
+        help='Output path (default: <stem>.v2<ext>, e.g. old.json -> old.v2.json)',
     )
 
     # ---- Compare command ----
@@ -521,6 +540,13 @@ def run_schema() -> None:
     print(json.dumps(get_config_schema(), indent=2, ensure_ascii=False))
 
 
+def run_migrate(args) -> bool:
+    """Migrate a v1 (flat) config to the v2 layered schema."""
+    from .commands.migrate import run_migrate as _run_migrate
+
+    return _run_migrate(args)
+
+
 def main():
     """Main entry point for the CLI"""
     parser = create_parser()
@@ -547,6 +573,10 @@ def main():
     elif args.command == 'schema':
         run_schema()
         sys.exit(0)
+    elif args.command == 'migrate':
+        success = run_migrate(args)
+        # 0 = migrated, 1 = input/format errors
+        sys.exit(0 if success else 1)
     elif args.command == 'compare':
         success = run_compare(args)
         sys.exit(0 if success else 1)

@@ -48,6 +48,8 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
 
 ## 测试用例定义
 
+> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。
+
 ### JSON 格式
 
 ```json
@@ -55,15 +57,19 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
     "test_cases": [
         {
             "name": "测试名称",
-            "command": "echo",
-            "args": ["Hello"],
-            "timeout": 60,
-            "retry_count": 0,
-            "resources": {
-                "cpu_cores": 2,
-                "estimated_time": 300,
-                "min_memory_mb": 1024,
-                "priority": 5
+            "execution": {
+                "command": "echo",
+                "args": ["Hello"],
+                "timeout": 60,
+                "retry_count": 0
+            },
+            "scheduling": {
+                "resources": {
+                    "cpu_cores": 2,
+                    "estimated_time": 300,
+                    "min_memory_mb": 1024,
+                    "priority": 5
+                }
             },
             "expected": {
                 "return_code": 0,
@@ -80,8 +86,10 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
         },
         {
             "name": "已知失败的测试",
-            "command": "echo",
-            "args": ["should_fail"],
+            "execution": {
+                "command": "echo",
+                "args": ["should_fail"]
+            },
             "expected_failure": true,
             "xfail_reason": "Bug #42 尚未修复",
             "expected": { "return_code": 1 }
@@ -95,15 +103,17 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
 ```yaml
 test_cases:
   - name: 测试名称
-    command: echo
-    args: ["Hello"]
-    timeout: 60
-    retry_count: 0
-    resources:
-      cpu_cores: 2
-      estimated_time: 300
-      min_memory_mb: 1024
-      priority: 5
+    execution:
+      command: echo
+      args: ["Hello"]
+      timeout: 60
+      retry_count: 0
+    scheduling:
+      resources:
+        cpu_cores: 2
+        estimated_time: 300
+        min_memory_mb: 1024
+        priority: 5
     expected:
       return_code: 0
       output_contains:
@@ -115,8 +125,9 @@ test_cases:
           type: text
 
   - name: 已知失败的测试
-    command: echo
-    args: ["should_fail"]
+    execution:
+      command: echo
+      args: ["should_fail"]
     expected_failure: true
     xfail_reason: "Bug #42 尚未修复"
     xfail_quiet: true
@@ -138,8 +149,10 @@ test_cases:
 ```json
 {
     "name": "已知Bug",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
     "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
     "expected": { "return_code": 1 }
@@ -151,8 +164,10 @@ test_cases:
 ```json
 {
     "name": "已知Bug（静默模式）",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
     "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
     "xfail_quiet": true,
@@ -173,12 +188,13 @@ test_cases:
 ```json
 {
     "test_cases": [
-        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
-        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
-        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        { "name": "A", "execution": { "command": "python", "args": ["gen_a.py"] }, "expected": {"return_code": 0} },
+        { "name": "B", "execution": { "command": "python", "args": ["gen_b.py"] }, "expected": {"return_code": 0} },
+        { "name": "C", "execution": { "command": "python", "args": ["gen_c.py"] }, "expected": {"return_code": 0} },
         {
-            "name": "D", "command": "python", "args": ["merge.py"],
-            "depends_on": ["A", "B", "C"],
+            "name": "D",
+            "execution": { "command": "python", "args": ["merge.py"] },
+            "scheduling": { "depends_on": ["A", "B", "C"] },
             "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
         }
     ]
@@ -190,24 +206,29 @@ test_cases:
 ```yaml
 test_cases:
   - name: A
-    command: python
-    args: ["gen_a.py"]
+    execution:
+      command: python
+      args: ["gen_a.py"]
     expected: { return_code: 0 }
 
   - name: B
-    command: python
-    args: ["gen_b.py"]
+    execution:
+      command: python
+      args: ["gen_b.py"]
     expected: { return_code: 0 }
 
   - name: C
-    command: python
-    args: ["gen_c.py"]
+    execution:
+      command: python
+      args: ["gen_c.py"]
     expected: { return_code: 0 }
 
   - name: D
-    command: python
-    args: ["merge.py"]
-    depends_on: [A, B, C]
+    execution:
+      command: python
+      args: ["merge.py"]
+    scheduling:
+      depends_on: [A, B, C]
     expected:
       return_code: 0
       compare_files:
@@ -237,18 +258,18 @@ test_cases:
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `name` | 是 | 测试用例名称 |
-| `command` | 是 | 要执行的命令（支持带参数的命令字符串，如 `python ./run.py`，框架会自动拆分并解析路径） |
-| `args` | 否 | 命令参数列表 |
+| `execution.command` | 是 | 要执行的命令（支持带参数的命令字符串，如 `python ./run.py`，框架会自动拆分并解析路径） |
+| `execution.args` | 否 | 命令参数列表 |
 | `description` | 否 | 测试用例描述 |
-| `timeout` | 否 | 超时秒数，默认 3600，设 `null` 无限制 |
-| `retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step。重试后通过会在结果中标记 `flaky: true` |
+| `execution.timeout` | 否 | 超时秒数，默认 3600，设 `null` 无限制 |
+| `execution.retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step。重试后通过会在结果中标记 `flaky: true` |
 | `tags` | 否 | 标签列表，用于批量过滤（如 `["smoke", "fast"]`） |
-| `resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
+| `scheduling.resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
 | `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
 | `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
-| `depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
-| `env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
+| `scheduling.depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
+| `execution.env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），定义在 `execution` 内，仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
@@ -256,18 +277,20 @@ test_cases:
 
 ## Case 级环境变量（env）
 
-通过 case 下与 `name` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。
+通过 `execution` 内与 `command`、`steps` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。
 
 ### JSON
 
 ```json
 {
     "name": "case 级环境变量示例",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "env": {
-        "MYAPP_SCALE": "1.0",
-        "OMP_NUM_THREADS": "8"
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "env": {
+            "MYAPP_SCALE": "1.0",
+            "OMP_NUM_THREADS": "8"
+        }
     },
     "expected": { "return_code": 0 }
 }
@@ -277,25 +300,28 @@ test_cases:
 
 ```yaml
 - name: case 级环境变量示例
-  command: solver
-  args: ["-i", "input.dat"]
-  env:
-    MYAPP_SCALE: "1.0"
+  execution:
+    command: solver
+    args: ["-i", "input.dat"]
+    env:
+      MYAPP_SCALE: "1.0"
   expected: { return_code: 0 }
 ```
 
 ### 序列模式
 
-`env` 定义在 case 级（与 `steps` 同级），对该 case 的**所有 step** 生效：
+`env` 定义在 `execution` 内（与 `steps` 同级），对该 case 的**所有 step** 生效：
 
 ```json
 {
     "name": "多步骤+环境变量",
-    "env": { "MYAPP_SCALE": "1.0" },
-    "steps": [
-        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
-        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
-    ]
+    "execution": {
+        "env": { "MYAPP_SCALE": "1.0" },
+        "steps": [
+            { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+            { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+        ]
+    }
 }
 ```
 
@@ -365,8 +391,10 @@ test_cases:
     "test_cases": [
         {
             "name": "内联测试用例",
-            "command": "echo",
-            "args": ["hello"],
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "expected": { "return_code": 0 }
         },
         { "import": "cases/text_tests.json", "tags": ["text"] },
@@ -387,15 +415,19 @@ test_cases:
     "test_cases": [
         {
             "name": "text_identical",
-            "command": "python",
-            "args": ["./compare_text.py"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py"]
+            },
             "expected": { "return_code": 0 },
             "tags": ["text"]
         },
         {
             "name": "text_diff",
-            "command": "python",
-            "args": ["./compare_text.py", "--mode", "diff"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py", "--mode", "diff"]
+            },
             "expected": { "return_code": 1 },
             "tags": ["text"]
         }
@@ -482,8 +514,10 @@ test_cases:
     {
       "name": "_base_echo",
       "abstract": true,
-      "command": "echo",
-      "args": ["{msg}"],
+      "execution": {
+        "command": "echo",
+        "args": ["{msg}"]
+      },
       "expected": {
         "output_contains": ["{msg}"]
       },
@@ -506,7 +540,7 @@ test_cases:
 }
 ```
 
-展开后 `test_hello` 继承基类的全部字段（`command`、`args`、`expected`），占位符 `{msg}` 被 `variables.msg` 替换为 `"hello"`。`test_world` 覆盖 `variables.msg` 为 `"world"`。
+展开后 `test_hello` 继承基类的全部字段（`execution.command`、`execution.args`、`expected`），占位符 `{msg}` 被 `variables.msg` 替换为 `"hello"`。`test_world` 覆盖 `variables.msg` 为 `"world"`。
 
 ### 合并规则
 
@@ -543,7 +577,7 @@ test_cases:
 ```json
 {
   "name": "_A", "abstract": true,
-  "command": "python", "args": ["-c"], "expected": {},
+  "execution": { "command": "python", "args": ["-c"] }, "expected": {},
   "variables": {"a": "1"}
 }
 {
@@ -554,7 +588,7 @@ test_cases:
 {
   "name": "C", "extends": "_B",
   "variables": {"c": "3"},
-  "args": ["print('{a} {b} {c}')"]
+  "execution": { "args": ["print('{a} {b} {c}')"] }
 }
 ```
 
@@ -611,7 +645,7 @@ symtest validate test_cases.json --output-format json
 | 检查项 | 说明 |
 |---|---|
 | 语法正确性 | JSON/YAML 格式是否合法（加载时隐式检查） |
-| 必填字段 | 每条用例是否包含 `name`、`command`、`args`、`expected`（序列模式检查每个 step） |
+| 必填字段 | 每条用例是否包含 `name`、`execution.command`、`execution.args`、`expected`（序列模式检查每个 step） |
 | import 引用 | 被引用的子文件是否存在 |
 | 循环引用 | import 链中是否存在 A→B→A 的循环 |
 
@@ -1115,8 +1149,10 @@ JSON：
     "test_cases": [
         {
             "name": "求解器测试",
-            "command": "{solver}",
-            "args": ["--input", "{model}", "--output", "{output}"],
+            "execution": {
+                "command": "{solver}",
+                "args": ["--input", "{model}", "--output", "{output}"]
+            },
             "expected": { "return_code": 0 }
         }
     ]
@@ -1128,8 +1164,9 @@ YAML：
 ```yaml
 test_cases:
   - name: 求解器测试
-    command: "{solver}"
-    args: ["--input", "{model}", "--output", "{output}"]
+    execution:
+      command: "{solver}"
+      args: ["--input", "{model}", "--output", "{output}"]
     expected:
       return_code: 0
 ```
@@ -1208,15 +1245,19 @@ JSON：
     "test_cases": [
         {
             "name": "快速测试",
-            "command": "echo",
-            "args": ["hello"],
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "tags": ["smoke", "fast"],
             "expected": { "return_code": 0 }
         },
         {
             "name": "完整回归测试",
-            "command": "python",
-            "args": ["long_test.py"],
+            "execution": {
+                "command": "python",
+                "args": ["long_test.py"]
+            },
             "tags": ["regression", "slow"],
             "expected": { "return_code": 0 }
         }
@@ -1229,8 +1270,9 @@ YAML：
 ```yaml
 test_cases:
   - name: 快速测试
-    command: echo
-    args: ["hello"]
+    execution:
+      command: echo
+      args: ["hello"]
     tags: ["smoke", "fast"]
     expected:
       return_code: 0
@@ -1360,19 +1402,21 @@ runner.run_tests_sequential()
     "test_cases": [
         {
             "name": "多步骤测试",
-            "steps": [
-                {
-                    "command": "echo",
-                    "args": ["step1"],
-                    "expected": { "return_code": 0 }
-                },
-                {
-                    "command": "echo",
-                    "args": ["step2"],
-                    "expected": { "return_code": 0 },
-                    "retry_count": 2
-                }
-            ]
+            "execution": {
+                "steps": [
+                    {
+                        "command": "echo",
+                        "args": ["step1"],
+                        "expected": { "return_code": 0 }
+                    },
+                    {
+                        "command": "echo",
+                        "args": ["step2"],
+                        "expected": { "return_code": 0 },
+                        "retry_count": 2
+                    }
+                ]
+            }
         }
     ]
 }
@@ -1383,15 +1427,16 @@ runner.run_tests_sequential()
 ```yaml
 test_cases:
   - name: 多步骤测试
-    steps:
-      - command: echo
-        args: ["step1"]
-        expected:
-          return_code: 0
-      - command: echo
-        args: ["step2"]
-        expected:
-          return_code: 0
+    execution:
+      steps:
+        - command: echo
+          args: ["step1"]
+          expected:
+            return_code: 0
+        - command: echo
+          args: ["step2"]
+          expected:
+            return_code: 0
 ```
 
 每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。
@@ -1411,18 +1456,20 @@ test_cases:
 ```json
 {
     "name": "多步骤+文件对比",
-    "steps": [
-        {
-            "command": "python",
-            "args": ["./generate.py", "output.csv"],
-            "expected": { "return_code": 0 }
-        },
-        {
-            "command": "python",
-            "args": ["./process.py", "output.csv"],
-            "expected": { "return_code": 0, "output_contains": ["Done"] }
-        }
-    ],
+    "execution": {
+        "steps": [
+            {
+                "command": "python",
+                "args": ["./generate.py", "output.csv"],
+                "expected": { "return_code": 0 }
+            },
+            {
+                "command": "python",
+                "args": ["./process.py", "output.csv"],
+                "expected": { "return_code": 0, "output_contains": ["Done"] }
+            }
+        ]
+    },
     "expected": {
         "compare_files": [
             {
@@ -1442,19 +1489,23 @@ test_cases:
 
 ## 资源感知调度
 
-仅线程模式生效。通过 `resources` 字段配置，框架自动管理 CPU 核心分配。
+仅线程模式生效。通过 `scheduling.resources` 字段配置，框架自动管理 CPU 核心分配。
 
 ```json
 {
     "name": "Heavy_Simulation",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "timeout": 36000,
-    "resources": {
-        "cpu_cores": 4,
-        "estimated_time": 18000,
-        "min_memory_mb": 16000,
-        "priority": 10
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "timeout": 36000
+    },
+    "scheduling": {
+        "resources": {
+            "cpu_cores": 4,
+            "estimated_time": 18000,
+            "min_memory_mb": 16000,
+            "priority": 10
+        }
     },
     "expected": { "return_code": 0 }
 }

@@ -1,0 +1,18 @@
+{
+  "setup": {
+    "environment_variables": {
+      "SUB_KEY": "from_sub",
+      "OVERRIDE_ME": "from_sub"
+    }
+  },
+  "test_cases": [
+    {
+      "name": "sub_case",
+      "command": "echo",
+      "args": ["test"],
+      "expected": {
+        "return_code": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "setup": {
+    "environment_variables": {
+      "TEST_FRAMEWORK_ENV": "test",
+      "DEBUG_MODE": "true",
+      "API_ENDPOINT": "http://localhost:8080/api",
+      "MAX_RETRIES": "3"
+    }
+  },
+  "test_cases": [
+    {
+      "name": "Test environment variable access",
+      "command": "python",
+      "args": ["-c", "import os; print(f'Framework env: {os.environ.get(\"TEST_FRAMEWORK_ENV\", \"NOT_SET\")}')"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Framework env: test"]
+      },
+      "description": "Verify environment variables are accessible in test commands"
+    },
+    {
+      "name": "Test multiple environment variables",
+      "command": "python", 
+      "args": ["-c", "import os; print(f'Debug: {os.environ.get(\"DEBUG_MODE\")}, API: {os.environ.get(\"API_ENDPOINT\")}, Retries: {os.environ.get(\"MAX_RETRIES\")}')"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Debug: true", "API: http://localhost:8080/api", "Retries: 3"]
+      },
+      "description": "Test access to multiple environment variables"
+    },
+    {
+      "name": "Test conditional logic with environment",
+      "command": "python",
+      "args": ["-c", "import os; print('Debug enabled' if os.environ.get('DEBUG_MODE') == 'true' else 'Debug disabled')"],
+      "expected": {
+        "return_code": 0,
+        "output_contains": ["Debug enabled"]
+      },
+      "description": "Test conditional execution based on environment variables"
+    }
+  ]
+} 

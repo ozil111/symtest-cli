@@ -1,0 +1,13 @@
+{
+  "setup": {
+    "environment_variables": {
+      "BASE": "from_main",
+      "OVERRIDE_ME": "from_main"
+    }
+  },
+  "test_cases": [
+    {
+      "import": "setup_sub.json"
+    }
+  ]
+}

@@ -10,10 +10,11 @@ import logging
 from typing import Optional, Dict, Any, Callable, BinaryIO, List
 
 from ..core.parallel_runner import ParallelRunner, AtomicSemaphore
-from ..core.config_loader import parse_test_cases, execute_sequence
+from ..core.config_loader import parse_test_cases
+from ..core.orchestration.sequence import execute_sequence
 from ..config.inheritance_expander import resolve_inheritance, apply_variables
 from ..core.test_case import TestCase
-from ..core.execution import execute_single_test_case
+from ..core.orchestration.single import execute_single_test_case
 from ..core.types import TestCaseData
 from ..utils.path_resolver import PathResolver
 from ..config.import_expander import expand_imports
@@ -300,10 +301,10 @@ class ParallelConfigRunner(ParallelRunner):
         if case.steps:
             result = self._run_sequence(case)
         else:
-            case_data = case.to_execution_dict()
+            spec = case.execution
 
             command_preview = (
-                f"{case_data['command']} {' '.join(case_data['args'])}".strip()
+                f"{spec.command} {' '.join(spec.args)}".strip()
             )
             if self.execution_mode != "thread" or self.cpu_semaphore is None:
                 logger.info(
@@ -311,9 +312,10 @@ class ParallelConfigRunner(ParallelRunner):
                 )
 
             result = execute_single_test_case(
-                case_data,
+                spec,
                 str(self.workspace) if self.workspace else None,
                 env=task_env,
+                expectation=case.expected,
                 update_baseline=self.update_baseline,
                 error_analysis=self.error_analysis,
             )

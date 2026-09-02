@@ -5,9 +5,10 @@ import tempfile
 
 import pytest
 
-from symtest.core.assertions import Assertions, _detect_file_type
-from symtest.core.execution import validate_result, _dispatch_file_compare
-from symtest.core.assertions import Assertions as AS  # alias for dispatch tests
+from symtest.core.validation.assertions import Assertions, _detect_file_type
+from symtest.core.validation.assertions import Assertions as AS  # alias for dispatch tests
+from symtest.core.validation.validator import validate_result, _dispatch_file_compare
+from symtest.core.execution.result import ExecutionResult
 
 
 # ---------------------------------------------------------------------------
@@ -146,28 +147,27 @@ def test_compare_files_passes_kwargs_to_comparator():
 # ---------------------------------------------------------------------------
 
 def _mini_result(status="failed", output="", return_code=0, **kw):
-    """Minimal TestResultData."""
-    return {
-        "name": kw.get("name", "test"),
-        "status": status,
-        "message": "",
-        "command": "cmd",
-        "output": output,
-        "return_code": return_code,
-        "duration": 0.0,
-    }
+    """Minimal ExecutionResult."""
+    return ExecutionResult(
+        name=kw.get("name", "test"),
+        command="cmd",
+        output=output,
+        return_code=return_code,
+        duration=0.0,
+    )
 
 
 def test_validate_result_compare_files_passes():
     with tempfile.TemporaryDirectory() as d:
         a, b = _write_two(d, "out.txt", "ref.txt", "content\n")
-        result = validate_result(
+        vr = validate_result(
             {"compare_files": [{"actual": "out.txt", "baseline": "ref.txt", "type": "text"}]},
             _mini_result(),
             workspace=d,
         )
-        # no exception → pass; returns per-assertion detail
-        assert result == [
+        # read-only compare → pass; assertion detail carries the structured shape
+        assert vr.passed is True
+        assert vr.assertion_results == [
             {
                 "assertion": "compare_files",
                 "passed": True,
@@ -182,12 +182,14 @@ def test_validate_result_compare_files_passes():
 def test_validate_result_compare_files_fails():
     with tempfile.TemporaryDirectory() as d:
         _write_two(d, "out.txt", "ref.txt", "A\n", "B\n")
-        with pytest.raises(AssertionError, match="File comparison failed"):
-            validate_result(
-                {"compare_files": [{"actual": "out.txt", "baseline": "ref.txt", "type": "text"}]},
-                _mini_result(),
-                workspace=d,
-            )
+        vr = validate_result(
+            {"compare_files": [{"actual": "out.txt", "baseline": "ref.txt", "type": "text"}]},
+            _mini_result(),
+            workspace=d,
+        )
+        assert vr.passed is False
+        assert "File comparison failed" in vr.message
+        assert vr.failure_kind == "file_compare"
 
 
 def test_validate_result_multiple_compare_files_specs():
@@ -195,7 +197,7 @@ def test_validate_result_multiple_compare_files_specs():
         _write_two(d, "a1.txt", "b1.txt", "x\n")
         _write_two(d, "a2.txt", "b2.txt", "y\n")
         # Both pass
-        validate_result(
+        vr = validate_result(
             {
                 "compare_files": [
                     {"actual": "a1.txt", "baseline": "b1.txt", "type": "text"},
@@ -205,23 +207,24 @@ def test_validate_result_multiple_compare_files_specs():
             _mini_result(),
             workspace=d,
         )
+        assert vr.passed is True
 
 
 def test_validate_result_compare_files_fails_on_second():
     with tempfile.TemporaryDirectory() as d:
         _write_two(d, "a1.txt", "b1.txt", "x\n")
         _write_two(d, "a2.txt", "b2.txt", "X\n", "Y\n")
-        with pytest.raises(AssertionError):
-            validate_result(
-                {
-                    "compare_files": [
-                        {"actual": "a1.txt", "baseline": "b1.txt", "type": "text"},
-                        {"actual": "a2.txt", "baseline": "b2.txt", "type": "text"},
-                    ]
-                },
-                _mini_result(),
-                workspace=d,
-            )
+        vr = validate_result(
+            {
+                "compare_files": [
+                    {"actual": "a1.txt", "baseline": "b1.txt", "type": "text"},
+                    {"actual": "a2.txt", "baseline": "b2.txt", "type": "text"},
+                ]
+            },
+            _mini_result(),
+            workspace=d,
+        )
+        assert vr.passed is False
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +233,12 @@ def test_validate_result_compare_files_fails_on_second():
 
 def test_validate_result_no_compare_files_still_works():
     """Old-style expected dict without compare_files must pass unchanged."""
-    result = validate_result(
+    vr = validate_result(
         {"return_code": 0, "output_contains": ["hello"]},
         _mini_result(output="hello world", return_code=0),
     )
-    assert result == [
+    assert vr.passed is True
+    assert vr.assertion_results == [
         {"assertion": "return_code", "passed": True},
         {"assertion": "output_contains", "passed": True, "text": "hello"},
     ]
@@ -244,7 +248,7 @@ def test_validate_result_compare_files_with_existing_assertions():
     """compare_files can coexist with return_code and output_contains."""
     with tempfile.TemporaryDirectory() as d:
         _write_two(d, "out.txt", "ref.txt", "content\n")
-        validate_result(
+        vr = validate_result(
             {
                 "return_code": 0,
                 "output_contains": ["done"],
@@ -255,6 +259,7 @@ def test_validate_result_compare_files_with_existing_assertions():
             _mini_result(output="processing done", return_code=0),
             workspace=d,
         )
+        assert vr.passed is True
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +276,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
         return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
-        "symtest.core.execution.Assertions.compare_files",
+        "symtest.core.validation.assertions.Assertions.compare_files",
         fake_compare_files,
     )
     _dispatch_file_compare(
@@ -293,7 +298,7 @@ def test_dispatch_extracts_fields_and_forwards_kwargs(monkeypatch):
     assert baseline_path == "ref.h5"
     assert file_type == "h5"
     assert workspace == "/ws"
-    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "update_baseline": False, "error_analysis": False}
+    assert kwargs == {"rtol": 1e-5, "atol": 1e-8, "tables": ["/GRID"], "data_filter": ">0", "error_analysis": False}
 
 
 def test_dispatch_omits_type_when_absent(monkeypatch):
@@ -304,7 +309,7 @@ def test_dispatch_omits_type_when_absent(monkeypatch):
         return {"identical": True, "baseline_updated": False}
 
     monkeypatch.setattr(
-        "symtest.core.execution.Assertions.compare_files",
+        "symtest.core.validation.assertions.Assertions.compare_files",
         fake_compare_files,
     )
     _dispatch_file_compare(

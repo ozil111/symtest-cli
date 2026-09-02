@@ -340,8 +340,8 @@ class TestResolveFixtures:
 
         hello = [c for c in result["test_cases"]
                  if c["name"] == "child_echo_hello"][0]
-        assert hello["command"] == "echo"
-        assert hello["args"] == ["{msg}"]
+        assert hello["execution"]["command"] == "echo"
+        assert hello["execution"]["args"] == ["{msg}"]
         assert hello["variables"] == {"msg": "hello"}
         assert hello["expected"] == {"output_contains": ["{msg}"]}
 
@@ -369,8 +369,8 @@ class TestResolveFixtures:
         # expected deep-merged: A (empty) → B output_contains
         assert c["expected"]["output_contains"] == ["step_b"]
         # args from C (overrides A)
-        assert c["args"] == ["print('{a} {b} {c}')"]
-        assert c["command"] == "python"  # from A
+        assert c["execution"]["args"] == ["print('{a} {b} {c}')"]
+        assert c["execution"]["command"] == "python"  # from A
 
 
 # ---------------------------------------------------------------------------
