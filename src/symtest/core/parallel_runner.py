@@ -95,10 +95,11 @@ class ParallelRunner(BaseRunner):
             **kwargs: 透传给 BaseRunner 的额外参数
                 (test_case_filter, test_case_tag_filter, history_dir, regression_threshold)
         """
+        error_analysis_all = kwargs.get('error_analysis_all', False)
         super().__init__(config_file, workspace, **kwargs)
         self.max_workers = max_workers
         self.execution_mode = execution_mode
-        self.error_analysis = error_analysis
+        self.error_analysis = error_analysis or error_analysis_all
         self.lock = threading.Lock()  # 用于线程安全的结果更新
         
     def run_tests(self) -> bool:
@@ -178,35 +179,17 @@ class ParallelRunner(BaseRunner):
         with executor_class(max_workers=self.max_workers) as executor:
             # 提交所有测试任务
             if self.execution_mode == "process":
-                # 进程模式：使用独立的工作器函数
+                # 进程模式：使用独立的工作器函数（v2 wire dict，含 env）
                 future_to_case = {
                     executor.submit(
-                        run_test_in_process, 
-                        i, 
-                        {
-                            "name": case.name,
-                            "command": case.command,
-                            "args": case.args,
-                            "expected": case.expected,
-                            "timeout": case.timeout,
-                            "resources": case.resources,
-                            "retry_count": case.retry_count,
-                            "steps": [
-                                {
-                                    "command": s.command,
-                                    "args": s.args,
-                                    "expected": s.expected,
-                                    "timeout": s.timeout,
-                                    "retry_count": s.retry_count,
-                                }
-                                for s in case.steps
-                            ] if case.steps else None,
-                        },
+                        run_test_in_process,
+                        i,
+                        case.to_dict(),
                         str(self.workspace) if self.workspace else None,
                         update_baseline=self.update_baseline,
                         error_analysis=self.error_analysis,
                         resume=self.resume,
-                    ): (i, case) 
+                    ): (i, case)
                     for i, case in enumerate(self.test_cases, 1)
                 }
             else:
@@ -285,28 +268,11 @@ class ParallelRunner(BaseRunner):
         def _submit(case: TestCase) -> None:
             idx = name_to_index.get(case.name, 0)
             if self.execution_mode == "process":
+                # v2 wire dict（case.to_dict()），process_worker 负责重建对象
                 future = executor.submit(
                     run_test_in_process,
                     idx,
-                    {
-                        "name": case.name,
-                        "command": case.command,
-                        "args": case.args,
-                        "expected": case.expected,
-                        "timeout": case.timeout,
-                        "resources": case.resources,
-                        "retry_count": case.retry_count,
-                        "steps": [
-                            {
-                                "command": s.command,
-                                "args": s.args,
-                                "expected": s.expected,
-                                "timeout": s.timeout,
-                                "retry_count": s.retry_count,
-                            }
-                            for s in case.steps
-                        ] if case.steps else None,
-                    },
+                    case.to_dict(),
                     str(self.workspace) if self.workspace else None,
                     update_baseline=self.update_baseline,
                     error_analysis=self.error_analysis,

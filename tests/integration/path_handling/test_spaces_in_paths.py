@@ -12,38 +12,41 @@ def build_config(temp_dir):
         "test_cases": [
             {
                 "name": "简单命令",
-                "command": "echo hello",
-                "args": [],
+                "execution": {"command": "echo hello", "args": []},
                 "expected": {"return_code": 0, "output_contains": ["hello"]},
             },
             {
                 "name": "带引号的Windows路径",
-                "command": '"C:\\Program Files (x86)\\Python\\python.exe" --version',
-                "args": [],
+                "execution": {
+                    "command": '"C:\\Program Files (x86)\\Python\\python.exe" --version',
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
             },
             {
                 "name": "不带引号的Windows路径",
-                "command": "C:\\Program Files (x86)\\Python\\python.exe --version",
-                "args": [],
+                "execution": {
+                    "command": "C:\\Program Files (x86)\\Python\\python.exe --version",
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
             },
             {
                 "name": "相对路径脚本",
-                "command": "python script.py",
-                "args": ["--verbose"],
+                "execution": {"command": "python script.py", "args": ["--verbose"]},
                 "expected": {"return_code": 0},
             },
             {
                 "name": "复杂命令带参数",
-                "command": "node app.js",
-                "args": ["--port", "3000", "--env", "development"],
+                "execution": {
+                    "command": "node app.js",
+                    "args": ["--port", "3000", "--env", "development"],
+                },
                 "expected": {"return_code": 0},
             },
             {
                 "name": "带空格的Unix路径",
-                "command": '"/usr/local/bin/my app" --help',
-                "args": [],
+                "execution": {"command": '"/usr/local/bin/my app" --help', "args": []},
                 "expected": {"return_code": 0},
             },
         ]
@@ -99,8 +102,10 @@ def test_runner_executes_script_argument_with_spaces(tmp_path):
         "test_cases": [
             {
                 "name": "script path with spaces",
-                "command": f'"{sys.executable}"',
-                "args": [str(script_path.relative_to(tmp_path)), "payload value"],
+                "execution": {
+                    "command": f'"{sys.executable}"',
+                    "args": [str(script_path.relative_to(tmp_path)), "payload value"],
+                },
                 "expected": {
                     "return_code": 0,
                     "output_contains": ["script-path-ok", "payload value"],

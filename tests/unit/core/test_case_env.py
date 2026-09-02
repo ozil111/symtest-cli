@@ -11,11 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from symtest.core.config_loader import (
-    parse_test_cases,
-    execute_sequence,
-)
-from symtest.core.execution import execute_single_test_case
+from symtest.core.config_loader import parse_test_cases
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.orchestration.single import execute_single_test_case
+from symtest.core.test_case import ExecutionSpec, TestCaseStep
 
 
 # ---------------------------------------------------------------------------
@@ -30,10 +29,12 @@ class TestParseEnv:
             "test_cases": [
                 {
                     "name": "t",
-                    "command": "solver",
-                    "args": ["-i", "in.dat"],
+                    "execution": {
+                        "command": "solver",
+                        "args": ["-i", "in.dat"],
+                        "env": {"UEL_SYSID_SCALE": "1.0", "OMP_NUM_THREADS": "8"},
+                    },
                     "expected": {"return_code": 0},
-                    "env": {"UEL_SYSID_SCALE": "1.0", "OMP_NUM_THREADS": "8"},
                 }
             ]
         }
@@ -45,10 +46,12 @@ class TestParseEnv:
             "test_cases": [
                 {
                     "name": "seq",
-                    "env": {"UEL_SYSID_SCALE": "2.0"},
-                    "steps": [
-                        {"command": "python", "args": ["s1.py"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "env": {"UEL_SYSID_SCALE": "2.0"},
+                        "steps": [
+                            {"command": "python", "args": ["s1.py"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -58,7 +61,11 @@ class TestParseEnv:
     def test_env_absent_defaults_to_empty(self):
         config = {
             "test_cases": [
-                {"name": "t", "command": "solver", "expected": {"return_code": 0}},
+                {
+                    "name": "t",
+                    "execution": {"command": "solver", "args": []},
+                    "expected": {"return_code": 0},
+                },
             ]
         }
         cases = parse_test_cases(config)
@@ -69,28 +76,36 @@ class TestParseEnv:
             "test_cases": [
                 {
                     "name": "t",
-                    "command": "solver",
+                    "execution": {
+                        "command": "solver",
+                        "args": [],
+                        "env": {"NPROC": 4, "DEBUG": True},
+                    },
                     "expected": {"return_code": 0},
-                    "env": {"NPROC": 4, "DEBUG": True},
                 }
             ]
         }
         cases = parse_test_cases(config)
         assert cases[0].env == {"NPROC": "4", "DEBUG": "True"}
 
-    def test_env_survives_to_execution_dict(self):
+    def test_env_lives_on_execution_spec(self):
         config = {
             "test_cases": [
                 {
                     "name": "t",
-                    "command": "solver",
+                    "execution": {
+                        "command": "solver",
+                        "args": [],
+                        "env": {"A": "1"},
+                    },
                     "expected": {"return_code": 0},
-                    "env": {"A": "1"},
                 }
             ]
         }
         cases = parse_test_cases(config)
-        assert cases[0].to_execution_dict()["env"] == {"A": "1"}
+        # 1.4：env 属于 ExecutionSpec（case 级 env，作用于所有 step）
+        assert cases[0].execution.env == {"A": "1"}
+        assert cases[0].env == {"A": "1"}
 
 
 # ---------------------------------------------------------------------------
@@ -101,30 +116,30 @@ class TestEnvInjection:
     """``env`` is actually passed to the subprocess."""
 
     def _print_env_case(self, name, env, expected_value):
-        return {
-            "name": name,
-            "command": sys.executable,
-            "args": [
+        spec = ExecutionSpec(
+            name=name,
+            command=sys.executable,
+            args=[
                 "-c",
                 "import os;print(os.environ.get('CASE_ENV_KEY', '<missing>'))",
             ],
-            "expected": {
-                "return_code": 0,
-                "output_contains": [expected_value],
-            },
-            "env": env,
+            env=env,
+        )
+        return spec, {
+            "return_code": 0,
+            "output_contains": [expected_value],
         }
 
     def test_env_is_injected_into_subprocess(self):
-        case = self._print_env_case("t", {"CASE_ENV_KEY": "hello"}, "hello")
-        result = execute_single_test_case(case)
+        spec, expectation = self._print_env_case("t", {"CASE_ENV_KEY": "hello"}, "hello")
+        result = execute_single_test_case(spec, expectation=expectation)
         assert result["status"] == "passed", result.get("message")
         assert "hello" in result["output"]
 
     def test_env_inherits_parent_environment(self):
         """Parent os.environ is still visible when case env is set."""
-        case = self._print_env_case("t", {"CASE_ENV_KEY": "hello"}, "hello")
-        result = execute_single_test_case(case)
+        spec, expectation = self._print_env_case("t", {"CASE_ENV_KEY": "hello"}, "hello")
+        result = execute_single_test_case(spec, expectation=expectation)
         assert result["status"] == "passed", result.get("message")
 
 
@@ -136,18 +151,20 @@ class TestEnvPrecedence:
     """case ``env`` has the highest precedence."""
 
     def test_case_env_overrides_scheduler_injected_env(self):
-        case = {
-            "name": "t",
-            "command": sys.executable,
-            "args": [
+        spec = ExecutionSpec(
+            name="t",
+            command=sys.executable,
+            args=[
                 "-c",
                 "import os;print(os.environ.get('OMP_NUM_THREADS', '<missing>'))",
             ],
-            "expected": {"return_code": 0, "output_contains": ["99"]},
-            "env": {"OMP_NUM_THREADS": "99"},
-        }
+            env={"OMP_NUM_THREADS": "99"},
+        )
+        expectation = {"return_code": 0, "output_contains": ["99"]}
         # Scheduler injects its own OMP_NUM_THREADS via the ``env`` argument.
-        result = execute_single_test_case(case, env={"OMP_NUM_THREADS": "8"})
+        result = execute_single_test_case(
+            spec, env={"OMP_NUM_THREADS": "8"}, expectation=expectation,
+        )
         assert result["status"] == "passed", result.get("message")
         assert "99" in result["output"]
 
@@ -161,16 +178,16 @@ class TestEnvSequence:
 
     def test_env_applied_to_all_steps(self):
         steps = [
-            {
-                "command": sys.executable,
-                "args": ["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
-                "expected": {"return_code": 0, "output_contains": ["S=1.0"]},
-            },
-            {
-                "command": sys.executable,
-                "args": ["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
-                "expected": {"return_code": 0, "output_contains": ["S=1.0"]},
-            },
+            TestCaseStep(
+                command=sys.executable,
+                args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
+                expected={"return_code": 0, "output_contains": ["S=1.0"]},
+            ),
+            TestCaseStep(
+                command=sys.executable,
+                args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
+                expected={"return_code": 0, "output_contains": ["S=1.0"]},
+            ),
         ]
         result = execute_sequence("seq_env", steps, env={"SCALE": "1.0"})
         assert result["status"] == "passed", result.get("message")
@@ -183,7 +200,7 @@ class TestEnvAffectsConfigHash:
         from symtest.core.sequence_state import compute_config_hash
 
         steps = [
-            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+            TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
         ]
         h1 = compute_config_hash(steps, None, {"SCALE": "1.0"})
         h2 = compute_config_hash(steps, None, {"SCALE": "2.0"})

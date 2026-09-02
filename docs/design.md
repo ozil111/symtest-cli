@@ -1,114 +1,57 @@
 # CLI Test Framework 设计文档
 
+> **维护原则（单一事实来源）**：本文档不镜像代码结构——不再维护目录树、类签名、
+> 函数清单、dataclass 字段定义等会随代码漂移的内容。目录结构与 API 以
+> `src/symtest/` 源码及其 docstring 为准，用法示例见 `examples/`。
+> 本文档只承载代码里读不出来的设计信息：架构分层、职责边界、关键流程语义、
+> 扩展契约、设计决策与核心架构宪法。
+
 ## 1. 架构总览
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLI 入口                                 │
-│     symtest run / tui / validate / schema / compare-files       │
-└──────┬──────────┬──────────┬──────────┬──────────┬──────────────┘
-       │          │          │          │          │
-┌──────▼──────┐ ┌▼───────┐ ┌▼───────┐ ┌▼───────┐ ┌▼──────────────┐
-│  TUI 管理   │ │ Runner │ │Config  │ │ File   │ │  Schema 输出   │
-│  ┌────────┐ │ │ 体系   │ │ 验证   │ │Comparator│┌────────────┐ │
-│  │CaseMgr │ │ │┌Base─┐│ │┌──────┐│ │┌Base─┐ ││JSON Schema │ │
-│  │App     │ │ ││Runr ││ ││validate│ ││Comp │ ││ 输出       │ │
-│  │Controller│ │ │├JSON││ ││_config│ ││├Text│ │└────────────┘ │
-│  │Screens │ │ ││Runr ││ │└──────┘│ ││├Json│ │               │
-│  │Widgets │ │ │├YAML││ │         │ ││├Csv │ │               │
-│  └────────┘ │ ││Runr ││ │         │ ││├XML │ │               │
-│             │ │└Paral││ │         │ ││├H5  │ │               │
-└──────┬──────┘ │ │Runr─┼─┘         │ ││├Bin │ │               │
-       │        │ │├P-JS│           │ ││├Scpt│ │               │
-       │        │ ││OnRnr│          │ │└────┘ │               │
-       │        │ │└P-YA│           │ │Factory│               │
-       │        │ │MLRnr│           │ │+ 插件 │               │
-       │        │ └─────┘           │ └───────┘               │
-       │        └───────────────────┘                         │
-       │                  │                                   │
-┌──────▼──────────────────▼───────────────────────────────────┐
-│                       Core 层                                │
-│  TestCase │ Assertions │ ConfigLoader │ Execution │ Setup    │
-│  ParallelRunner │ HistoryStore │ LastRunStore │ SequenceState│
-│  PathResolver │ ReportGenerator │ JUnitXMLWriter            │
-└─────────────────────────────────────────────────────────────┘
-       │
-┌──────▼──────────────────────────────────────────────────────┐
-│                    Config 管线                                │
-│  raw JSON/YAML → expand_imports → resolve_inheritance        │
-│  → apply_variables → substitute_placeholders → parse_test_cases│
+┌─────────────────────────────────────────────────────────────┐
+│  CLI 入口层    symtest run / tui / validate / schema /       │
+│                compare-files（+ TUI 交互界面）                │
+└───────────────────────────┬─────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  业务层        Runners（顺序 / 并行 / DAG / 资源感知）        │
+│                File Comparators（多类型 + 插件）             │
+└───────────────────────────┬─────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  配置管线      raw JSON/YAML → expand_imports                │
+│                → resolve_inheritance → apply_variables       │
+│                → substitute_placeholders → parse_test_cases  │
+└───────────────────────────┬─────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Core 层       TestCase 模型 · 断言引擎 · 单测试执行          │
+│                Runner 基类 · Setup 插件 · .symtest 状态存储   │
+│                路径解析 · 报告生成 · JUnit XML                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 框架分为四层：**CLI 入口层**（含 TUI）、**Runner / Comparator 业务层**、**Config 管线层**、**Core 基础层**。
 
-## 2. 模块职责
+层与层不是自由组合：跨层数据流与依赖方向受 §10「核心架构宪法」约束，
+新增 feature 请先对照宪法确定归属。
 
-### 2.1 目录结构
+## 2. 模块地图
 
-```
-src/symtest/
-├── __init__.py                  # 包入口，导出公共 API
-├── cli.py                       # symtest 命令入口（6 个子命令）
-├── logging_config.py            # 统一日志配置
-├── core/                        # 核心抽象与基础组件
-│   ├── base_runner.py           # BaseRunner 抽象基类
-│   ├── parallel_runner.py       # ParallelRunner 并行基类 + AtomicSemaphore
-│   ├── config_loader.py         # 统一配置解析 + 序列执行
-│   ├── execution.py             # 单测试执行 + 重试 + 文件比较断言
-│   ├── process_worker.py        # 多进程 worker
-│   ├── assertions.py            # 断言引擎（含 compare_files）
-│   ├── setup.py                 # Setup 插件体系
-│   ├── test_case.py             # TestCase / TestCaseStep 数据类
-│   ├── history_store.py         # .symtest 历史记录存储
-│   ├── last_run_store.py        # --last-failed 状态存储
-│   ├── sequence_state.py        # --resume 步进断点续跑
-│   └── types.py                 # TypedDict 类型定义
-├── config/                      # 配置管线
-│   ├── config_io.py             # load_config / save_config / validate_config
-│   ├── config_schema.py         # JSON Schema（draft 2020-12）
-│   ├── import_expander.py       # import 引用递归展开
-│   └── inheritance_expander.py  # extends 继承 + 变量替换
-├── runners/                     # 具体运行器
-│   ├── config_runner.py         # ConfigRunner（通用顺序运行器）
-│   ├── parallel_config_runner.py# ParallelConfigRunner（通用并行运行器）
-│   ├── json_runner.py           # JSONRunner（薄封装）
-│   ├── yaml_runner.py           # YAMLRunner（薄封装）
-│   ├── parallel_json_runner.py  # ParallelJSONRunner（薄封装）
-│   └── parallel_yaml_runner.py  # ParallelYAMLRunner（薄封装）
-├── file_comparator/             # 文件比较子系统
-│   ├── base_comparator.py       # BaseComparator 抽象基类
-│   ├── result.py                # ComparisonResult / Difference
-│   ├── factory.py               # ComparatorFactory 工厂 + 插件发现
-│   ├── text_comparator.py       # 文本比较
-│   ├── json_comparator.py       # JSON 比较
-│   ├── csv_comparator.py        # CSV 比较
-│   ├── xml_comparator.py        # XML 比较
-│   ├── binary_comparator.py     # 二进制比较
-│   ├── h5_comparator.py         # HDF5 比较
-│   ├── script_comparator.py     # 外部脚本比较
-│   └── comparators/             # 空目录，用于 workspace 插件
-├── commands/                    # CLI 子命令
-│   └── compare.py               # compare-files 入口
-├── utils/                       # 工具模块
-│   ├── path_resolver.py         # 路径解析
-│   ├── report_generator.py      # 报告生成
-│   └── junit_xml_writer.py      # JUnit XML 报告
-└── tui/                         # Textual 终端 UI
-    ├── app.py                   # CaseManagerApp + run_tui()
-    ├── controllers/
-    │   └── case_controller.py   # CaseController（CRUD + 搜索 + 运行）
-    ├── screens/
-    │   ├── case_list.py         # CaseListScreen（主界面）
-    │   └── case_editor.py       # CaseEditorScreen（编辑表单）
-    └── widgets/
-        ├── case_table.py        # CaseTable（DataTable 封装）
-        ├── search_bar.py        # SearchBar（多模式搜索）
-        ├── expected_editor.py   # ExpectedEditor（expected 编辑）
-        └── steps_editor.py      # StepsEditor（序列步骤编辑）
-```
+以包为单位的职责划分（文件级明细与公开 API 以源码为准）：
 
-### 2.2 入口点
+| 包 | 职责 |
+|---|---|
+| `cli.py` / `commands/` | 子命令入口、参数装配与日志激活 |
+| `core/` | TestCase 数据模型、断言引擎、单测试执行、Runner 基类（顺序 / 并行 / DAG）、`.symtest` 状态存储、Setup 插件体系 |
+| `config/` | 配置 IO、JSON Schema 校验（draft 2020-12）、import 展开、extends 继承、变量与占位符替换 |
+| `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
+| `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
+| `utils/` | 路径解析、报告生成、JUnit XML 输出 |
+| `tui/` | Textual 交互式用例管理（详见 §7） |
+
+### 2.1 入口点
 
 | 命令 | 映射 |
 |---|---|
@@ -143,35 +86,18 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 
 ### 3.1 Import 展开 (`import_expander.py`)
 
-支持主配置文件通过 `"import"` 引用子配置文件：
-
-```json
-{
-  "test_cases": [
-    { "import": "cases/text_tests.json", "tags": ["text", "fast"] },
-    { "import": "cases/json_tests.yaml" },
-    { "name": "inline_case", "command": "echo", ... }
-  ]
-}
-```
+主配置文件通过 `"import"` 引用子配置文件：
 
 - 递归展开所有 import，内联到主配置中
-- import 级 tags 注入到子文件的每个 case
+- import 级 tags 注入到被引文件的每个 case
 - setup 深度合并
 - 循环引用检测
 
+配置形态与用法示例见 `examples/`。
+
 ### 3.2 继承展开 (`inheritance_expander.py`)
 
-支持 `extends` 字段实现用例模板继承：
-
-```json
-{
-  "test_cases": [
-    { "name": "_base", "abstract": true, "timeout": 3600, "expected": {"return_code": 0} },
-    { "name": "my_test", "extends": "_base", "command": "solver", ... }
-  ]
-}
-```
+`extends` 字段实现用例模板继承：
 
 - 深度合并（dict）/ 整体替换（list）策略
 - `abstract: true` 的模板不参与执行
@@ -185,620 +111,100 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 - Error 级（影响 valid）：JSON/YAML 语法、必填字段、import 目标存在性、循环引用、extends 目标存在性、循环继承
 - Warning 级（不影响 valid）：命令可执行性（PATH 查找）、`compare_files` baseline 文件存在性
 
-## 4. 核心类设计
+## 4. 执行语义
 
-### 4.1 Runner 继承体系
+> 本章只记载跨模块的行为语义约定；类属性、方法签名与默认值以源码为准。
 
-```
-BaseRunner (ABC)
-├── ConfigRunner              # 通用顺序运行器（可注入 config_loader）
-│   ├── JSONRunner            # 薄封装（注入 json.load）
-│   └── YAMLRunner            # 薄封装（注入 yaml.safe_load）
-└── ParallelRunner
-    └── ParallelConfigRunner  # 通用并行运行器（可注入 config_loader）
-        ├── ParallelJSONRunner   # 薄封装
-        └── ParallelYAMLRunner   # 薄封装
-```
+### 4.1 Runner 模板与状态映射
 
-JSON/YAML Runner 的区别仅在于配置加载器，通用逻辑统一在 ConfigRunner / ParallelConfigRunner 中。
+- 模板流程固定：`load_test_cases()` → 过滤（名称精确 / tags 交集 / `--last-failed`）→ `setup_all()` → 逐 case 执行 → xfail 状态映射 → 历史与 last-run 更新 → `teardown_all()`（逆序，保证出错也继续清理）
+- JSON/YAML Runner 仅注入不同的 config_loader，通用逻辑统一在顺序 / 并行通用运行器中
+- xfail：`expected_failure=True` 时 `passed → xpassed`（意外通过，计入失败）；任意非 passed → `xfailed`（预期失败，不计入失败）
+- JUnit XML 状态映射：`xfailed → <skipped>`、`xpassed → <failure>`、`timeout → <error>`、`failed` 按消息类型分 `<failure>` / `<error>`
+- 历史：累计平均更新；写入前先按 `regression_threshold` 与旧均值做回归检测；`--update-history` 清除后重记
+- `--last-failed`：每次运行只覆写本次参与执行的用例状态，子集运行不丢失其余用例状态
 
-#### BaseRunner
+### 4.2 测试双模式
 
-所有 Runner 的抽象基类，定义测试执行的模板流程。
+单命令模式（`command + args + expected`）与 steps 序列模式二选一；每个 step 是
+"执行 + 判定"的原子对（command / args / timeout / retry_count / expected）。
+字段全集见 `core/test_case.py` 与 JSON Schema，本文不复述。
 
-```python
-class BaseRunner(ABC):
-    def __init__(self, config_file: str, workspace: Optional[str] = None,
-                 test_case_filter: Optional[List[str]] = None,
-                 test_case_tag_filter: Optional[List[str]] = None,
-                 history_dir: Optional[str] = None,
-                 regression_threshold: float = 1.5,
-                 update_baseline: bool = False,
-                 update_history: bool = False,
-                 error_analysis: bool = False,
-                 last_failed: bool = False,
-                 resume: bool = False,
-                 plugin_dirs: Optional[List[str]] = None)
-```
+### 4.3 并行与资源调度
 
-**模板方法 `run_tests()`**：
+- LPT 策略：长任务先行；启用 history 时优先用 `.symtest` 历史 `avg_duration` 排序，其次才看声明的 `estimated_time`
+- `AtomicSemaphore` 资源池：`safe_capacity = max(1, cpu_count − 2)`；每个 case 按 `cpu_cores` acquire/release
+- 按权重比例分配相对 CPU 核数，并自动注入 `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC`
+- 环境变量优先级：`os.environ` < 调度器注入 < case 级 env（经 subprocess 注入，不改进程全局环境）
+- 线程模式共享内存 + 结果/打印锁；进程模式经 process worker 隔离；可回退顺序执行
 
-```
-load_test_cases() → _apply_test_case_filter() → setup_manager.setup_all()
-    → [run_single_test(case) for case in test_cases]  # 顺序执行
-    → _update_history()  → _save_last_run()
-    → setup_manager.teardown_all()
-```
+### 4.4 DAG 依赖调度语义
 
-**关键属性**：
-
-| 属性 | 类型 | 说明 |
-|---|---|---|
-| `workspace` | `Path` | 工作目录 |
-| `test_cases` | `List[TestCase]` | 加载后的测试用例 |
-| `results` | `Dict` | 运行结果 `{total, passed, failed, xfailed, xpassed, updated, details}` |
-| `assertions` | `Assertions` | 断言引擎实例 |
-| `setup_manager` | `SetupManager` | Setup 管理器 |
-| `history_dir` | `Optional[str]` | `.symtest` 历史记录目录 |
-| `regression_threshold` | `float` | 回归检测阈值倍数，默认 1.5 |
-| `update_baseline` | `bool` | 比较失败时自动更新 baseline |
-| `update_history` | `bool` | 清除历史后重新记录 |
-| `error_analysis` | `bool` | CSV/H5 数值误差统计 |
-| `last_failed` | `bool` | 仅运行上次失败的用例 |
-| `resume` | `bool` | 序列用例从断点恢复 |
-
-**抽象方法**：
-
-| 方法 | 职责 |
-|---|---|
-| `load_test_cases()` | 解析配置文件，填充 `self.test_cases` |
-| `run_single_test(case)` | 执行单个测试，返回结果字典 |
-
-**过滤机制 `_apply_test_case_filter()`**：
-
-支持三种过滤方式（可组合）：
-- `test_case_filter`：按名称精确匹配
-- `test_case_tag_filter`：按 tags 匹配（交集逻辑）
-- `last_failed`：从 `.symtest/last_run.json` 读取上次失败的用例名
-
-**xfail 机制 `_apply_xfail_status()`**：
-
-当 `case.expected_failure=True` 时：
-- `passed` → `xpassed`（意外通过，计入失败）
-- 任意非 passed 状态 → `xfailed`（预期失败，不计入失败）
-
-#### ParallelRunner
-
-继承 BaseRunner，覆写 `run_tests()` 为并行版本。
-
-```python
-class ParallelRunner(BaseRunner):
-    def __init__(self, config_file, workspace=None,
-                 max_workers=None, execution_mode="thread", ...)
-```
-
-- 线程模式：`ThreadPoolExecutor`，共享内存，支持资源调度
-- 进程模式：`ProcessPoolExecutor` + `process_worker.run_test_in_process()`，进程隔离
-- 线程安全：`_results_lock` / `_print_lock` 保护共享状态
-- 回退方法：`run_tests_sequential()`
-
-#### ParallelConfigRunner
-
-在 ParallelRunner 基础上增加**资源感知调度**：
-
-1. 加载用例后按 `estimated_time` 降序排序（LPT 策略）；若启用 `history_dir`，优先使用 `.symtest` 中的历史 `avg_duration` 排序
-2. 创建 `AtomicSemaphore(safe_capacity)` 资源池，`safe_capacity = max(1, cpu_count - 2)`
-3. 每个 case 执行前 acquire `cpu_cores` 个信号量，执行后 release
-4. 自动注入 `OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`NPROC` 环境变量
-5. `_assign_relative_cpu_cores()`：按 `estimated_time` 和 `min_memory_mb` 权重比例分配 CPU 核心数
-
-### 4.2 TestCase 数据模型
-
-```python
-@dataclass
-class TestCaseStep:
-    command: str
-    args: List[str]
-    expected: Dict[str, Any]
-    timeout: Optional[float] = None
-    retry_count: int = 0
-
-@dataclass
-class TestCase:
-    name: str
-    command: str = ""
-    args: List[str] = field(default_factory=list)
-    expected: Dict[str, Any] = field(default_factory=dict)
-    description: str = ""
-    timeout: Optional[float] = None
-    resources: Optional[Dict[str, Any]] = None
-    steps: Optional[List[TestCaseStep]] = None
-    tags: List[str] = field(default_factory=list)
-    retry_count: int = 0
-    expected_failure: bool = False
-    xfail_reason: str = ""
-    xfail_quiet: bool = False
-    depends_on: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
-```
-
-两种模式：
-- **单命令模式**：`command` + `args` + `expected`
-- **步骤序列模式**：`steps` 列表，每个 step 含 `command` + `args` + `expected`
-
-新增字段：
-- `tags`：标签过滤
-- `retry_count`：失败重试次数
-- `expected_failure` / `xfail_reason` / `xfail_quiet`：预期失败标记
-- `depends_on`：用例级依赖声明，支持 DAG 拓扑调度
-- `env`：case 级环境变量，注入该 case（序列模式为所有 step）的子进程，优先级高于 `setup` 与调度器注入
-
-### 4.3 Assertions
-
-```python
-class Assertions:
-    def return_code_equals(self, actual, expected) -> None    # 精确匹配
-    def contains(self, output, expected_text) -> None         # 子串匹配
-    def matches(self, output, expected_patterns) -> None      # 正则匹配
-    def compare_files(self, actual_path, baseline_path, ...)  # 文件比较断言
-```
-
-断言逻辑：返回码精确匹配，`contains` 做子串匹配，`matches` 做正则匹配。所有断言均为可选，未指定的字段不做校验。
-
-`compare_files` 在断言层面调用 ComparatorFactory，使文件比较成为一等断言。
-
-### 4.4 Setup 插件体系
-
-```python
-class BaseSetup(ABC):
-    def __init__(self, config: Dict)
-    @abstractmethod
-    def setup(self) -> None
-    @abstractmethod
-    def teardown(self) -> None
-
-class EnvironmentSetup(BaseSetup):
-    # setup(): 设置环境变量（保存旧值）
-    # teardown(): 恢复环境变量
-
-class SetupManager:
-    def add_setup(self, setup: BaseSetup) -> None
-    def setup_all(self) -> None      # 按添加顺序执行
-    def teardown_all(self) -> None   # 逆序执行，保证即使出错也继续清理
-```
-
-**配置文件集成**：`load_setup_from_config()` 从 JSON/YAML 的 `setup.environment_variables` 字段自动创建 EnvironmentSetup 并注册。
-
-### 4.5 PathResolver
-
-```python
-class PathResolver:
-    SYSTEM_COMMANDS = {'echo', 'python', 'node', 'java', ...}
-
-    def resolve_command(self, command: str) -> str
-    def resolve_path(self, path: str) -> str
-    def split_command(self, cmd_str: str) -> Tuple[str, List[str]]
-```
-
-职责：
-- 系统命令原样返回，非系统命令拼接到 workspace 路径
-- Shell builtin（echo/cd/export 等）自动包装为平台 shell 执行
-- 复合命令（如 `"python ./script.py"`）拆分后分别解析
-
-### 4.6 Execution
-
-`execute_single_test_case(case, workspace)` — 单测试的执行函数：
-
-1. PathResolver 解析命令和参数
-2. `subprocess.run()` 执行，捕获 stdout/stderr/returncode
-3. `validate_result()` 逐项校验（return_code / contains / matches / compare_files）
-4. 支持失败自动重试（`retry_count` 次）
-5. 超时时 kill 整个进程组
-6. 返回结构化结果（含 `next_action_hint` 建议下一步操作）
-
-### 4.7 HistoryStore
-
-`.symtest` 历史记录存储模块，用于持久化每个 case 的运行时间，支持智能调度和回归检测。
-
-```python
-# .symtest 文件格式 (JSON):
-# {
-#   "version": 1,
-#   "cases": {
-#     "case_name": {
-#       "avg_duration": 3.5,    # 累计平均耗时
-#       "last_duration": 3.2,   # 最近一次耗时
-#       "run_count": 5           # 运行次数
-#     }
-#   }
-# }
-```
-
-核心接口：
-
-| 函数 | 说明 |
-|---|---|
-| `ensure_symtest(history_dir)` | 如果目录下没有 `.symtest` 就创建 |
-| `load_history(history_dir)` | 读取 `.symtest` |
-| `save_history(history_dir, history)` | 写回 `.symtest` |
-| `update_case(history, name, duration)` | 累计平均更新 |
-| `reset_cases(history, case_names)` | 清除指定 case 的历史记录 |
-| `check_regression(history, name, duration, threshold)` | 回归检测 |
-
-### 4.8 LastRunStore
-
-`--last-failed` 状态存储模块（`core/last_run_store.py`）：
-
-```python
-# 存储位置: <workspace>/.symtest/last_run.json
-# {
-#   "case_name": {"status": "passed"},
-#   ...
-# }
-```
-
-核心接口：
-
-| 函数 | 说明 |
-|---|---|
-| `update_last_run(workspace, results)` | 用当前运行结果覆写上次状态 |
-| `get_last_failed_names(workspace)` | 返回上次失败/超时/xpassed 的用例名列表 |
-| `get_last_run_summary(workspace)` | 返回上次运行的统计摘要 |
-
-每次运行**覆写**参与执行的用例状态，未执行的保留旧状态。
-
-### 4.9 SequenceState
-
-`--resume` 断点续跑模块（`core/sequence_state.py`）：
-
-```python
-# 状态文件: <workspace>/.symtest/sequence_state/<case_name>.json
-# 输出缓存: <workspace>/.symtest/sequence_state/cache/<case_name>.step<N>.log
-```
-
-核心接口：
-
-| 函数 | 说明 |
-|---|---|
-| `compute_config_hash(steps, case_expected)` | 计算步骤配置的 SHA-256（检测配置变更） |
-| `save_sequence_state(workspace, case_name, state)` | 保存步骤状态 |
-| `load_sequence_state(workspace, case_name)` | 加载步骤状态 |
-| `save_step_output(workspace, case_name, step_idx, output)` | 缓存步骤输出 |
-| `load_step_output(workspace, case_name, step_idx)` | 读取缓存输出 |
-| `delete_sequence_state(workspace, case_name)` | 全部通过后清理 |
-
-**信任模型**：`--resume` 信任 workspace 产物未被修改，不进行 artifact 验证。
-
-### 4.10 ReportGenerator
-
-```python
-class ReportGenerator:
-    def print_report(self) -> None                   # 终端输出
-    def generate_report(self) -> str                 # 返回文本字符串
-    def generate_json_report(self) -> str            # JSON 格式
-    def generate_html_report(self) -> str            # HTML 格式
-```
-
-### 4.11 JUnitXMLWriter
-
-```python
-def write_junit_xml(results: Dict, filepath: str,
-                    suite_name: Optional[str] = None,
-                    classname: Optional[str] = None) -> None
-```
-
-生成兼容 GitLab CI / Jenkins / CircleCI 的 JUnit XML 报告。
-
-状态映射：
-- `passed` → 无子元素（JUnit passed 约定）
-- `xfailed` → `<skipped>`（预期失败）
-- `xpassed` → `<failure>`（意外通过，标记为断言失败）
-- `timeout` → `<error>`（超时）
-- `failed` → 按消息类型分 `<failure>` 或 `<error>`
-
-## 5. 文件比较子系统
-
-### 5.1 类继承
-
-```
-BaseComparator (ABC)
-├── TextComparator       # 基于 difflib 行级比较
-│   ├── JsonComparator   # 按 key 字段对齐后比较
-│   ├── CsvComparator    # CSV 结构化比较
-│   └── XmlComparator    # XML 结构化比较
-├── H5Comparator         # HDF5 科学数据比较
-├── BinaryComparator     # 二进制流式分块 + LCS 相似度
-└── ScriptComparator     # 委托外部脚本执行比较
-```
-
-### 5.2 BaseComparator
-
-```python
-class BaseComparator(ABC):
-    def __init__(self, encoding="utf-8", chunk_size=8192, verbose=False)
-
-    @abstractmethod
-    def read_content(self, file_path, start_line, end_line, start_column, end_column)
-
-    @abstractmethod
-    def compare_content(self, content1, content2) -> Tuple[bool, List[Difference]]
-
-    def compare_files(self, file1, file2, start_line, end_line,
-                      start_column, end_column) -> ComparisonResult
-```
-
-### 5.3 ComparatorFactory
-
-```python
-class ComparatorFactory:
-    @staticmethod
-    def create_comparator(file_type: str, **kwargs) -> BaseComparator
-    @staticmethod
-    def register_comparator(file_type, comparator_class)
-    @staticmethod
-    def set_plugin_dirs(dirs)              # 设置 workspace 插件目录
-    @staticmethod
-    def get_available_comparators()        # 获取已注册比较器列表
-    @staticmethod
-    def reset()                            # 重置所有状态（测试用）
-```
-
-**插件发现机制**：
-
-1. 自动发现内置 `*_comparator.py` 模块
-2. 扫描 `workspace/comparators/` 目录（自动）
-3. `--plugin-dir` CLI 参数指定额外目录
-4. `CLITEST_PLUGIN_DIRS` 环境变量（进程模式 worker 使用）
-5. 插件命名约定：`*_comparator.py` + `*Comparator` 类名
-
-`file_type` 取值：`"text"` / `"json"` / `"csv"` / `"xml"` / `"h5"` / `"binary"` / `"script"`
-
-### 5.4 ScriptComparator
-
-委托外部脚本执行比较的新比较器类型：
-
-```json
-{
-  "type": "script",
-  "script": "analyze.py",
-  "actual": "output.dat",
-  "baseline": "baseline.dat",
-  "pass_pattern": "PASS",
-  "fail_pattern": "(MISMATCH|FAILED)"
-}
-```
-
-- 执行 `python script.py <actual> <baseline>` 子进程
-- 默认 exit code 0 → pass
-- 可选 `pass_pattern` / `fail_pattern` 正则匹配 stdout 细化判定
-- 支持 `timeout` 超时控制
-
-### 5.5 ComparisonResult
-
-```python
-class ComparisonResult:
-    file1: str
-    file2: str
-    identical: bool
-    differences: List[Difference]
-    error: Optional[str]
-    command_output: Optional[str]    # ScriptComparator 的输出
-    # 支持输出: str() / to_json() / to_html()
-```
-
-### 5.6 Error Analysis
-
-`--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：
-- `total_numeric_cells`：比较的数值单元格总数
-- `mismatched_cells`：不匹配单元格数
-- `max_abs_error` / `max_rel_error`：最大绝对/相对误差
-- `mean_abs_error` / `rms_abs_error`：平均绝对误差 / 均方根误差
-
-## 6. TUI 子系统
-
-基于 [Textual](https://textual.textualize.io/) 的终端交互界面。
-
-```
-symtest tui test_cases.json --workspace /path/to/project
-```
-
-### 6.1 架构
-
-```
-CaseManagerApp (Textual App)
-├── CaseController              # 业务逻辑层
-│   ├── load()                  # 加载配置文件
-│   ├── create_case()           # 创建用例
-│   ├── update_case()           # 更新用例
-│   ├── delete_case()           # 删除用例
-│   ├── run_single()            # 运行单个用例
-│   └── save()                  # 保存配置
-├── Screens
-│   ├── CaseListScreen          # 主界面：用例列表 + 搜索 + 操作
-│   └── CaseEditorScreen        # 编辑表单：单命令 / 序列步骤
-└── Widgets
-    ├── CaseTable               # DataTable 封装（名称/命令/状态列）
-    ├── SearchBar               # 名称/命令/标签多模式搜索
-    ├── ExpectedEditor          # expected 断言配置编辑
-    └── StepsEditor             # 多步骤序列编辑
-```
-
-### 6.2 快捷键
-
-| 按键 | 功能 |
-|---|---|
-| `q` / `Ctrl+Q` | 退出 |
-| `r` | 刷新列表 |
-| `e` | 编辑选中用例 |
-| `f` | 执行选中用例 |
-| `/` | 搜索 |
-| `a` | 添加新用例 |
-| `d` | 删除选中用例 |
-| `s` | 保存配置 |
-
-## 7. 数据流
-
-### 7.1 测试执行流
-
-```
-配置文件 (JSON/YAML)
-       │
-       ▼
-  expand_imports()           # import 引用展开
-       │
-       ▼
-  resolve_inheritance()      # extends 继承解析
-       │
-       ▼
-  apply_variables()          # 全局变量 + 用例变量注入
-       │
-       ▼
-  substitute_placeholders()  # {placeholder} 替换
-       │
-       ▼
-  parse_test_cases()         # 解析为 List[TestCase]
-       │
-       ▼
-  _apply_test_case_filter()  # 按名称/tags/--last-failed 过滤
-       │
-       ▼
-  setup_manager.setup_all()  # 环境变量 + 自定义插件
-       │
-       ▼
-  [如果 history_dir] load .symtest → 读取历史 avg_duration（用于调度排序）
-       │
-       ▼
-  ┌──────────────────────────────────────┐
-  │  for each TestCase:                  │
-  │    PathResolver 解析命令              │
-  │    subprocess.run() 执行             │
-  │    validate_result() 逐项校验         │
-  │      ├── return_code_equals          │
-  │      ├── contains (输出子串)          │
-  │      ├── matches (正则匹配)           │
-  │      └── compare_files (文件比较)     │
-  │    [如果失败且 retry_count > 0] 重试  │
-  │    收集到 results["details"]          │
-  └──────────────────────────────────────┘
-       │
-       ▼
-  _apply_xfail_status()      # xfail 状态映射
-       │
-       ▼
-  _update_history()          # 回归检测 + 更新 .symtest
-       │
-       ▼
-  _save_last_run()           # 写入 .symtest/last_run.json
-       │
-       ▼
-  setup_manager.teardown_all() # 逆序清理
-       │
-       ▼
-  ReportGenerator / write_junit_xml()   # text / json / html / JUnit XML
-```
-
-### 7.2 并行执行流
-
-```
-ParallelConfigRunner.run_tests()
-       │
-       ▼
-  拓扑 LPT 排序 (depends_on 约束 + 历史 avg_duration 降序)
-       │
-       ▼
-  _assign_relative_cpu_cores()  # 按权重比例分配 CPU 核心
-       │
-       ▼
-  ┌──────────────────────────────────────┐
-  │  DAG 调度 / 或直接并行 (无依赖时)    │
-  │    AtomicSemaphore.acquire(cores)    │
-  │    注入 OMP/MKL/NPROC 环境变量       │
-  │    execute_single_test_case()        │
-  │    AtomicSemaphore.release(cores)    │
-  │    _update_results() (线程安全)      │
-  └──────────────────────────────────────┘
-```
-
-### 7.3 DAG 依赖调度流
-
-当 `TestCase.depends_on` 非空时，并行 runner 自动切换为 DAG 拓扑调度：
-
-```
-ParallelRunner.run_tests()
-       │
-       ▼
-  has_deps? ──No──► _run_tests_flat() (fast path)
-       │
-      Yes
-       ▼
-  _run_dag()
-       │
-       ├── 构建 dependents 邻接表 + in_degree 入度表
-       ├── 入度=0 的用例 → 就绪队列 → executor.submit()
-       │
-       ▼
-  ┌────────────────────────────────────────┐
-  │  as_completed() 循环:                   │
-  │    完成一个 future                       │
-  │    │                                     │
-  │    ├── passed/xfailed → 后继入度-1      │
-  │    │   └── 入度=0 → submit(后继)        │
-  │    │                                     │
-  │    └── failed/xpassed → cascade_skip    │
-  │        └── BFS 标记下游全部 skipped      │
-  └────────────────────────────────────────┘
-```
-
-**调度语义**：
-- 依赖"满足" = 状态为 `passed` 或 `xfailed`
-- 依赖"不满足" = 状态为 `failed` 或 `xpassed` → 下游全部 skip
+- `depends_on` 非空自动切换拓扑模式；无依赖时走零开销 fast path
+- Kahn 入度表 + 就绪队列，依赖满足后立即提交后继
+- 依赖"满足" = `passed` 或 `xfailed`；`failed` / `xpassed` 触发 BFS 级联 skip 全部下游
 - `skipped` 不计入 `failed` 计数，报告中单独列出
-- 级联 skip：若 B 被 skip，则依赖 B 的 C 也自动 skip
+- 顺序 runner 同样按拓扑序执行，依赖失效时跳过下游
 
-**顺序 runner**（`BaseRunner.run_tests()`）同样支持拓扑排序：`_topological_order()` 使用 Kahn 算法生成拓扑序列，按序执行，依赖失败时自动跳过下游。
+### 4.5 单测试执行
 
-### 7.4 文件比较流
+PathResolver 解析（系统命令直通、shell builtin 平台包装、复合命令拆分解析）
+→ subprocess 隔离执行（捕获 stdout / stderr / returncode / duration）
+→ 断言校验（return_code / contains / matches / compare_files）
+→ 失败按 `retry_count` 重试
+→ 超时 kill 整个进程组
+→ 返回附带 `next_action_hint` 的结构化结果。
 
-```
-symtest compare file1 file2 [options]
-       │
-       ▼
-  自动检测 / 指定 --file-type
-       │
-       ▼
-  ComparatorFactory.create_comparator(file_type, **kwargs)
-       │
-       ▼
-  comparator.compare_files(file1, file2, ...)
-       │
-       ├── read_content() × 2
-       ├── compare_content()
-       └── ComparisonResult
-       │
-       ▼
-  format_result(result, --output-format)  # text / json / html
-```
+当前实现的上述行为仍聚合在一处；1.4 将按 §10 宪法重排为
+Executor / Validator / Orchestration 三段（迁移明细见 docs/design_1_4.md）。
 
-### 7.5 --resume 断点续跑流
+### 4.6 断言与文件比较集成
 
-```
-序列测试用例执行
-       │
-       ▼
-  [--resume 启用] compute_config_hash(steps)
-       │
-       ▼
-  load_sequence_state()  → 检查配置哈希是否匹配
-       │
-       ├── 匹配 → 跳过已过步骤，拼接缓存输出
-       └── 不匹配 → 全量执行
-       │
-       ▼
-  每步 pass → save_sequence_state() + save_step_output()
-       │
-       ▼
-  全部 pass → delete_sequence_state() (清理)
-```
+- `compare_files` 是一等断言，经 ComparatorFactory 按类型分发（详见 §6）
+- 所有断言可选；未声明的字段不做校验
+- `--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：`total_numeric_cells` / `mismatched_cells` / `max_abs_error` / `max_rel_error` / `mean_abs_error` / `rms_abs_error`
+
+## 5. 运行时状态持久化（`.symtest/`）
+
+| 状态 | 内容 | 更新时机 / 语义 |
+|---|---|---|
+| 历史记录 | per-case `avg_duration` / `last_duration` / `run_count` | 运行后累计平均更新；先回归检测后写入 |
+| `last_run.json` | case → 上次状态 | 覆写参与执行的用例；未执行的保留旧状态 |
+| `sequence_state/<case>.json` | steps + case expected 的 SHA-256 配置哈希、已通过的 step 集 | 每步 pass 后保存；全部通过后清理 |
+| `sequence_state/cache/*.log` | 步骤输出缓存 | 与上同步；供 resume 拼接复现 |
+
+**resume 语义**：`--resume` 比对配置哈希——匹配则跳过已过步骤并拼接缓存输出，
+失配即全量重跑。纯信任模型：不验证 workspace 产物，由用户保证未被修改。
+
+## 6. 文件比较子系统
+
+### 6.1 比较器分层
+
+- 文本系比较器共享 difflib 行级基底，json / csv / xml 为其结构化特化（键对齐 / 列结构 / DOM 对齐）
+- h5 面向科学数据集；binary 流式分块 + LCS 相似度；script 委托外部脚本
+- 统一返回 ComparisonResult（identical / differences / error / script command_output），支持 text / json / html 渲染；支持行列窗口范围参数截取后比较
+
+### 6.2 工厂与插件发现
+
+- `file_type` 取值：`text` / `json` / `csv` / `xml` / `h5` / `binary` / `script`；工厂按类型分发，支持动态注册与全局 reset（测试用）
+- 插件发现四处来源：内置 `*_comparator.py` 自动发现、`workspace/comparators/` 自动扫描、`--plugin-dir` CLI 参数、`CLITEST_PLUGIN_DIRS` 环境变量（供进程模式 worker 使用）
+- 命名约定：`*_comparator.py` + `*Comparator` 类名
+
+### 6.3 script 比较协议（对外契约）
+
+- 子进程方式执行 `<interpreter> <script> <actual> <baseline>`
+- 默认 exit code 0 → 通过；可选 `pass_pattern` / `fail_pattern` 正则匹配 stdout 细化判定
+- 超时可配
+
+## 7. TUI 子系统
+
+基于 Textual 的终端交互界面：App + Controller（load / create / update /
+delete / run_single / save 业务动作）+ 列表 / 编辑两屏 + 表格封装、多模式搜索条
+（名称 / 命令 / 标签）、expected 编辑器、steps 编辑器。
+
+快捷键：`q` / Ctrl+Q 退出、`r` 刷新、`e` 编辑、`f` 单跑、`/` 搜索、`a` 新增、`d` 删除、`s` 保存。
+
+TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处理（§10 原则 6）。
 
 ## 8. 扩展点
 
@@ -838,3 +244,145 @@ symtest compare file1 file2 [options]
 | TUI 基于 Textual | 利用成熟的终端 UI 框架，提供交互式用例管理 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
+
+---
+
+## 10. 核心架构宪法
+
+> **地位与效力**：本节自 Symtest 1.4 Phase 0 评审定稿，是本项目的核心架构契约，
+> 对所有后续 feature 具有最高约束力——任何功能需求先对照本宪法确定归属，再写代码。
+> 修订宪法必须在变更说明中显式指出所放宽/违反的条款及理由。
+> 定稿前的演进推导见开发阶段文档 docs/design_1_4.md。
+
+### 10.1 数据流主线
+
+```
+TestCase（specification，永不执行）
+    ├── ExecutionSpec  ──▶ Executor.execute()                        ──▶ ExecutionResult
+    ├── ExpectationSpec ─┐
+    └── SchedulingSpec ──▶ Orchestration（何时跑、跑哪个、组合与重试）
+                             │
+           Validator.validate(ExpectationSpec, ExecutionResult)
+                             ▼
+                    ValidationResult ──▶ TestResult ──▶ Reporter
+                                          console / JSON / JUnit / AI diagnosis
+```
+
+一次 attempt = `Executor.execute → Validator.validate`；verdict 由编排层聚合为 TestResult。
+
+### 10.2 六条原则
+
+#### 原则 1 — TestCase 是声明，不执行任何事情
+
+`TestCase = specification`。禁止出现 `test_case.run()` / `test_case.validate()` /
+`test_case.update_baseline()` 这类方法；TestCase 只描述**执行什么**
+（ExecutionSpec）、**如何判定**（ExpectationSpec）、**调度约束**
+（SchedulingSpec）与元数据。
+
+概念模型分层 ≠ 配置 DSL 必须机械映射类层次：`name/tags/description` 允许保留
+顶层以避免啰嗦；真正必须拆出去的是执行语义、验证语义、调度语义。
+
+#### 原则 2 — Execution 不知道"通过/失败"
+
+```
+Executor: ExecutionSpec ──execute──▶ ExecutionResult
+```
+
+ExecutionResult 只承载执行事实：`return_code / stdout / stderr / duration /
+timed_out / error / artifacts`。
+
+Executor 禁止感知：`expected_return_code / output_contains / baseline / rtol /
+file comparison / xfail / next_action_hint`。超时只报告 `timed_out=True`，
+"timeout 是否算失败"由 Validator 判定。
+
+#### 原则 3 — Validation 不执行被测程序，且永远只读
+
+```
+Validator: ExpectationSpec + ExecutionResult ──validate──▶ ValidationResult
+```
+
+Validator 禁止 `subprocess.Popen` 被测进程、kill 进程、retry。
+
+**例外条款（受控豁免）**：comparator 是验证的内部工具，`script` comparator
+执行的是"比较工具"而非"被测程序"，属本条明确豁免范围。
+
+**baseline 语义**：Validator 永远只读文件。`--update-baseline` 由 runner 在拿到
+ValidationResult 后执行独立的 accept 步骤（复制 actual → baseline）再判定。
+
+#### 原则 4 — Orchestration 组合，而不实现底层语义
+
+Runner / Scheduler / DAG / ParallelRunner 负责：什么时候执行、执行哪个 case、
+顺序、依赖、并发、**retry policy**（一次 attempt =
+`Executor.execute → Validator.validate`，runner 拿 verdict 决定是否重跑，
+flaky 判定也在编排层）；但不自己实现 subprocess 管理、float 比较、stdout 判断。
+
+#### 原则 5 — Reporting 只能消费 Result
+
+```
+TestResult ──▶ Reporter ──┬── console
+                          ├── JSON
+                          ├── JUnit
+                          └── AI diagnosis
+```
+
+Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 result consumer
+（diagnosis），不得存在于 execution 层。
+
+#### 原则 6 — 核心模型不依赖表现层
+
+`core` 绝对不能 import：`cli` / `tui` / `reporter` / AI-specific adapter。
+
+解析器全系统唯一：TUI 与 runner 使用同一 parser，不允许存在 "TUI mode 后门"
+（如 workspace=None 时放宽校验）；宽松形态由 TUI 侧自行处理。
+
+### 10.3 模块依赖方向
+
+允许：
+
+- `orchestration` import `execution` / `validation`（它是唯一组合者）；
+- `reporting` 仅 import result 类型
+  （ExecutionResult / ValidationResult / TestResult）。
+
+禁止：
+
+- `execution` 与 `validation` 互不 import；
+- `executor` 不得 import `assertions` / validation 侧模块；
+- `validator` 不得启动被测进程（见原则 3）；
+- `core` 不得 import `cli` / `tui` / `reporter`。
+
+### 10.4 违宪归属速查
+
+任何新需求先问归属：
+
+| 提问 | 归属 |
+|---|---|
+| 增加 GPU resource requirement？ | SchedulingSpec |
+| 增加 stderr regex assertion？ | ExpectationSpec / Validator |
+| 支持 Docker command execution？ | Executor |
+| AI 告诉我下一步该干嘛？ | Result consumer / diagnosis |
+
+判据：若仍经常出现"这个功能到底放 execution、runner 还是 testcase？"的争论，
+说明宪法没有被正确适用，应回到 10.2 逐条对照。
+
+### 10.5 宪法可执行化
+
+宪法不是纯文档约定，配套 architecture guard 测试并由 CI 强制：
+
+- 断言 import 图：如 `execution/executor.py` 的 import 不得出现
+  `assertions` / `validation`；`core/**` 不得 import `cli` / `tui` /
+  `reporter`；
+- guard 测试纳入常规回归套件（`python tests\run_all.py`），违规即失败；
+- 冲突裁决次序：guard 测试 > 本节文字 > 个人偏好。
+
+### 10.6 现状差距与收敛路径
+
+定稿时刻（1.4 Phase 0）现行实现与本宪法的已知偏差如下，将在 1.4 对应 Phase 内
+逐项收敛（迁移明细见 docs/design_1_4.md）：
+
+| 现状 | 违反 | 收敛 |
+|---|---|---|
+| `execution.py::validate_result` 住在执行层 | 原则 2 | Phase 2 迁入 `validation/validator.py` |
+| `next_action_hint` 在 execution 层构造 | 原则 5 | Phase 2 迁入 `reporting/diagnosis.py` |
+| retry 循环在 executor 内部 | 原则 2 / 4 | Phase 2 上移编排层 |
+| Validator 侧 update_baseline 写文件 | 原则 3 | Phase 2 改为 runner 独立 accept 步骤 |
+| `parse_test_cases` TUI mode 后门 | 原则 6 | Phase 2 拆除，单一解析器 |

@@ -147,7 +147,8 @@ class TestValidateConfigWarnings:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [{
-                    "name": "tc", "command": "echo", "args": ["hi"],
+                    "name": "tc",
+                    "execution": {"command": "echo", "args": ["hi"]},
                     "expected": {
                         "compare_files": [
                             {"actual": "out.txt", "baseline": "missing_base.txt"}
@@ -164,7 +165,8 @@ class TestValidateConfigWarnings:
             (Path(tmpdir) / "base.txt").write_text("ref\n", encoding="utf-8")
             path = self._write_config(tmpdir, {
                 "test_cases": [{
-                    "name": "tc", "command": "echo", "args": ["hi"],
+                    "name": "tc",
+                    "execution": {"command": "echo", "args": ["hi"]},
                     "expected": {
                         "compare_files": [{"actual": "out.txt", "baseline": "base.txt"}]
                     },
@@ -177,8 +179,9 @@ class TestValidateConfigWarnings:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [{
-                    "name": "tc", "command": "definitely-not-a-real-cmd-xyz123",
-                    "args": [], "expected": {"return_code": 0},
+                    "name": "tc",
+                    "execution": {"command": "definitely-not-a-real-cmd-xyz123", "args": []},
+                    "expected": {"return_code": 0},
                 }]
             })
             result = validate_config(path, workspace=tmpdir)
@@ -189,7 +192,8 @@ class TestValidateConfigWarnings:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [{
-                    "name": "tc", "command": "echo", "args": ["hi"],
+                    "name": "tc",
+                    "execution": {"command": "echo", "args": ["hi"]},
                     "expected": {"return_code": 0},
                 }]
             })
@@ -200,7 +204,8 @@ class TestValidateConfigWarnings:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [{
-                    "name": "tc", "command": "{solver}", "args": ["run"],
+                    "name": "tc",
+                    "execution": {"command": "{solver}", "args": ["run"]},
                     "expected": {
                         "compare_files": [
                             {"actual": "out.txt", "baseline": "{baseline_dir}/x.txt"}
@@ -216,10 +221,12 @@ class TestValidateConfigWarnings:
             path = self._write_config(tmpdir, {
                 "test_cases": [{
                     "name": "seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "not-a-real-cmd-xyz", "args": [], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "not-a-real-cmd-xyz", "args": [], "expected": {"return_code": 0}},
+                        ],
+                    },
                     "expected": {
                         "compare_files": [{"actual": "o.txt", "baseline": "gone.txt"}]
                     },
@@ -271,16 +278,20 @@ class TestConfigSchema:
 
         defs = get_config_schema()["$defs"]
         # singleCase now uses allOf with if/then for conditional required
-        # (extends present → only name required; else → name, command, args, expected)
+        # (extends present → only name required; else → name, execution, expected)
         single_allof = defs["singleCase"]["allOf"]
         else_section = single_allof[0]["else"]
-        assert else_section["required"] == ["name", "command", "args", "expected"]
+        assert else_section["required"] == ["name", "execution", "expected"]
         assert defs["step"]["required"] == ["command", "args", "expected"]
 
-        # sequenceCase also uses allOf
+        # sequenceCase also uses allOf (steps live inside execution)
         seq_allof = defs["sequenceCase"]["allOf"]
         seq_else = seq_allof[0]["else"]
-        assert seq_else["required"] == ["name", "steps"]
+        assert seq_else["required"] == ["name", "execution"]
+
+        # v2 新增的分层 $defs
+        assert "executionSpec" in defs
+        assert "schedulingSpec" in defs
 
 
 class TestValidateInheritance:
@@ -322,8 +333,9 @@ class TestValidateInheritance:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [
-                    {"name": "_base", "abstract": True, "command": "echo",
-                     "args": ["a"], "expected": {}},
+                    {"name": "_base", "abstract": True,
+                     "execution": {"command": "echo", "args": ["a"]},
+                     "expected": {}},
                     {"name": "child1", "extends": "_base"},
                     {"name": "child2", "extends": "_base"},
                 ]
@@ -337,10 +349,11 @@ class TestValidateInheritance:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [
-                    {"name": "_base", "abstract": True, "command": "echo",
-                     "args": ["a"], "expected": {}},
+                    {"name": "_base", "abstract": True,
+                     "execution": {"command": "echo", "args": ["a"]},
+                     "expected": {}},
                     {"name": "child", "extends": "_base"},
-                    # child has no command/args/expected but inherits them
+                    # child has no execution/expected but inherits them
                 ]
             })
             result = validate_config(path, workspace=tmpdir)
@@ -351,9 +364,11 @@ class TestValidateInheritance:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self._write_config(tmpdir, {
                 "test_cases": [
-                    {"name": "same", "command": "echo", "args": ["1"],
+                    {"name": "same",
+                     "execution": {"command": "echo", "args": ["1"]},
                      "expected": {}},
-                    {"name": "same", "command": "echo", "args": ["2"],
+                    {"name": "same",
+                     "execution": {"command": "echo", "args": ["2"]},
                      "expected": {}},
                 ]
             })

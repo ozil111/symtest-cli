@@ -13,7 +13,7 @@ from ..core.base_runner import BaseRunner
 from ..core.config_loader import parse_test_cases
 from ..config.inheritance_expander import resolve_inheritance, apply_variables
 from ..core.test_case import TestCase
-from ..core.execution import execute_single_test_case
+from ..core.orchestration.single import execute_single_test_case
 from ..core.types import TestCaseData
 from ..utils.path_resolver import PathResolver
 from ..config.import_expander import expand_imports
@@ -71,16 +71,17 @@ class ConfigRunner(BaseRunner):
         if case.steps:
             return self._run_sequence(case)
 
-        case_data = case.to_execution_dict()
+        spec = case.execution
 
         command_preview = (
-            f"{case_data['command']} {' '.join(case_data['args'])}".strip()
+            f"{spec.command} {' '.join(spec.args)}".strip()
         )
         logger.info("  Executing command: %s", command_preview)
 
         result = execute_single_test_case(
-            case_data,
+            spec,
             str(self.workspace) if self.workspace else None,
+            expectation=case.expected,
             update_baseline=self.update_baseline,
             error_analysis=self.error_analysis,
         )

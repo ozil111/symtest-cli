@@ -16,7 +16,7 @@ runtime.  Library users can enable console logging explicitly::
     setup_console_logging(level=logging.DEBUG)
 """
 
-__version__ = "1.3.3"
+__version__ = "1.4.0"
 __author__ = "Xiaotong Wang"
 __email__ = "xiaotongwang98@gmail.com"
 
@@ -25,7 +25,7 @@ from .runners.json_runner import JSONRunner
 from .runners.parallel_json_runner import ParallelJSONRunner
 from .runners.yaml_runner import YAMLRunner
 from .core.test_case import TestCase
-from .core.assertions import Assertions
+from .core.validation.assertions import Assertions
 from .core.setup import BaseSetup, EnvironmentSetup, SetupManager
 from .logging_config import get_logger, setup_console_logging
 from .utils.junit_xml_writer import write_junit_xml

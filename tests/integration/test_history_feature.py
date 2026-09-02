@@ -21,8 +21,7 @@ def _make_json_config(tmp_path, test_cases):
 def _fast_case(name="fast_test"):
     return {
         "name": name,
-        "command": "echo",
-        "args": ["ok"],
+        "execution": {"command": "echo", "args": ["ok"]},
         "expected": {"return_code": 0},
     }
 
@@ -105,8 +104,9 @@ class TestYAMLRunnerHistory:
         yaml_content = """
 test_cases:
   - name: yaml_case
-    command: echo
-    args: ["hello"]
+    execution:
+      command: echo
+      args: ["hello"]
     expected:
       return_code: 0
 """
@@ -142,17 +142,15 @@ class TestParallelJSONRunnerHistory:
         cases = [
             {
                 "name": "heavy",
-                "command": "echo",
-                "args": ["heavy"],
+                "execution": {"command": "echo", "args": ["heavy"]},
                 "expected": {"return_code": 0},
-                "resources": {"estimated_time": 1},
+                "scheduling": {"resources": {"estimated_time": 1}},
             },
             {
                 "name": "light",
-                "command": "echo",
-                "args": ["light"],
+                "execution": {"command": "echo", "args": ["light"]},
                 "expected": {"return_code": 0},
-                "resources": {"estimated_time": 100},
+                "scheduling": {"resources": {"estimated_time": 100}},
             },
         ]
         config = _make_json_config(tmp_path, cases)

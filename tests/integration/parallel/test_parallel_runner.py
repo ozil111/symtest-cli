@@ -20,26 +20,22 @@ class TestParallelRunner(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "测试1",
-                    "command": "echo",
-                    "args": ["test1"],
+                    "execution": {"command": "echo", "args": ["test1"]},
                     "expected": {"return_code": 0, "output_contains": ["test1"]},
                 },
                 {
                     "name": "测试2",
-                    "command": "echo",
-                    "args": ["test2"],
+                    "execution": {"command": "echo", "args": ["test2"]},
                     "expected": {"return_code": 0, "output_contains": ["test2"]},
                 },
                 {
                     "name": "测试3",
-                    "command": "echo",
-                    "args": ["test3"],
+                    "execution": {"command": "echo", "args": ["test3"]},
                     "expected": {"return_code": 0, "output_contains": ["test3"]},
                 },
                 {
                     "name": "测试4",
-                    "command": "echo",
-                    "args": ["test4"],
+                    "execution": {"command": "echo", "args": ["test4"]},
                     "expected": {"return_code": 0, "output_contains": ["test4"]},
                 },
             ]
@@ -112,14 +108,18 @@ class TestParallelRunner(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "pass",
-                    "command": f'"{sys.executable}" -c "print(\'ok\')"',
-                    "args": [],
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "print(\'ok\')"',
+                        "args": [],
+                    },
                     "expected": {"return_code": 0, "output_contains": ["ok"]},
                 },
                 {
                     "name": "fail",
-                    "command": f'"{sys.executable}" -c "import sys; sys.exit(5)"',
-                    "args": [],
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "import sys; sys.exit(5)"',
+                        "args": [],
+                    },
                     "expected": {"return_code": 0},
                 },
             ]

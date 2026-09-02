@@ -6,8 +6,6 @@
 @details Copy this file into <workspace>/comparators/ and adapt the logic.
          It is auto-discovered and registered as type "myanalysis" (class
          name minus the "Comparator" suffix, lowercased).
-@author Xiaotong Wang
-@date 2025
 """
 
 from symtest.file_comparator.base_comparator import BaseComparator

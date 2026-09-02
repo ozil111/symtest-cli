@@ -64,6 +64,18 @@ class ReportGenerator:
             if detail.get('message') and status != 'passed':
                 report += f"   -> {detail['message']}\n"
 
+            # ── Error analysis for PASSED cases (--error-analysis-all) ──
+            if status == 'passed' and self.results.get('error_analysis_all'):
+                for ar in detail.get('assertion_results', []):
+                    es = ar.get('error_stats')
+                    if es:
+                        report += "   error_stats:\n"
+                        for key, val in es.items():
+                            if isinstance(val, float):
+                                report += f"     {key}: {val:.6g}\n"
+                            else:
+                                report += f"     {key}: {val}\n"
+
         # 添加失败案例的详细输出信息（含 xfailed、xpassed、timeout 等非通过状态）
         failed_tests = [detail for detail in self.results['details'] if detail['status'] != 'passed']
         if failed_tests:

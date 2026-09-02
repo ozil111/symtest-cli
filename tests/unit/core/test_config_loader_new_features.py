@@ -3,8 +3,18 @@ from unittest.mock import patch
 
 import pytest
 
-from symtest.core.config_loader import execute_sequence
-from symtest.core.assertions import ValidationError
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.test_case import TestCaseStep
+from symtest.core.validation.assertions import ValidationError
+from symtest.core.validation.result import ValidationResult
+
+
+def _steps(*specs):
+    """Build TestCaseStep objects from (command, args, expected) tuples."""
+    return [
+        TestCaseStep(command=cmd, args=args, expected=expected)
+        for cmd, args, expected in specs
+    ]
 
 
 def _passed_result(name, output="ok\n"):
@@ -21,12 +31,12 @@ class TestSequenceOutputSliming:
     """Test that sequence failures produce slim output."""
 
     def test_passed_sequence_keeps_combined_output(self):
-        steps = [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("echo", ["one"], {"return_code": 0}),
+            ("echo", ["two"], {"return_code": 0}),
+        )
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -38,12 +48,12 @@ class TestSequenceOutputSliming:
             assert "two" in result["output"]
 
     def test_failed_step_only_keeps_failed_step_output(self):
-        steps = [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("echo", ["one"], {"return_code": 0}),
+            ("echo", ["two"], {"return_code": 0}),
+        )
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "step_one_output_long_string\n"),
@@ -57,11 +67,9 @@ class TestSequenceOutputSliming:
             assert result["failed_step"] == 2
 
     def test_case_level_failure_has_empty_output(self):
-        steps = [
-            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["a"], {"return_code": 0}))
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "long_output_from_step\n"),
@@ -76,12 +84,12 @@ class TestSequenceOutputSliming:
             assert result["output"] == ""
 
     def test_step_results_present_on_pass(self):
-        steps = [
-            {"command": "e1", "args": ["a"], "expected": {"return_code": 0}},
-            {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("e1", ["a"], {"return_code": 0}),
+            ("e2", ["b"], {"return_code": 0}),
+        )
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1"),
@@ -96,13 +104,13 @@ class TestSequenceOutputSliming:
             assert result["step_results"][1]["status"] == "passed"
 
     def test_step_results_truncates_on_failure(self):
-        steps = [
-            {"command": "e1", "args": ["a"], "expected": {"return_code": 0}},
-            {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
-            {"command": "e3", "args": ["c"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("e1", ["a"], {"return_code": 0}),
+            ("e2", ["b"], {"return_code": 0}),
+            ("e3", ["c"], {"return_code": 0}),
+        )
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1"),
@@ -126,12 +134,12 @@ class TestSequenceStructuredDiagnostics:
         failed["next_action_hint"] = {
             "action": "update_expected", "command": None, "reason": "r",
         }
-        steps = [
-            {"command": "e1", "args": ["a"], "expected": {"return_code": 0}},
-            {"command": "e2", "args": ["b"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("e1", ["a"], {"return_code": 0}),
+            ("e2", ["b"], {"return_code": 0}),
+        )
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1"), failed]
             result = execute_sequence("case", steps)
@@ -140,15 +148,13 @@ class TestSequenceStructuredDiagnostics:
             assert result["next_action_hint"] == failed["next_action_hint"]
 
     def test_case_level_failure_builds_hint(self):
-        steps = [
-            {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["x"], {"return_code": 0}))
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
                 mock_validate.side_effect = ValidationError(
                     "compare failed",
@@ -168,19 +174,18 @@ class TestSequenceStructuredDiagnostics:
             assert result["next_action_hint"]["action"] == "update_baseline"
 
     def test_passed_sequence_uses_case_level_assertion_results(self):
-        steps = [
-            {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["x"], {"return_code": 0}))
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
-                mock_validate.return_value = [
-                    {"assertion": "return_code", "passed": True}
-                ]
+                mock_validate.return_value = ValidationResult(
+                    passed=True,
+                    assertion_results=[{"assertion": "return_code", "passed": True}],
+                )
                 result = execute_sequence(
                     "case",
                     steps,
@@ -197,17 +202,15 @@ class TestSequenceExpectedEcho:
     """Test that failure_kind and compare_failures are propagated from case-level failures."""
 
     def test_case_level_compare_failure_kind(self):
-        steps = [
-            {"command": "echo", "args": ["x"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["x"], {"return_code": 0}))
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [_passed_result("s1")]
             # validate_result is imported locally inside execute_sequence as
             #   from .execution import validate_result
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
                 mock_validate.side_effect = ValidationError(
                     "compare failed",

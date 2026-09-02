@@ -1,0 +1,16 @@
+{
+    "test_cases": [
+        {
+            "name": "example_test",
+            "command": "echo",
+            "args": ["Hello World"],
+            "description": "Example: verify echo output",
+            "tags": ["smoke"],
+            "timeout": 60,
+            "expected": {
+                "return_code": 0,
+                "output_contains": ["Hello World"]
+            }
+        }
+    ]
+}

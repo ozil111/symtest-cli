@@ -8,8 +8,10 @@
   "test_cases": [
     {
       "name": "sub_case",
-      "command": "echo",
-      "args": ["test"],
+      "execution": {
+        "command": "echo",
+        "args": ["test"]
+      },
       "expected": {
         "return_code": 0
       }

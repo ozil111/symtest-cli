@@ -138,6 +138,36 @@ def test_collect_stats_false():
     assert res.rms_abs_error == 0.0
 
 
+def test_collect_stats_false_with_filter_excluded_not_mismatch():
+    """Regression: filtered-out positions must not be flagged as mismatches."""
+    # filter >1.0: cell0 (0.5 vs 9.9) excluded; cell1 (3.0 vs 3.0) kept and equal
+    res = compare_numeric([0.5, 3.0], [9.9, 3.0],
+                          filter_func=parse_data_filter(">1.0"),
+                          collect_stats=False)
+    assert res.total == 1
+    assert res.mismatched == 0
+    assert res.mismatch_mask.tolist() == [False, False]
+
+
+def test_collect_stats_false_with_filter_keeps_real_mismatch():
+    # filter >1.0: cell0 excluded; cell1 (3.0 vs 3.5) kept and mismatched
+    res = compare_numeric([0.5, 3.0], [9.9, 3.5],
+                          filter_func=parse_data_filter(">1.0"),
+                          collect_stats=False)
+    assert res.total == 1
+    assert res.mismatched == 1
+    assert res.mismatch_mask.tolist() == [False, True]
+
+
+def test_collect_stats_false_all_filtered_out():
+    res = compare_numeric([0.5], [9.9],
+                          filter_func=parse_data_filter(">1.0"),
+                          collect_stats=False)
+    assert res.total == 0
+    assert res.mismatched == 0
+    assert res.mismatch_mask.tolist() == [False]
+
+
 def test_no_mismatch_collect_stats_true():
     res = compare_numeric([1.0, 2.0], [1.0, 2.0], collect_stats=True)
     assert res.mismatched == 0

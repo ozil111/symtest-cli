@@ -1,0 +1,31 @@
+{
+  "test_cases": [
+    {
+      "name": "_base_echo",
+      "abstract": true,
+      "command": "echo",
+      "args": ["{msg}"],
+      "expected": {
+        "output_contains": ["{msg}"]
+      },
+      "variables": {
+        "msg": "hello"
+      }
+    },
+    {
+      "name": "child_echo_hello",
+      "extends": "_base_echo",
+      "tags": ["echo"]
+    },
+    {
+      "name": "child_echo_custom",
+      "extends": "_base_echo",
+      "variables": {
+        "msg": "world"
+      },
+      "expected": {
+        "return_code": 0
+      }
+    }
+  ]
+}

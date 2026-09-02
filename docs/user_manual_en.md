@@ -48,6 +48,8 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
 
 ## Test Case Definition
 
+> **Schema v2 (1.4)**: The config uses a layered DSL — execution-related fields (`command`, `args`, `timeout`, `retry_count`, `env`, `steps`) live in the `execution` block, scheduling-related fields (`depends_on`, `resources`) live in the `scheduling` block, and `expected` stays at the top level. The old flat layout was removed; use `symtest migrate` to migrate.
+
 ### JSON Format
 
 ```json
@@ -55,15 +57,19 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
     "test_cases": [
         {
             "name": "Test Name",
-            "command": "echo",
-            "args": ["Hello"],
-            "timeout": 60,
-            "retry_count": 0,
-            "resources": {
-                "cpu_cores": 2,
-                "estimated_time": 300,
-                "min_memory_mb": 1024,
-                "priority": 5
+            "execution": {
+                "command": "echo",
+                "args": ["Hello"],
+                "timeout": 60,
+                "retry_count": 0
+            },
+            "scheduling": {
+                "resources": {
+                    "cpu_cores": 2,
+                    "estimated_time": 300,
+                    "min_memory_mb": 1024,
+                    "priority": 5
+                }
             },
             "expected": {
                 "return_code": 0,
@@ -80,8 +86,10 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
         },
         {
             "name": "Known Failure Test",
-            "command": "echo",
-            "args": ["should_fail"],
+            "execution": {
+                "command": "echo",
+                "args": ["should_fail"]
+            },
             "expected_failure": true,
             "xfail_reason": "Bug #42 not yet fixed",
             "expected": { "return_code": 1 }
@@ -95,15 +103,17 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
 ```yaml
 test_cases:
   - name: Test Name
-    command: echo
-    args: ["Hello"]
-    timeout: 60
-    retry_count: 0
-    resources:
-      cpu_cores: 2
-      estimated_time: 300
-      min_memory_mb: 1024
-      priority: 5
+    execution:
+      command: echo
+      args: ["Hello"]
+      timeout: 60
+      retry_count: 0
+    scheduling:
+      resources:
+        cpu_cores: 2
+        estimated_time: 300
+        min_memory_mb: 1024
+        priority: 5
     expected:
       return_code: 0
       output_contains:
@@ -115,8 +125,9 @@ test_cases:
           type: text
 
   - name: Known Failure Test
-    command: echo
-    args: ["should_fail"]
+    execution:
+      command: echo
+      args: ["should_fail"]
     expected_failure: true
     xfail_reason: "Bug #42 not yet fixed"
     xfail_quiet: true
@@ -138,8 +149,10 @@ This is consistent with pytest's xfail semantics. When used with `--last-failed`
 ```json
 {
     "name": "KnownBug",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
     "xfail_reason": "Bug #42: Boundary condition error, fix expected in v2.1",
     "expected": { "return_code": 1 }
@@ -151,8 +164,10 @@ When xfailed case output is extremely verbose (e.g., hundreds of lines of solver
 ```json
 {
     "name": "KnownBug (quiet mode)",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
     "xfail_reason": "Bug #42: Boundary condition error, fix expected in v2.1",
     "xfail_quiet": true,
@@ -173,12 +188,13 @@ When test cases have ordering dependencies (e.g., D requires A, B, and C to gene
 ```json
 {
     "test_cases": [
-        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
-        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
-        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        { "name": "A", "execution": { "command": "python", "args": ["gen_a.py"] }, "expected": {"return_code": 0} },
+        { "name": "B", "execution": { "command": "python", "args": ["gen_b.py"] }, "expected": {"return_code": 0} },
+        { "name": "C", "execution": { "command": "python", "args": ["gen_c.py"] }, "expected": {"return_code": 0} },
         {
-            "name": "D", "command": "python", "args": ["merge.py"],
-            "depends_on": ["A", "B", "C"],
+            "name": "D",
+            "execution": { "command": "python", "args": ["merge.py"] },
+            "scheduling": { "depends_on": ["A", "B", "C"] },
             "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
         }
     ]
@@ -190,24 +206,29 @@ When test cases have ordering dependencies (e.g., D requires A, B, and C to gene
 ```yaml
 test_cases:
   - name: A
-    command: python
-    args: ["gen_a.py"]
+    execution:
+      command: python
+      args: ["gen_a.py"]
     expected: { return_code: 0 }
 
   - name: B
-    command: python
-    args: ["gen_b.py"]
+    execution:
+      command: python
+      args: ["gen_b.py"]
     expected: { return_code: 0 }
 
   - name: C
-    command: python
-    args: ["gen_c.py"]
+    execution:
+      command: python
+      args: ["gen_c.py"]
     expected: { return_code: 0 }
 
   - name: D
-    command: python
-    args: ["merge.py"]
-    depends_on: [A, B, C]
+    execution:
+      command: python
+      args: ["merge.py"]
+    scheduling:
+      depends_on: [A, B, C]
     expected:
       return_code: 0
       compare_files:
@@ -237,18 +258,18 @@ test_cases:
 | Field | Required | Description |
 |---|---|---|
 | `name` | Yes | Test case name |
-| `command` | Yes | Command to execute (supports commands with arguments as a single string, e.g., `python ./run.py`; the framework auto-splits and resolves the path) |
-| `args` | No | List of command arguments |
+| `execution.command` | Yes | Command to execute (supports commands with arguments as a single string, e.g., `python ./run.py`; the framework auto-splits and resolves the path) |
+| `execution.args` | No | List of command arguments |
 | `description` | No | Test case description |
-| `timeout` | No | Timeout in seconds, default 3600; set `null` for no limit |
-| `retry_count` | No | Number of automatic retries on failure, default 0 (no retry). In single-command mode, applies to the entire case; in step mode, applies per step. If a case passes after retry, results are marked `flaky: true` |
+| `execution.timeout` | No | Timeout in seconds, default 3600; set `null` for no limit |
+| `execution.retry_count` | No | Number of automatic retries on failure, default 0 (no retry). In single-command mode, applies to the entire case; in step mode, applies per step. If a case passes after retry, results are marked `flaky: true` |
 | `tags` | No | Tag list for batch filtering (e.g., `["smoke", "fast"]`) |
-| `resources` | No | Resource configuration, see [Resource-Aware Scheduling](#resource-aware-scheduling) |
+| `scheduling.resources` | No | Resource configuration, see [Resource-Aware Scheduling](#resource-aware-scheduling) |
 | `expected_failure` | No | Mark as expected failure (xfail). When `true`, failure is counted as XFailed (no exit code impact); unexpected pass is counted as XPassed (treated as failure) |
 | `xfail_reason` | No | Reason text for xfail, displayed in the report (e.g., "Bug #42 not yet fixed") |
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
-| `depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
-| `env` | No | Case-level environment variable mapping (e.g. `{"UEL_SYSID_SCALE": "1.0"}`), injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
+| `scheduling.depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
+| `execution.env` | No | Case-level environment variable mapping (e.g. `{"MYAPP_SCALE": "1.0"}`), defined inside `execution`, injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |
@@ -293,18 +314,20 @@ Fields for each comparison rule:
 
 ## Case-Level Environment Variables (env)
 
-Use the `env` field (same level as `name`) to inject environment variables into a single case's subprocess. The variables apply only to that case (all steps in sequence mode) and do not affect other cases.
+Use the `env` field inside `execution` (same level as `command` and `steps`) to inject environment variables into a single case's subprocess. The variables apply only to that case (all steps in sequence mode) and do not affect other cases.
 
 ### JSON
 
 ```json
 {
-    "name": "UEL scale test",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "env": {
-        "UEL_SYSID_SCALE": "1.0",
-        "OMP_NUM_THREADS": "8"
+    "name": "Case-level env test",
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "env": {
+            "MYAPP_SCALE": "1.0",
+            "OMP_NUM_THREADS": "8"
+        }
     },
     "expected": { "return_code": 0 }
 }
@@ -313,26 +336,29 @@ Use the `env` field (same level as `name`) to inject environment variables into 
 ### YAML
 
 ```yaml
-- name: UEL scale test
-  command: solver
-  args: ["-i", "input.dat"]
-  env:
-    UEL_SYSID_SCALE: "1.0"
+- name: Case-level env test
+  execution:
+    command: solver
+    args: ["-i", "input.dat"]
+    env:
+      MYAPP_SCALE: "1.0"
   expected: { return_code: 0 }
 ```
 
 ### Sequence Mode
 
-`env` is defined at the case level (same level as `steps`) and applies to **all steps** of that case:
+`env` is defined inside `execution` (same level as `steps`) and applies to **all steps** of that case:
 
 ```json
 {
     "name": "multi-step with env",
-    "env": { "UEL_SYSID_SCALE": "1.0" },
-    "steps": [
-        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
-        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
-    ]
+    "execution": {
+        "env": { "MYAPP_SCALE": "1.0" },
+        "steps": [
+            { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+            { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+        ]
+    }
 }
 ```
 
@@ -365,8 +391,10 @@ In the main config file, reference sub-files via the `"import"` field. `import` 
     "test_cases": [
         {
             "name": "Inline Test Case",
-            "command": "echo",
-            "args": ["hello"],
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "expected": { "return_code": 0 }
         },
         { "import": "cases/text_tests.json", "tags": ["text"] },
@@ -387,15 +415,19 @@ Sub-files have the same structure as the main file, with a top-level `test_cases
     "test_cases": [
         {
             "name": "text_identical",
-            "command": "python",
-            "args": ["./compare_text.py"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py"]
+            },
             "expected": { "return_code": 0 },
             "tags": ["text"]
         },
         {
             "name": "text_diff",
-            "command": "python",
-            "args": ["./compare_text.py", "--mode", "diff"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py", "--mode", "diff"]
+            },
             "expected": { "return_code": 1 },
             "tags": ["text"]
         }
@@ -482,8 +514,10 @@ Test cases support three new inheritance-related fields:
     {
       "name": "_base_echo",
       "abstract": true,
-      "command": "echo",
-      "args": ["{msg}"],
+      "execution": {
+        "command": "echo",
+        "args": ["{msg}"]
+      },
       "expected": {
         "output_contains": ["{msg}"]
       },
@@ -506,7 +540,7 @@ Test cases support three new inheritance-related fields:
 }
 ```
 
-When expanded, `test_hello` inherits all fields from the base (`command`, `args`, `expected`), and the placeholder `{msg}` is replaced by `variables.msg` → `"hello"`. `test_world` overrides `variables.msg` to `"world"`.
+When expanded, `test_hello` inherits all fields from the base (`execution.command`, `execution.args`, `expected`), and the placeholder `{msg}` is replaced by `variables.msg` → `"hello"`. `test_world` overrides `variables.msg` to `"world"`.
 
 ### Merge Rules
 
@@ -543,7 +577,7 @@ Multi-level inheritance is supported (A → B → C):
 ```json
 {
   "name": "_A", "abstract": true,
-  "command": "python", "args": ["-c"], "expected": {},
+  "execution": { "command": "python", "args": ["-c"] }, "expected": {},
   "variables": {"a": "1"}
 }
 {
@@ -554,7 +588,7 @@ Multi-level inheritance is supported (A → B → C):
 {
   "name": "C", "extends": "_B",
   "variables": {"c": "3"},
-  "args": ["print('{a} {b} {c}')"]
+  "execution": { "args": ["print('{a} {b} {c}')"] }
 }
 ```
 
@@ -611,7 +645,7 @@ symtest validate test_cases.json --output-format json
 | Check | Description |
 |---|---|
 | Syntax correctness | Whether JSON/YAML is valid (implicitly checked on load) |
-| Required fields | Whether each case has `name`, `command`, `args`, `expected` (each step in sequence mode) |
+| Required fields | Whether each case has `name`, `execution.command`, `execution.args`, `expected` (each step in sequence mode) |
 | Import references | Whether referenced sub-files exist |
 | Circular references | Whether an A→B→A cycle exists in the import chain |
 
@@ -814,7 +848,7 @@ symtest run test_cases.json --last-failed
 
 # Resume: skip passed steps, continue from failed step
 symtest run test_cases.json --resume
-symtest run test_cases.json --resume -t BS-U_01
+symtest run test_cases.json --resume -t long_pipeline
 
 # Update baseline files on comparison failure (type yes interactively)
 symtest run test_cases.json --update-baseline
@@ -865,11 +899,11 @@ symtest run config.json
 **Trust model**: `--resume` does **not verify workspace artifacts** (input files, files generated by prior steps, etc.). Using `--resume` means the user confirms input files are unmodified. If workspace contamination is suspected, rerun fully without `--resume`.
 
 ```bash
-# First full run, BS-U_01 step 4 fails (total 72s)
+# First full run, long_pipeline step 4 fails (total 72s)
 symtest run config.json
 
-# After fixing, rerun only BS-U_01, skipping steps 1-3 (~0.14s only)
-symtest run config.json -t BS-U_01 --resume
+# After fixing, rerun only long_pipeline, skipping steps 1-3 (~0.14s only)
+symtest run config.json -t long_pipeline --resume
 
 # After all pass, do one full run to confirm no regressions
 symtest run config.json
@@ -1115,8 +1149,10 @@ JSON:
     "test_cases": [
         {
             "name": "Solver Test",
-            "command": "{solver}",
-            "args": ["--input", "{model}", "--output", "{output}"],
+            "execution": {
+                "command": "{solver}",
+                "args": ["--input", "{model}", "--output", "{output}"]
+            },
             "expected": { "return_code": 0 }
         }
     ]
@@ -1128,8 +1164,9 @@ YAML:
 ```yaml
 test_cases:
   - name: Solver Test
-    command: "{solver}"
-    args: ["--input", "{model}", "--output", "{output}"]
+    execution:
+      command: "{solver}"
+      args: ["--input", "{model}", "--output", "{output}"]
     expected:
       return_code: 0
 ```
@@ -1208,15 +1245,19 @@ JSON:
     "test_cases": [
         {
             "name": "Quick Test",
-            "command": "echo",
-            "args": ["hello"],
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "tags": ["smoke", "fast"],
             "expected": { "return_code": 0 }
         },
         {
             "name": "Full Regression Test",
-            "command": "python",
-            "args": ["long_test.py"],
+            "execution": {
+                "command": "python",
+                "args": ["long_test.py"]
+            },
             "tags": ["regression", "slow"],
             "expected": { "return_code": 0 }
         }
@@ -1229,8 +1270,9 @@ YAML:
 ```yaml
 test_cases:
   - name: Quick Test
-    command: echo
-    args: ["hello"]
+    execution:
+      command: echo
+      args: ["hello"]
     tags: ["smoke", "fast"]
     expected:
       return_code: 0
@@ -1360,19 +1402,21 @@ A test case can contain multiple ordered steps. If any step fails, subsequent st
     "test_cases": [
         {
             "name": "Multi-step Test",
-            "steps": [
-                {
-                    "command": "echo",
-                    "args": ["step1"],
-                    "expected": { "return_code": 0 }
-                },
-                {
-                    "command": "echo",
-                    "args": ["step2"],
-                    "expected": { "return_code": 0 },
-                    "retry_count": 2
-                }
-            ]
+            "execution": {
+                "steps": [
+                    {
+                        "command": "echo",
+                        "args": ["step1"],
+                        "expected": { "return_code": 0 }
+                    },
+                    {
+                        "command": "echo",
+                        "args": ["step2"],
+                        "expected": { "return_code": 0 },
+                        "retry_count": 2
+                    }
+                ]
+            }
         }
     ]
 }
@@ -1383,15 +1427,16 @@ A test case can contain multiple ordered steps. If any step fails, subsequent st
 ```yaml
 test_cases:
   - name: Multi-step Test
-    steps:
-      - command: echo
-        args: ["step1"]
-        expected:
-          return_code: 0
-      - command: echo
-        args: ["step2"]
-        expected:
-          return_code: 0
+    execution:
+      steps:
+        - command: echo
+          args: ["step1"]
+          expected:
+            return_code: 0
+        - command: echo
+          args: ["step2"]
+          expected:
+            return_code: 0
 ```
 
 Each step supports `command`, `args`, `expected`, `timeout`, and `retry_count` fields.
@@ -1411,18 +1456,20 @@ After all steps have passed, you can define additional case-level `expected` ass
 ```json
 {
     "name": "Multi-step + File Comparison",
-    "steps": [
-        {
-            "command": "python",
-            "args": ["./generate.py", "output.csv"],
-            "expected": { "return_code": 0 }
-        },
-        {
-            "command": "python",
-            "args": ["./process.py", "output.csv"],
-            "expected": { "return_code": 0, "output_contains": ["Done"] }
-        }
-    ],
+    "execution": {
+        "steps": [
+            {
+                "command": "python",
+                "args": ["./generate.py", "output.csv"],
+                "expected": { "return_code": 0 }
+            },
+            {
+                "command": "python",
+                "args": ["./process.py", "output.csv"],
+                "expected": { "return_code": 0, "output_contains": ["Done"] }
+            }
+        ]
+    },
     "expected": {
         "compare_files": [
             {
@@ -1442,19 +1489,23 @@ After all steps have passed, you can define additional case-level `expected` ass
 
 ## Resource-Aware Scheduling
 
-Only effective in thread mode. Configured via the `resources` field; the framework automatically manages CPU core allocation.
+Only effective in thread mode. Configured via the `scheduling.resources` field; the framework automatically manages CPU core allocation.
 
 ```json
 {
     "name": "Heavy_Simulation",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "timeout": 36000,
-    "resources": {
-        "cpu_cores": 4,
-        "estimated_time": 18000,
-        "min_memory_mb": 16000,
-        "priority": 10
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "timeout": 36000
+    },
+    "scheduling": {
+        "resources": {
+            "cpu_cores": 4,
+            "estimated_time": 18000,
+            "min_memory_mb": 16000,
+            "priority": 10
+        }
     },
     "expected": { "return_code": 0 }
 }
@@ -1740,13 +1791,25 @@ When enabled, each failed file comparison appends `error_stats` to the Compare F
 | `mean_abs_error` | Mean absolute error |
 | `rms_abs_error` | Root-mean-square absolute error (RMSE) |
 
-Statistics are computed **in streaming fashion**, independent of the difference truncation, covering all numeric cells. Only failed comparisons output statistics; passed comparisons do not.
+Statistics are computed **in streaming fashion**, independent of the difference truncation, covering all numeric cells. By default only failed comparisons output statistics; passed comparisons do not.
+
+To also output statistics for **passed** cases (e.g. to monitor tolerance headroom), use `--error-analysis-all` instead (it implicitly enables `--error-analysis`):
+
+```bash
+# Output error statistics for all cases (including passed ones)
+symtest run config.json --error-analysis-all
+```
+
+When enabled, each **passed** case lists the above statistics in the Detailed Results section as `error_stats:`. For passed cases the statistics are also written to the `assertion_results[].error_stats` field of the `--output json` report for programmatic consumption. Statistics for passed cases are produced only when `--error-analysis-all` is enabled; otherwise behavior is unchanged.
 
 **CLI Usage**:
 
 ```bash
 # Enable error analysis
 symtest run config.json --error-analysis
+
+# Enable error analysis and also output statistics for passed cases
+symtest run config.json --error-analysis-all
 
 # Combine with comparison parameters
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
@@ -2003,8 +2066,8 @@ comparator = ComparatorFactory.create_comparator("foo")
 ```json
 {
   "type": "hourglass_tangent",
-  "script": "case/.../analyze_HG-M1_D1_A1e-4_tangent.py",
-  "case_dir": "case/.../WP31_pure/HG-M1_D1_A1e-4",
+  "script": "case/.../analyze_case01_tangent.py",
+  "case_dir": "case/.../case01",
   "pass_threshold": 1e-6,
   "timeout": 600
 }
@@ -2081,9 +2144,9 @@ python tests/run_all.py --scope unit --extra "-v -k assertions"
 
 `--extra` accepts a string that is split via `shlex` and appended to the pytest command line. The script invokes pytest through the current interpreter (`sys.executable -m pytest`), ensuring the activated environment is used rather than the first `pytest` found on PATH.
 
-Activate the conda environment before running tests:
+Activate your Python environment (e.g. conda) before running tests:
 
 ```bash
-conda activate xiaotong
+conda activate <your-env>
 python tests/run_all.py
 ```

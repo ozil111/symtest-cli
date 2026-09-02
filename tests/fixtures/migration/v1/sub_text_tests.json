@@ -1,0 +1,22 @@
+{
+  "test_cases": [
+    {
+      "name": "text_identical",
+      "command": "python",
+      "args": ["./compare_text.py"],
+      "expected": {
+        "return_code": 0
+      },
+      "tags": ["text"]
+    },
+    {
+      "name": "text_diff",
+      "command": "python",
+      "args": ["./compare_text.py", "--mode", "diff"],
+      "expected": {
+        "return_code": 1
+      },
+      "tags": ["text"]
+    }
+  ]
+}

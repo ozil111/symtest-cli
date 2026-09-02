@@ -7,8 +7,10 @@ import pytest
 from symtest.core.config_loader import (
     substitute_placeholders,
     parse_test_cases,
-    execute_sequence,
 )
+from symtest.core.test_case import TestCaseStep
+from symtest.core.orchestration.sequence import execute_sequence
+from symtest.core.validation.result import ValidationResult
 
 
 # ---------------------------------------------------------------------------
@@ -147,17 +149,19 @@ class TestPlaceholderInTestCases:
 # ---------------------------------------------------------------------------
 
 class TestParseRetryCount:
-    """Tests for ``retry_count`` parsing in ``parse_test_cases``."""
+    """Tests for ``retry_count`` parsing in ``parse_test_cases`` (Schema v2)."""
 
     def test_single_command_retry_count(self):
         config = {
             "test_cases": [
                 {
                     "name": "retry-case",
-                    "command": "echo",
-                    "args": ["ok"],
+                    "execution": {
+                        "command": "echo",
+                        "args": ["ok"],
+                        "retry_count": 3,
+                    },
                     "expected": {"return_code": 0},
-                    "retry_count": 3,
                 }
             ]
         }
@@ -171,8 +175,7 @@ class TestParseRetryCount:
             "test_cases": [
                 {
                     "name": "no-retry",
-                    "command": "echo",
-                    "args": ["ok"],
+                    "execution": {"command": "echo", "args": ["ok"]},
                     "expected": {"return_code": 0},
                 }
             ]
@@ -185,19 +188,21 @@ class TestParseRetryCount:
             "test_cases": [
                 {
                     "name": "step-case",
-                    "steps": [
-                        {
-                            "command": "echo",
-                            "args": ["s1"],
-                            "expected": {"return_code": 0},
-                        },
-                        {
-                            "command": "echo",
-                            "args": ["s2"],
-                            "expected": {"return_code": 0},
-                            "retry_count": 2,
-                        },
-                    ],
+                    "execution": {
+                        "steps": [
+                            {
+                                "command": "echo",
+                                "args": ["s1"],
+                                "expected": {"return_code": 0},
+                            },
+                            {
+                                "command": "echo",
+                                "args": ["s2"],
+                                "expected": {"return_code": 0},
+                                "retry_count": 2,
+                            },
+                        ],
+                    },
                 }
             ]
         }
@@ -213,18 +218,59 @@ class TestParseRetryCount:
             "test_cases": [
                 {
                     "name": "step-no-retry",
-                    "steps": [
-                        {
-                            "command": "echo",
-                            "args": ["s1"],
-                            "expected": {"return_code": 0},
-                        }
-                    ],
+                    "execution": {
+                        "steps": [
+                            {
+                                "command": "echo",
+                                "args": ["s1"],
+                                "expected": {"return_code": 0},
+                            }
+                        ],
+                    },
                 }
             ]
         }
         cases = parse_test_cases(config)
         assert cases[0].steps[0].retry_count == 0
+
+
+class TestParseV2LayeredFields:
+    """v2 分层取值：scheduling / execution.env 从对应 Spec 读取。"""
+
+    def test_scheduling_depends_on_and_resources(self):
+        config = {
+            "test_cases": [
+                {
+                    "name": "sched",
+                    "execution": {"command": "echo", "args": ["ok"]},
+                    "expected": {"return_code": 0},
+                    "scheduling": {
+                        "depends_on": ["preprocess"],
+                        "resources": {"cpu_cores": 4},
+                    },
+                }
+            ]
+        }
+        cases = parse_test_cases(config)
+        assert cases[0].depends_on == ["preprocess"]
+        assert cases[0].resources == {"cpu_cores": 4}
+
+    def test_execution_env_parsed(self):
+        config = {
+            "test_cases": [
+                {
+                    "name": "envy",
+                    "execution": {
+                        "command": "echo",
+                        "args": [],
+                        "env": {"OMP_NUM_THREADS": "4"},
+                    },
+                    "expected": {"return_code": 0},
+                }
+            ]
+        }
+        cases = parse_test_cases(config)
+        assert cases[0].env == {"OMP_NUM_THREADS": "4"}
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +285,11 @@ class TestParseCaseLevelExpected:
             "test_cases": [
                 {
                     "name": "case-with-expected",
-                    "steps": [
-                        {"command": "echo", "args": ["s1"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["s1"], "expected": {"return_code": 0}},
+                        ],
+                    },
                     "expected": {
                         "compare_files": [
                             {"actual": "out.csv", "baseline": "ref.csv", "type": "csv"},
@@ -263,9 +311,11 @@ class TestParseCaseLevelExpected:
             "test_cases": [
                 {
                     "name": "no-expected",
-                    "steps": [
-                        {"command": "echo", "args": ["s1"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["s1"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -277,9 +327,11 @@ class TestParseCaseLevelExpected:
             "test_cases": [
                 {
                     "name": "case-rc",
-                    "steps": [
-                        {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
+                        ],
+                    },
                     "expected": {"return_code": 0},
                 }
             ]
@@ -316,18 +368,26 @@ def _failed_result(name="step"):
     }
 
 
+def _steps(*specs):
+    """Build TestCaseStep objects from (command, args, expected) tuples."""
+    return [
+        TestCaseStep(command=cmd, args=args, expected=expected)
+        for cmd, args, expected in specs
+    ]
+
+
 class TestExecuteSequenceCaseExpected:
     """Tests for case-level ``expected`` in ``execute_sequence``."""
 
     def test_all_steps_pass_and_case_expected_passes(self):
-        steps = [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("echo", ["one"], {"return_code": 0}),
+            ("echo", ["two"], {"return_code": 0}),
+        )
         case_expected = {"output_contains": ["one"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -343,13 +403,11 @@ class TestExecuteSequenceCaseExpected:
         assert executor.call_count == 2
 
     def test_all_steps_pass_but_case_expected_fails(self):
-        steps = [
-            {"command": "echo", "args": ["hello"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["hello"], {"return_code": 0}))
         case_expected = {"output_contains": ["MISSING_TEXT"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "hello world\n")
             result = execute_sequence(
@@ -362,14 +420,14 @@ class TestExecuteSequenceCaseExpected:
         assert "Case-level assertion failed" in result["message"]
 
     def test_step_fails_case_expected_not_executed(self):
-        steps = [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "tool", "args": ["fail"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("echo", ["one"], {"return_code": 0}),
+            ("tool", ["fail"], {"return_code": 0}),
+        )
         case_expected = {"output_contains": ["SHOULD_NOT_RUN"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -387,12 +445,10 @@ class TestExecuteSequenceCaseExpected:
         assert "Failed at step 2/2" in result["message"]
 
     def test_no_case_expected_backward_compatible(self):
-        steps = [
-            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["ok"], {"return_code": 0}))
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -404,12 +460,10 @@ class TestExecuteSequenceCaseExpected:
         assert executor.call_count == 1
 
     def test_empty_case_expected_does_nothing(self):
-        steps = [
-            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["ok"], {"return_code": 0}))
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -423,15 +477,15 @@ class TestExecuteSequenceCaseExpected:
 
     def test_error_message_step_count_with_case_expected(self):
         """When case_expected exists, total steps = len(steps) + 1."""
-        steps = [
-            {"command": "echo", "args": ["one"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["two"], "expected": {"return_code": 0}},
-            {"command": "echo", "args": ["three"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(
+            ("echo", ["one"], {"return_code": 0}),
+            ("echo", ["two"], {"return_code": 0}),
+            ("echo", ["three"], {"return_code": 0}),
+        )
         case_expected = {"output_contains": ["MISSING"]}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.side_effect = [
                 _passed_result("s1", "one\n"),
@@ -449,15 +503,13 @@ class TestExecuteSequenceCaseExpected:
         assert "Failed at step 4/4" in result["message"]
 
     def test_case_expected_with_return_code(self):
-        steps = [
-            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["ok"], {"return_code": 0}))
         # The combined result's return_code comes from last step (0)
         # and case_expected.return_code also expects 0 → pass
         case_expected = {"return_code": 0}
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             result = execute_sequence(
@@ -469,9 +521,7 @@ class TestExecuteSequenceCaseExpected:
         assert result["status"] == "passed"
 
     def test_case_expected_compare_files_invoked(self):
-        steps = [
-            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["ok"], {"return_code": 0}))
         case_expected = {
             "compare_files": [
                 {"actual": "a.txt", "baseline": "b.txt", "type": "text"}
@@ -479,12 +529,20 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "symtest.core.execution.validate_result"
+                "symtest.core.orchestration.sequence.validate_result"
             ) as mock_validate:
+                mock_validate.return_value = ValidationResult(
+                    passed=True,
+                    assertion_results=[
+                        {"assertion": "compare_files", "passed": True,
+                         "error_stats": None, "compare_failures": [],
+                         "baseline_updated": [], "message": ""},
+                    ],
+                )
                 result = execute_sequence(
                     case_name="case-compare-files",
                     steps=steps,
@@ -496,9 +554,7 @@ class TestExecuteSequenceCaseExpected:
         assert result["status"] == "passed"
 
     def test_case_expected_compare_files_fails(self):
-        steps = [
-            {"command": "echo", "args": ["ok"], "expected": {"return_code": 0}},
-        ]
+        steps = _steps(("echo", ["ok"], {"return_code": 0}))
         case_expected = {
             "compare_files": [
                 {"actual": "a.txt", "baseline": "b.txt", "type": "text"}
@@ -506,11 +562,11 @@ class TestExecuteSequenceCaseExpected:
         }
 
         with patch(
-            "symtest.core.config_loader.execute_single_test_case"
+            "symtest.core.orchestration.sequence.execute_single_test_case"
         ) as executor:
             executor.return_value = _passed_result("s1", "ok\n")
             with patch(
-                "symtest.core.execution.validate_result",
+                "symtest.core.orchestration.sequence.validate_result",
                 side_effect=AssertionError("Files differ"),
             ):
                 result = execute_sequence(
