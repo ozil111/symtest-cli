@@ -8,6 +8,8 @@
     legacy config ──migrate──▶ new config ──new parser──▶ Normalized B
                                        断言 A == B
 
+3. 递归 import 树迁移：默认 .v2 副本 + 路径重写，--in-place 原地覆盖。
+
 语料：tests/fixtures/migration/v1/（tests/ 与 examples/ 存量 v1 配置的原件拷贝）。
 """
 
@@ -295,3 +297,194 @@ class TestRunMigrate:
         assert run_migrate(
             self._args(src, output=tmp_path / "out.txt", workspace=str(tmp_path))
         ) is False
+
+
+# ---------------------------------------------------------------------------
+# 递归 import 树迁移（默认 .v2 副本 + 路径重写 / --in-place 原地覆盖）
+# ---------------------------------------------------------------------------
+
+def _v1_case(name):
+    return {
+        "name": name,
+        "command": "echo",
+        "args": [name],
+        "expected": {"return_code": 0},
+    }
+
+
+class TestRunMigrateTree:
+    def _args(self, config, output=None, workspace=None, in_place=False):
+        return argparse.Namespace(
+            config_file=str(config),
+            output=str(output) if output else None,
+            workspace=workspace,
+            in_place=in_place,
+        )
+
+    @staticmethod
+    def _read(path):
+        if path.suffix.lower() in (".yaml", ".yml"):
+            import yaml
+            return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _three_level_tree(self, tmp_path):
+        """main.json -> sub.json -> subsub.json 三层 v1 import 树。"""
+        (tmp_path / "subsub.json").write_text(
+            json.dumps({"test_cases": [_v1_case("leaf")]}), encoding="utf-8")
+        (tmp_path / "sub.json").write_text(json.dumps({
+            "test_cases": [{"import": "subsub.json"}, _v1_case("mid")],
+        }), encoding="utf-8")
+        (tmp_path / "main.json").write_text(json.dumps({
+            "test_cases": [
+                {"import": "sub.json", "tags": ["api"]},
+                _v1_case("root"),
+            ],
+        }), encoding="utf-8")
+
+    def test_default_mode_migrates_whole_tree(self, tmp_path):
+        self._three_level_tree(tmp_path)
+        assert run_migrate(
+            self._args(tmp_path / "main.json", workspace=str(tmp_path))
+        ) is True
+
+        main_v2 = tmp_path / "main.v2.json"
+        sub_v2 = tmp_path / "sub.v2.json"
+        subsub_v2 = tmp_path / "subsub.v2.json"
+        for p in (main_v2, sub_v2, subsub_v2):
+            assert p.exists()
+
+        # 父文件 import 路径已重写为 .v2 名，tags 等其他字段保留
+        migrated_main = self._read(main_v2)
+        assert migrated_main["test_cases"][0]["import"] == "sub.v2.json"
+        assert migrated_main["test_cases"][0]["tags"] == ["api"]
+        assert migrated_main["test_cases"][1]["execution"]["command"] == "echo"
+        migrated_sub = self._read(sub_v2)
+        assert migrated_sub["test_cases"][0]["import"] == "subsub.v2.json"
+        assert self._read(subsub_v2)["test_cases"][0]["execution"]["args"] == ["leaf"]
+
+        # 原文件保持 v1 未动
+        for name in ("main.json", "sub.json", "subsub.json"):
+            for tc in self._read(tmp_path / name)["test_cases"]:
+                if "import" not in tc:
+                    assert "execution" not in tc
+
+    def test_in_place_overwrites_tree(self, tmp_path):
+        self._three_level_tree(tmp_path)
+        assert run_migrate(
+            self._args(tmp_path / "main.json",
+                       workspace=str(tmp_path), in_place=True)
+        ) is True
+
+        # 原文件原地变为 v2，import 路径不变，不产生 .v2 副本
+        migrated_main = self._read(tmp_path / "main.json")
+        assert migrated_main["test_cases"][0]["import"] == "sub.json"
+        assert migrated_main["test_cases"][1]["execution"]["command"] == "echo"
+        assert self._read(tmp_path / "sub.json")["test_cases"][0]["import"] \
+            == "subsub.json"
+        assert self._read(tmp_path / "subsub.json")["test_cases"][0] \
+            ["execution"]["args"] == ["leaf"]
+        assert not (tmp_path / "main.v2.json").exists()
+
+    def test_diamond_import_migrated_once(self, tmp_path):
+        (tmp_path / "d.json").write_text(
+            json.dumps({"test_cases": [_v1_case("shared")]}), encoding="utf-8")
+        for name in ("b.json", "c.json"):
+            (tmp_path / name).write_text(json.dumps(
+                {"test_cases": [{"import": "d.json"}]}), encoding="utf-8")
+        (tmp_path / "main.json").write_text(json.dumps({
+            "test_cases": [{"import": "b.json"}, {"import": "c.json"}],
+        }), encoding="utf-8")
+
+        assert run_migrate(
+            self._args(tmp_path / "main.json",
+                       workspace=str(tmp_path), in_place=True)
+        ) is True
+        # 菱形引用不误报循环，d.json 已迁移
+        assert self._read(tmp_path / "d.json")["test_cases"][0] \
+            ["execution"]["command"] == "echo"
+
+    def test_circular_import_writes_nothing(self, tmp_path):
+        (tmp_path / "a.json").write_text(
+            json.dumps({"test_cases": [{"import": "b.json"}]}), encoding="utf-8")
+        (tmp_path / "b.json").write_text(
+            json.dumps({"test_cases": [{"import": "a.json"}]}), encoding="utf-8")
+        snapshot = {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()}
+
+        assert run_migrate(
+            self._args(tmp_path / "a.json", workspace=str(tmp_path))
+        ) is False
+        # 两阶段保证：任一失败不写任何文件
+        assert {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()} \
+            == snapshot
+
+    def test_missing_import_writes_nothing(self, tmp_path):
+        (tmp_path / "main.json").write_text(
+            json.dumps({"test_cases": [{"import": "ghost.json"}]}),
+            encoding="utf-8")
+        before = (tmp_path / "main.json").read_text(encoding="utf-8")
+
+        assert run_migrate(
+            self._args(tmp_path / "main.json", workspace=str(tmp_path))
+        ) is False
+        assert (tmp_path / "main.json").read_text(encoding="utf-8") == before
+        assert not (tmp_path / "main.v2.json").exists()
+
+    def test_sub_without_test_cases_writes_nothing(self, tmp_path):
+        (tmp_path / "sub.json").write_text(
+            json.dumps({"setup": {}}), encoding="utf-8")
+        (tmp_path / "main.json").write_text(
+            json.dumps({"test_cases": [{"import": "sub.json"}]}),
+            encoding="utf-8")
+
+        assert run_migrate(
+            self._args(tmp_path / "main.json", workspace=str(tmp_path))
+        ) is False
+        assert not (tmp_path / "main.v2.json").exists()
+        assert not (tmp_path / "sub.v2.json").exists()
+
+    def test_output_and_in_place_conflict(self, tmp_path):
+        src = tmp_path / "old.json"
+        src.write_text(json.dumps({"test_cases": []}), encoding="utf-8")
+        assert run_migrate(self._args(
+            src, output=tmp_path / "new.json",
+            workspace=str(tmp_path), in_place=True,
+        )) is False
+        assert not (tmp_path / "new.json").exists()
+        assert json.loads(src.read_text(encoding="utf-8")) == {"test_cases": []}
+
+    def test_in_place_idempotent_on_v2_tree(self, tmp_path):
+        self._three_level_tree(tmp_path)
+        assert run_migrate(
+            self._args(tmp_path / "main.json",
+                       workspace=str(tmp_path), in_place=True)
+        ) is True
+        first_pass = {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()}
+        assert run_migrate(
+            self._args(tmp_path / "main.json",
+                       workspace=str(tmp_path), in_place=True)
+        ) is True
+        assert {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()} \
+            == first_pass
+
+    def test_mixed_json_yaml_tree(self, tmp_path):
+        (tmp_path / "sub.yaml").write_text(
+            "test_cases:\n"
+            "  - name: y\n"
+            "    command: echo\n"
+            "    args: []\n"
+            "    expected: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "main.json").write_text(
+            json.dumps({"test_cases": [{"import": "sub.yaml"}]}),
+            encoding="utf-8")
+
+        assert run_migrate(
+            self._args(tmp_path / "main.json", workspace=str(tmp_path))
+        ) is True
+        assert (tmp_path / "sub.v2.yaml").exists()
+        assert self._read(tmp_path / "sub.v2.yaml")["test_cases"][0] \
+            ["execution"]["command"] == "echo"
+        assert self._read(tmp_path / "main.v2.json")["test_cases"][0]["import"] \
+            == "sub.v2.yaml"

@@ -48,7 +48,7 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
 
 ## 测试用例定义
 
-> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。
+> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。迁移会递归处理整棵 `import` 树：默认为每个文件生成 `<stem>.v2<ext>` 副本并自动重写父文件中的 import 路径；`--in-place` 则原地覆盖所有文件（与 `--output` 互斥）。
 
 ### JSON 格式
 

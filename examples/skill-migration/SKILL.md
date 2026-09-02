@@ -42,8 +42,15 @@ old config → symtest migrate → new schema → symtest validate → manual re
    symtest migrate old.json --output new.json
    ```
    Default output is `<stem>.v2<ext>` (e.g. `old.json` → `old.v2.json`).
-   `migrate` is a mechanical field move; it does not expand imports, resolve
-   paths, or validate required fields.
+   `migrate` recursively follows the whole `import` tree as a mechanical
+   field move; it never expands (inlines) imports, resolves paths, or
+   validates required fields:
+   - Default: every file in the tree gets a `<stem>.v2<ext>` copy and import
+     paths in migrated parents are rewritten to the `.v2` names, so the
+     migrated tree is self-consistent for `symtest validate`.
+   - `--in-place`: every file in the tree is overwritten in place (file
+     names, formats and import paths unchanged; mutually exclusive with
+     `--output`).
 
 2. **Validate the result**:
    ```bash
@@ -77,8 +84,10 @@ old config → symtest migrate → new schema → symtest validate → manual re
 - Idempotent: input already containing `execution` is passed through
   unchanged (deep copy).
 - JSON/YAML in → same format out (chosen by output file extension).
-- Import entries are preserved as-is (not expanded) so the migrated project
-  keeps its file split; each imported file must be migrated separately.
+- Imports are followed recursively (never expanded inline) so the migrated
+  project keeps its file split: default mode writes `<stem>.v2<ext>` copies
+  with import paths rewritten; `--in-place` overwrites every file in place
+  (originals are not kept).
 - Unknown top-level fields are preserved verbatim — `symtest validate` and
   this skill's checklist decide whether they are still meaningful.
 

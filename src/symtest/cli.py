@@ -208,6 +208,12 @@ Examples:
         '--output', '-o',
         help='Output path (default: <stem>.v2<ext>, e.g. old.json -> old.v2.json)',
     )
+    migrate_parser.add_argument(
+        '--in-place', action='store_true',
+        help='Migrate the config and every file it imports recursively, '
+             'overwriting each file in place (originals are not kept; '
+             'mutually exclusive with --output)',
+    )
 
     # ---- Compare command ----
     compare_parser = subparsers.add_parser('compare', help='Compare two files')

@@ -48,7 +48,7 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
 
 ## Test Case Definition
 
-> **Schema v2 (1.4)**: The config uses a layered DSL — execution-related fields (`command`, `args`, `timeout`, `retry_count`, `env`, `steps`) live in the `execution` block, scheduling-related fields (`depends_on`, `resources`) live in the `scheduling` block, and `expected` stays at the top level. The old flat layout was removed; use `symtest migrate` to migrate.
+> **Schema v2 (1.4)**: The config uses a layered DSL — execution-related fields (`command`, `args`, `timeout`, `retry_count`, `env`, `steps`) live in the `execution` block, scheduling-related fields (`depends_on`, `resources`) live in the `scheduling` block, and `expected` stays at the top level. The old flat layout was removed; use `symtest migrate` to migrate. Migration recursively covers the whole `import` tree: by default each file gets a `<stem>.v2<ext>` copy with import paths rewritten automatically; `--in-place` overwrites all files in place (mutually exclusive with `--output`).
 
 ### JSON Format
 
