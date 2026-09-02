@@ -2,8 +2,10 @@
   "test_cases": [
     {
       "name": "测试Python版本",
-      "command": "python",
-      "args": ["--version"],
+      "execution": {
+        "command": "python",
+        "args": ["--version"]
+      },
       "expected": {
         "return_code": 0,
         "output_contains": ["Python"]
@@ -11,8 +13,10 @@
     },
     {
       "name": "测试目录列表",
-      "command": "dir",
-      "args": ["."],
+      "execution": {
+        "command": "dir",
+        "args": ["."]
+      },
       "expected": {
         "return_code": 0,
         "output_contains": ["src"]
@@ -20,8 +24,10 @@
     },
     {
       "name": "测试echo命令",
-      "command": "echo",
-      "args": ["Hello World"],
+      "execution": {
+        "command": "echo",
+        "args": ["Hello World"]
+      },
       "expected": {
         "return_code": 0,
         "output_contains": ["Hello World"]
@@ -29,8 +35,10 @@
     },
     {
       "name": "测试ping本地回环",
-      "command": "ping",
-      "args": ["-n", "1", "127.0.0.1"],
+      "execution": {
+        "command": "ping",
+        "args": ["-n", "1", "127.0.0.1"]
+      },
       "expected": {
         "return_code": 0,
         "output_contains": ["127.0.0.1"]
@@ -38,20 +46,24 @@
     },
     {
       "name": "测试时间命令",
-      "command": "echo",
-      "args": ["%time%"],
+      "execution": {
+        "command": "echo",
+        "args": ["%time%"]
+      },
       "expected": {
         "return_code": 0
       }
     },
     {
       "name": "测试文件存在性",
-      "command": "dir",
-      "args": ["src"],
+      "execution": {
+        "command": "dir",
+        "args": ["src"]
+      },
       "expected": {
         "return_code": 0,
         "output_contains": ["core", "runners"]
       }
     }
   ]
-} 
+}

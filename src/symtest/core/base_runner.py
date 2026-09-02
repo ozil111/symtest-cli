@@ -5,9 +5,8 @@ from collections import deque
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
 from .test_case import TestCase
-from .assertions import Assertions
+from .validation.assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
-from .execution import execute_single_test_case
 from .history_store import load_history, update_case, check_regression, save_history, reset_cases
 from .last_run_store import update_last_run, get_last_failed_names
 from ..file_comparator.factory import ComparatorFactory
@@ -372,7 +371,7 @@ class BaseRunner(ABC):
 
     def _run_sequence(self, case: TestCase) -> Dict[str, Any]:
         """Run a sequence test case with multiple steps (fail-fast)."""
-        from .config_loader import execute_sequence
+        from .orchestration.sequence import execute_sequence
         return execute_sequence(
             case_name=case.name,
             steps=case.steps,

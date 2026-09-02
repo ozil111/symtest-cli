@@ -1,69 +1,75 @@
-# CLI Test Framework User Manual
+# CLI Test Framework 使用说明书
 
-## Table of Contents
+## 目录
 
-- [Installation](#installation)
-- [Test Case Definition](#test-case-definition)
-- [Case-Level Environment Variables](#case-level-environment-variables-env)
-- [Configuration Splitting](#configuration-splitting)
-- [Configuration Inheritance](#configuration-inheritance)
-- [Configuration Validation](#configuration-validation)
-- [TUI Interactive Manager](#tui-interactive-manager)
-- [Running Tests](#running-tests)
-- [Project Entry Script](#project-entry-script)
-- [Placeholders (Variable Substitution)](#placeholders-variable-substitution)
-- [Tag Filtering](#tag-filtering)
-- [Setup Module](#setup-module)
-- [Parallel Testing](#parallel-testing)
-- [Sequential Step Testing](#sequential-step-testing)
-- [Resource-Aware Scheduling](#resource-aware-scheduling)
-- [History & Regression Detection](#history--regression-detection)
-- [JUnit XML Report](#junit-xml-report)
-- [Logging Configuration](#logging-configuration)
-- [File Comparison](#file-comparison)
-- [Extension Development](#extension-development)
-- [Running Framework Tests](#running-framework-tests)
+- [安装](#安装)
+- [测试用例定义](#测试用例定义)
+- [Case 级环境变量](#case-级环境变量env)
+- [配置拆分机制](#配置拆分机制)
+- [配置继承](#配置继承)
+- [配置校验](#配置校验)
+- [TUI 交互式管理器](#tui-交互式管理器)
+- [运行测试](#运行测试)
+- [项目入口脚本](#项目入口脚本)
+- [占位符（变量替换）](#占位符变量替换)
+- [标签过滤](#标签过滤)
+- [Setup 模块](#setup-模块)
+- [并行测试](#并行测试)
+- [顺序步骤测试](#顺序步骤测试)
+- [资源感知调度](#资源感知调度)
+- [历史记录与回归检测](#历史记录与回归检测)
+- [JUnit XML 报告](#junit-xml-报告)
+- [日志配置](#日志配置)
+- [文件比较](#文件比较)
+- [扩展开发](#扩展开发)
+- [运行框架自带测试](#运行框架自带测试)
 
-## Installation
+## 安装
 
 ```bash
 pip install symtest-cli
 ```
 
-Requirement: Python >= 3.9
+要求：Python >= 3.9
 
-YAML support is available as an optional dependency:
+YAML 支持需安装可选依赖：
 
 ```bash
 pip install "symtest-cli[yaml]"
 ```
 
-Install YAML, TUI, and all other optional features together:
+一次安装 YAML 和 TUI 等全部可选功能：
 
 ```bash
 pip install "symtest-cli[all]"
 ```
 
-HDF5 file comparison depends on `h5py` (installed with the framework). If you need to use other comparison features without HDF5, you can uninstall it separately, but HDF5 comparison will become unavailable.
+HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环境下使用其他比较功能，可单独卸载，但 HDF5 比较将不可用。
 
-## Test Case Definition
+## 测试用例定义
 
-### JSON Format
+> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。
+
+### JSON 格式
 
 ```json
 {
     "test_cases": [
         {
-            "name": "Test Name",
-            "command": "echo",
-            "args": ["Hello"],
-            "timeout": 60,
-            "retry_count": 0,
-            "resources": {
-                "cpu_cores": 2,
-                "estimated_time": 300,
-                "min_memory_mb": 1024,
-                "priority": 5
+            "name": "测试名称",
+            "execution": {
+                "command": "echo",
+                "args": ["Hello"],
+                "timeout": 60,
+                "retry_count": 0
+            },
+            "scheduling": {
+                "resources": {
+                    "cpu_cores": 2,
+                    "estimated_time": 300,
+                    "min_memory_mb": 1024,
+                    "priority": 5
+                }
             },
             "expected": {
                 "return_code": 0,
@@ -79,31 +85,35 @@ HDF5 file comparison depends on `h5py` (installed with the framework). If you ne
             }
         },
         {
-            "name": "Known Failure Test",
-            "command": "echo",
-            "args": ["should_fail"],
+            "name": "已知失败的测试",
+            "execution": {
+                "command": "echo",
+                "args": ["should_fail"]
+            },
             "expected_failure": true,
-            "xfail_reason": "Bug #42 not yet fixed",
+            "xfail_reason": "Bug #42 尚未修复",
             "expected": { "return_code": 1 }
         }
     ]
 }
 ```
 
-### YAML Format
+### YAML 格式
 
 ```yaml
 test_cases:
-  - name: Test Name
-    command: echo
-    args: ["Hello"]
-    timeout: 60
-    retry_count: 0
-    resources:
-      cpu_cores: 2
-      estimated_time: 300
-      min_memory_mb: 1024
-      priority: 5
+  - name: 测试名称
+    execution:
+      command: echo
+      args: ["Hello"]
+      timeout: 60
+      retry_count: 0
+    scheduling:
+      resources:
+        cpu_cores: 2
+        estimated_time: 300
+        min_memory_mb: 1024
+        priority: 5
     expected:
       return_code: 0
       output_contains:
@@ -114,100 +124,111 @@ test_cases:
           baseline: baseline.txt
           type: text
 
-  - name: Known Failure Test
-    command: echo
-    args: ["should_fail"]
+  - name: 已知失败的测试
+    execution:
+      command: echo
+      args: ["should_fail"]
     expected_failure: true
-    xfail_reason: "Bug #42 not yet fixed"
+    xfail_reason: "Bug #42 尚未修复"
     xfail_quiet: true
     expected:
       return_code: 1
 ```
 
-### Expected Failure (xfail)
+### 预期失败（xfail）
 
-When a known defect prevents a test case from passing, you can mark `expected_failure: true`. The framework distinguishes between "expected failures" and "unexpected passes":
+当存在已知缺陷导致某用例无法通过时，可标记 `expected_failure: true`，框架会区分"预期中的失败"与"意外的通过"：
 
-| Scenario | Status | Exit Code Impact | Description |
+| 场景 | 状态 | 退出码影响 | 说明 |
 |---|---|---|---|
-| xfail + indeed failed | `xfailed` | Not counted as failure | Report shows `xfail_reason`; details displayed normally (can suppress Command Output via `xfail_quiet`) |
-| xfail + unexpectedly passed | `xpassed` | **Counted as failure** | Report highlights "remove xfail marker" |
+| xfail 标记 + 确实失败 | `xfailed` | 不计数为失败 | 报告展示 `xfail_reason`，详情照常输出（可通过 `xfail_quiet` 抑制 Command Output） |
+| xfail 标记 + 意外通过 | `xpassed` | **计入失败** | 报告高亮提示"移除 xfail 标记" |
 
-This is consistent with pytest's xfail semantics. When used with `--last-failed`, xfailed cases are excluded from rerun; xpassed cases are included.
+这与 pytest 的 xfail 语义一致。搭配 `--last-failed` 时，xfailed 不会进入重跑集，xpassed 会进入。
 
 ```json
 {
-    "name": "KnownBug",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "name": "已知Bug",
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
-    "xfail_reason": "Bug #42: Boundary condition error, fix expected in v2.1",
+    "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
     "expected": { "return_code": 1 }
 }
 ```
 
-When xfailed case output is extremely verbose (e.g., hundreds of lines of solver logs) and repetitive, add `xfail_quiet: true` to keep **only the reason and command, omitting Command Output** from the report. Other metadata (Description, Expected, Command, Return Code, Error Message, Compare Failures, Step Results, etc.) is still displayed normally:
+当 xfailed 用例的输出非常冗长（如数百行求解器日志）且重复出现，干扰报告阅读时，可添加 `xfail_quiet: true` 让报告 **只保留原因和命令，不输出 Command Output**。其余元信息（Description、Expected、Command、Return Code、Error Message、Compare Failures、Step Results 等）照常展示：
 
 ```json
 {
-    "name": "KnownBug (quiet mode)",
-    "command": "solver",
-    "args": ["--input", "bug_case.dat"],
+    "name": "已知Bug（静默模式）",
+    "execution": {
+        "command": "solver",
+        "args": ["--input", "bug_case.dat"]
+    },
     "expected_failure": true,
-    "xfail_reason": "Bug #42: Boundary condition error, fix expected in v2.1",
+    "xfail_reason": "Bug #42: 边界条件处理错误，预计 v2.1 修复",
     "xfail_quiet": true,
     "expected": { "return_code": 1 }
 }
 ```
 
-### Test Dependencies (depends_on)
+### 测试依赖（depends_on）
 
-When test cases have ordering dependencies (e.g., D requires A, B, and C to generate data first), declare them via `depends_on`. The framework automatically schedules execution in DAG topological order:
+当测试用例之间存在先后依赖时（例如 D 需要 A、B、C 先生成数据），通过 `depends_on` 声明依赖关系，框架会自动按 DAG 拓扑顺序调度：
 
-**Parallel mode**: A, B, and C run concurrently. D is submitted only after all three pass. If a dependency fails, its downstream cases are auto-skipped (cascade skip).
+**并行模式**：A、B、C 并行执行，全部通过后 D 才被提交。依赖失败的用例会自动 skip 其下游（级联 skip）。
 
-**Sequential mode**: The framework reorders cases topologically, ensuring dependencies run first. Downstream cases are skipped on dependency failure.
+**顺序模式**：框架按拓扑序重排用例，保证依赖在前的先执行，依赖失败时同样跳过下游。
 
-**JSON example**:
+**JSON 示例**：
 
 ```json
 {
     "test_cases": [
-        { "name": "A", "command": "python", "args": ["gen_a.py"], "expected": {"return_code": 0} },
-        { "name": "B", "command": "python", "args": ["gen_b.py"], "expected": {"return_code": 0} },
-        { "name": "C", "command": "python", "args": ["gen_c.py"], "expected": {"return_code": 0} },
+        { "name": "A", "execution": { "command": "python", "args": ["gen_a.py"] }, "expected": {"return_code": 0} },
+        { "name": "B", "execution": { "command": "python", "args": ["gen_b.py"] }, "expected": {"return_code": 0} },
+        { "name": "C", "execution": { "command": "python", "args": ["gen_c.py"] }, "expected": {"return_code": 0} },
         {
-            "name": "D", "command": "python", "args": ["merge.py"],
-            "depends_on": ["A", "B", "C"],
+            "name": "D",
+            "execution": { "command": "python", "args": ["merge.py"] },
+            "scheduling": { "depends_on": ["A", "B", "C"] },
             "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
         }
     ]
 }
 ```
 
-**YAML example**:
+**YAML 示例**：
 
 ```yaml
 test_cases:
   - name: A
-    command: python
-    args: ["gen_a.py"]
+    execution:
+      command: python
+      args: ["gen_a.py"]
     expected: { return_code: 0 }
 
   - name: B
-    command: python
-    args: ["gen_b.py"]
+    execution:
+      command: python
+      args: ["gen_b.py"]
     expected: { return_code: 0 }
 
   - name: C
-    command: python
-    args: ["gen_c.py"]
+    execution:
+      command: python
+      args: ["gen_c.py"]
     expected: { return_code: 0 }
 
   - name: D
-    command: python
-    args: ["merge.py"]
-    depends_on: [A, B, C]
+    execution:
+      command: python
+      args: ["merge.py"]
+    scheduling:
+      depends_on: [A, B, C]
     expected:
       return_code: 0
       compare_files:
@@ -215,61 +236,122 @@ test_cases:
           type: hdf5
 ```
 
-**Scheduling semantics**:
+**调度语义**：
 
-| Dependency Status | Downstream Behavior |
+| 依赖状态 | 下游行为 |
 |---|---|
-| `passed` or `xfailed` | Dependency "satisfied", downstream runs normally |
-| `failed` or `xpassed` | Dependency "unsatisfied", downstream marked `skipped` with cascade skip |
-| Circular dependency | Configuration validation error, execution blocked |
+| `passed` 或 `xfailed` | 依赖"满足"，下游正常执行 |
+| `failed` 或 `xpassed` | 依赖"不满足"，下游标记为 `skipped`，并级联 skip |
+| 存在循环依赖 | 配置校验阶段报错，禁止运行 |
 
-`skipped` is NOT counted as `failed`; shown separately as `Skipped: N` in the report summary.
+`skipped` 不计入 `failed` 计数，在报告摘要中单独显示 `Skipped: N`。
 
-**Constraints**:
-- Dependency names must exist in the same config file's `test_cases`
-- Self-dependency is not allowed (`depends_on: ["self"]`)
-- Circular dependencies are not allowed (A → B → A)
-- `depends_on` and `steps` are independent—`depends_on` is a case-level concept, `steps` is an intra-case step-level concept
-- Zero-overhead fast path when no dependencies are declared
+**约束**：
+- 依赖名称必须在同配置文件的 `test_cases` 中存在
+- 不允许自依赖（`depends_on: ["self"]`）
+- 不允许循环依赖（A → B → A）
+- 与 `steps` 模式互不影响——`depends_on` 是用例级概念，`steps` 是用例内步骤级概念
+- 无依赖时走 fast path，调度开销为零
 
-### Field Descriptions
+### 字段说明
 
-| Field | Required | Description |
+| 字段 | 必填 | 说明 |
 |---|---|---|
-| `name` | Yes | Test case name |
-| `command` | Yes | Command to execute (supports commands with arguments as a single string, e.g., `python ./run.py`; the framework auto-splits and resolves the path) |
-| `args` | No | List of command arguments |
-| `description` | No | Test case description |
-| `timeout` | No | Timeout in seconds, default 3600; set `null` for no limit |
-| `retry_count` | No | Number of automatic retries on failure, default 0 (no retry). In single-command mode, applies to the entire case; in step mode, applies per step. If a case passes after retry, results are marked `flaky: true` |
-| `tags` | No | Tag list for batch filtering (e.g., `["smoke", "fast"]`) |
-| `resources` | No | Resource configuration, see [Resource-Aware Scheduling](#resource-aware-scheduling) |
-| `expected_failure` | No | Mark as expected failure (xfail). When `true`, failure is counted as XFailed (no exit code impact); unexpected pass is counted as XPassed (treated as failure) |
-| `xfail_reason` | No | Reason text for xfail, displayed in the report (e.g., "Bug #42 not yet fixed") |
-| `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
-| `depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
-| `env` | No | Case-level environment variable mapping (e.g. `{"MYAPP_SCALE": "1.0"}`), injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
-| `expected.return_code` | No | Expected return code |
-| `expected.output_contains` | No | List of strings the output must contain |
-| `expected.output_matches` | No | Regex pattern the output must match (single string) |
-| `expected.compare_files` | No | File comparison assertions list, see below |
+| `name` | 是 | 测试用例名称 |
+| `execution.command` | 是 | 要执行的命令（支持带参数的命令字符串，如 `python ./run.py`，框架会自动拆分并解析路径） |
+| `execution.args` | 否 | 命令参数列表 |
+| `description` | 否 | 测试用例描述 |
+| `execution.timeout` | 否 | 超时秒数，默认 3600，设 `null` 无限制 |
+| `execution.retry_count` | 否 | 失败自动重试次数，默认 0（不重试）。单命令模式作用于整个 case，步骤模式可作用于每个 step。重试后通过会在结果中标记 `flaky: true` |
+| `tags` | 否 | 标签列表，用于批量过滤（如 `["smoke", "fast"]`） |
+| `scheduling.resources` | 否 | 资源配置，见[资源感知调度](#资源感知调度) |
+| `expected_failure` | 否 | 标记为预期失败（xfail）。设为 `true` 时，失败计为 XFailed（不影响退出码），意外通过计为 XPassed（视作失败） |
+| `xfail_reason` | 否 | xfail 的原因说明，报告中将展示此文本（如 "Bug #42 尚未修复"） |
+| `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
+| `scheduling.depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
+| `execution.env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），定义在 `execution` 内，仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
+| `expected.return_code` | 否 | 期望返回码 |
+| `expected.output_contains` | 否 | 输出需包含的字符串列表 |
+| `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
+| `expected.compare_files` | 否 | 文件比较断言列表，见下文 |
 
-### File Comparison Assertions (compare_files)
+## Case 级环境变量（env）
 
-Declare one or more file comparison rules in `expected.compare_files`. The framework automatically uses the corresponding comparator to diff the actual output file against the baseline after command execution. The test passes only when all comparisons pass; these coexist with `return_code`, `output_contains`, and other assertions.
+通过 `execution` 内与 `command`、`steps` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。
 
-Fields for each comparison rule:
+### JSON
 
-| Field | Required | Description |
+```json
+{
+    "name": "case 级环境变量示例",
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "env": {
+            "MYAPP_SCALE": "1.0",
+            "OMP_NUM_THREADS": "8"
+        }
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### YAML
+
+```yaml
+- name: case 级环境变量示例
+  execution:
+    command: solver
+    args: ["-i", "input.dat"]
+    env:
+      MYAPP_SCALE: "1.0"
+  expected: { return_code: 0 }
+```
+
+### 序列模式
+
+`env` 定义在 `execution` 内（与 `steps` 同级），对该 case 的**所有 step** 生效：
+
+```json
+{
+    "name": "多步骤+环境变量",
+    "execution": {
+        "env": { "MYAPP_SCALE": "1.0" },
+        "steps": [
+            { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
+            { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
+        ]
+    }
+}
+```
+
+### 语义
+
+| 决策点 | 行为 |
+|---|---|
+| 生效方式 | 通过子进程 `env` 注入，不修改进程全局 `os.environ`，天然进程隔离、线程安全 |
+| 优先级 | `os.environ`（含 `setup.environment_variables`）< 调度器注入（`OMP/MKL/NPROC`）< **case `env`（最高）**，即 case env 可覆盖调度器的 `OMP_NUM_THREADS` |
+| 作用范围 | 仅当前 case，不污染其他 case（区别于全局 `setup.environment_variables`） |
+| 占位符 | 自动支持，`"env": {"SCALE": "{scale}"}` 会被 `variables`/`--var` 替换 |
+| 继承（extends） | 自动支持，`env` 为 dict，深合并、子类覆盖父类同名 key |
+| 值类型 | 字符串；数字/布尔在解析时自动 `str()` 化 |
+
+### 文件比较断言（compare_files）
+
+在 `expected` 中通过 `compare_files` 可声明一条或多条文件比较规则，框架会在命令执行后自动用对应的比较器对比实际产出文件与基线文件。所有比较通过才算用例通过，可与 `return_code`、`output_contains` 等断言共存。
+
+每个比较规则的字段：
+
+| 字段 | 必填 | 说明 |
 |---|---|---|
-| `actual` | Yes | Path to the file produced by the test command (relative paths resolved against workspace) |
-| `baseline` | Yes | Path to the baseline/reference file (relative paths resolved against workspace) |
-| `type` | No | Comparator type: `text`, `json`, `csv`, `xml`, `h5`, `binary`; auto-detected by extension if omitted |
-| `start_line` | No | Starting line number (1-based), compare from this line onward |
-| `end_line` | No | Ending line number (1-based), compare up to this line |
-| `start_column` | No | Starting column number (1-based), compare from this column onward |
-| `end_column` | No | Ending column number (1-based), compare up to this column |
-| Others | No | Passed through to the corresponding comparator, e.g., `rtol`, `atol`, `encoding`, `tables`, `data_filter` |
+| `actual` | 是 | 测试命令产出的文件路径（相对路径按 workspace 解析） |
+| `baseline` | 是 | 基线/参考文件路径（相对路径按 workspace 解析） |
+| `type` | 否 | 比较器类型：`text`、`json`、`csv`、`xml`、`h5`、`binary`；省略时按扩展名自动识别 |
+| `start_line` | 否 | 起始行号（1-based），仅比较该行及之后的内容 |
+| `end_line` | 否 | 结束行号（1-based），比较到该行为止 |
+| `start_column` | 否 | 起始列号（1-based），仅比较该列及之后的内容 |
+| `end_column` | 否 | 结束列号（1-based），比较到该列为止 |
+| 其他 | 否 | 透传给对应比较器的参数，如 `rtol`、`atol`、`encoding`、`tables`、`data_filter` 等 |
 
 ```json
 "expected": {
@@ -291,69 +373,13 @@ Fields for each comparison rule:
 }
 ```
 
-## Case-Level Environment Variables (env)
+## 配置拆分机制
 
-Use the `env` field (same level as `name`) to inject environment variables into a single case's subprocess. The variables apply only to that case (all steps in sequence mode) and do not affect other cases.
+当测试项目规模增长、用例数量达到数十甚至数百条时，单个配置文件可能变得难以维护。配置拆分机制允许将大文件按模块/功能拆分为多个子文件，通过 `import` 引用组装，运行时自动合并加载。
 
-### JSON
+### 主配置文件
 
-```json
-{
-    "name": "Case-level env test",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "env": {
-        "MYAPP_SCALE": "1.0",
-        "OMP_NUM_THREADS": "8"
-    },
-    "expected": { "return_code": 0 }
-}
-```
-
-### YAML
-
-```yaml
-- name: Case-level env test
-  command: solver
-  args: ["-i", "input.dat"]
-  env:
-    MYAPP_SCALE: "1.0"
-  expected: { return_code: 0 }
-```
-
-### Sequence Mode
-
-`env` is defined at the case level (same level as `steps`) and applies to **all steps** of that case:
-
-```json
-{
-    "name": "multi-step with env",
-    "env": { "MYAPP_SCALE": "1.0" },
-    "steps": [
-        { "command": "python", "args": ["./step1.py"], "expected": { "return_code": 0 } },
-        { "command": "python", "args": ["./step2.py"], "expected": { "return_code": 0 } }
-    ]
-}
-```
-
-### Semantics
-
-| Aspect | Behavior |
-|---|---|
-| Injection mechanism | Injected via subprocess `env`, never mutates the global `os.environ`; process-isolated and thread-safe |
-| Precedence | `os.environ` (incl. `setup.environment_variables`) < scheduler-injected (`OMP/MKL/NPROC`) < **case `env` (highest)** — case env can override `OMP_NUM_THREADS` |
-| Scope | Current case only, no cross-case pollution (unlike global `setup.environment_variables`) |
-| Placeholders | Auto-supported; `"env": {"SCALE": "{scale}"}` is substituted via `variables`/`--var` |
-| Inheritance (extends) | Auto-supported; `env` is a dict, deep-merged with child keys overriding parent |
-| Value type | Strings; numeric/boolean values are coerced with `str()` at parse time |
-
-## Configuration Splitting
-
-When a test project grows to dozens or even hundreds of test cases, a single config file becomes hard to maintain. The configuration splitting mechanism lets you break a large file into multiple sub-files by module/feature and assemble them via `import` references, which are merged at load time automatically.
-
-### Main Configuration File
-
-In the main config file, reference sub-files via the `"import"` field. `import` is a special element in the `test_cases` array; the framework **expands and replaces** it with the sub-file's test cases at load time:
+在主配置文件中，通过 `"import"` 字段引用子文件。`import` 是 `test_cases` 数组中的一个特殊元素，框架会在加载时将其**展开替换**为子文件的测试用例：
 
 ```json
 {
@@ -364,9 +390,11 @@ In the main config file, reference sub-files via the `"import"` field. `import` 
     },
     "test_cases": [
         {
-            "name": "Inline Test Case",
-            "command": "echo",
-            "args": ["hello"],
+            "name": "内联测试用例",
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "expected": { "return_code": 0 }
         },
         { "import": "cases/text_tests.json", "tags": ["text"] },
@@ -376,26 +404,30 @@ In the main config file, reference sub-files via the `"import"` field. `import` 
 }
 ```
 
-> **Note**: `import` paths are resolved relative to the **directory of the main config file**, not the current working directory (cwd). This ensures portability — split relationships are unaffected regardless of which directory tests are run from.
+> **注意**：`import` 路径相对**主配置文件所在目录**解析，不相对当前工作目录（cwd）。这保证了配置文件的可移植性——无论从哪个目录运行测试，拆分关系都不受影响。
 
-### Sub-File Format
+### 子文件格式
 
-Sub-files have the same structure as the main file, with a top-level `test_cases` array (and optional `setup`):
+子文件结构与主文件一致，顶层同样是 `test_cases` 数组（可包含 `setup`）：
 
 ```json
 {
     "test_cases": [
         {
             "name": "text_identical",
-            "command": "python",
-            "args": ["./compare_text.py"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py"]
+            },
             "expected": { "return_code": 0 },
             "tags": ["text"]
         },
         {
             "name": "text_diff",
-            "command": "python",
-            "args": ["./compare_text.py", "--mode", "diff"],
+            "execution": {
+                "command": "python",
+                "args": ["./compare_text.py", "--mode", "diff"]
+            },
             "expected": { "return_code": 1 },
             "tags": ["text"]
         }
@@ -403,78 +435,78 @@ Sub-files have the same structure as the main file, with a top-level `test_cases
 }
 ```
 
-### Import-Level Tags
+### Import 级标签（Tags）
 
-When all cases in a sub-file share the same tags (e.g., `"text"`), there is no need to repeat `tags` in every case. Simply add `tags` to the `import` entry, and the framework automatically injects them into every case imported from that file:
+当一个子文件中的所有用例都标记有相同的标签（如 `"text"`）时，无需在每个 case 里重复编写 `tags`。可以直接在 `import` 条目上添加 `tags`，框架会自动将标签注入到该文件导入的每一条用例：
 
 ```json
 { "import": "cases/text_tests.json", "tags": ["text", "fast"] }
 ```
 
-**Merge Rules**:
+**合并规则**：
 
-| Scenario | Result |
+| 场景 | 结果 |
 |---|---|
-| import has tags, sub-case has none | Sub-case inherits all import tags |
-| import has tags, sub-case also has tags | Merged and deduplicated; import tags first, sub-case's own tags after |
-| import has no tags | Behavior unchanged, backward compatible |
+| import 有 tags，子用例无 tags | 子用例继承 import 的所有 tags |
+| import 有 tags，子用例也有 tags | 合并去重，import 的 tags 在前，子用例自有的在后 |
+| import 无 tags | 行为不变，向后兼容 |
 
-> Nested imports (sub-files that further import other files) also follow this rule — outer import tags are injected into **all** recursively expanded cases.
+> 嵌套 import（子文件内部继续 import 其他文件）也适用此规则——外层 import 的 tags 会注入到**所有**递推展开后的用例上。
 
-### How It Works
+### 工作原理
 
-1. **Expanded at load time**: The Runner automatically expands imports after reading the config file and before parsing `TestCase` objects. Completely transparent to the Runner and execution engine — no changes to test cases or Runner code needed.
-2. **Recursive expansion**: Sub-files can continue to `import` other files, supporting multiple nesting levels.
-3. **Circular reference protection**: The framework maintains a set of loaded file paths and raises a clear error when circular references are detected.
-4. **Backward compatible**: Config files without `import` fields behave exactly as before — zero migration cost.
+1. **加载时展开**：Runner 在读取配置文件后、解析 `TestCase` 对象前，自动执行 import 展开。对 Runner 和执行引擎**完全透明**，无需修改测试用例或 Runner 代码。
+2. **递归展开**：子文件内可以继续 `import` 其他文件，支持多层嵌套。
+3. **循环引用保护**：框架维护已加载文件路径集合，检测到循环引用时抛出明确错误。
+4. **向后兼容**：不含 `import` 字段的配置文件行为与之前完全一致，零迁移成本。
 
-### Cross-Format Support
+### 跨格式支持
 
-A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.yaml` / `.yml`).
+主配置为 JSON 时可以 import YAML 子文件，反之亦然。框架根据子文件扩展名（`.json` / `.yaml` / `.yml`）自动选择解析器。
 
-### Setup Merge Rules
+### Setup 合并规则
 
-If both the main file and sub-file define `setup`, they are deep-merged:
-- **Same-name variable conflicts**: Sub-file `setup` overrides the main file's same-name fields.
-- **Environment variables**: Merged into one dict, with sub-file taking priority.
+如果主文件和子文件都定义了 `setup`，它们会深度合并（deep merge）：
+- **同名变量冲突**：子文件的 `setup` 覆盖主文件的同名字段。
+- **环境变量**：合并为一个字典，子文件优先。
 
 ```json
-// Main file setup
+// 主文件 setup
 { "environment_variables": { "BASE": "from_main", "OVERRIDE": "from_main" } }
 
-// Sub-file setup
+// 子文件 setup
 { "environment_variables": { "SUB_KEY": "from_sub", "OVERRIDE": "from_sub" } }
 
-// Merged result
+// 合并结果
 { "environment_variables": {
     "BASE": "from_main",
     "SUB_KEY": "from_sub",
-    "OVERRIDE": "from_sub"  // sub-file overrides
+    "OVERRIDE": "from_sub"  // 子文件覆盖
 } }
 ```
 
-### Incremental Migration
+### 渐进式迁移
 
-No need to migrate everything at once:
-1. Run `validate` to confirm existing configs are correct (see [Configuration Validation](#configuration-validation))
-2. Gradually move parts of a large file into sub-files and reference them with `import`
-3. Inline cases and `import` references can coexist in the same `test_cases` array
+无需一次性迁移所有配置：
+1. 先用 `validate` 命令确认现有配置无问题（见[配置校验](#配置校验)）
+2. 逐步将大文件中的部分用例移到子文件，用 `import` 引用
+3. 内联用例与 import 引用可在同一个 `test_cases` 数组中混合使用
 
-## Configuration Inheritance
+## 配置继承
 
-When many test cases are structurally similar (differing only in paths, parameters, etc.), use `extends` + `abstract` + `variables` to eliminate duplicate configuration.
+当多个测试用例结构高度相似（仅路径、参数等少量不同），可以用 `extends` + `abstract` + `variables` 消除重复配置。
 
-### Syntax
+### 语法
 
-Test cases support three new inheritance-related fields:
+用例支持三个继承相关的新字段：
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `abstract` | `boolean` | When `true`, acts as a template (base class) and is not executed |
-| `extends` | `string` | Name of the base test case to inherit from; supports chained inheritance |
-| `variables` | `object` | Case-level placeholder variables for `{key}` substitution |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `abstract` | `boolean` | 设为 `true` 时为模板（基类），不参与执行 |
+| `extends` | `string` | 继承目标用例的 `name`，支持链式继承 |
+| `variables` | `object` | 用例级占位符变量，用于 `{key}` 替换 |
 
-### Basic Usage
+### 基本用法
 
 ```json
 {
@@ -482,8 +514,10 @@ Test cases support three new inheritance-related fields:
     {
       "name": "_base_echo",
       "abstract": true,
-      "command": "echo",
-      "args": ["{msg}"],
+      "execution": {
+        "command": "echo",
+        "args": ["{msg}"]
+      },
       "expected": {
         "output_contains": ["{msg}"]
       },
@@ -506,14 +540,14 @@ Test cases support three new inheritance-related fields:
 }
 ```
 
-When expanded, `test_hello` inherits all fields from the base (`command`, `args`, `expected`), and the placeholder `{msg}` is replaced by `variables.msg` → `"hello"`. `test_world` overrides `variables.msg` to `"world"`.
+展开后 `test_hello` 继承基类的全部字段（`execution.command`、`execution.args`、`expected`），占位符 `{msg}` 被 `variables.msg` 替换为 `"hello"`。`test_world` 覆盖 `variables.msg` 为 `"world"`。
 
-### Merge Rules
+### 合并规则
 
-Inheritance uses a **deep merge for dicts, full replacement for lists** strategy:
+继承采用 **dict 深合并、list 整体替换** 策略：
 
-- **dict fields** (e.g., `expected`, `variables`): Recursively merged; subclass fields override parent's same-name keys
-- **list fields** (e.g., `args`, `steps`, `tags`): Subclass replaces parent's entire list; no appending
+- **dict 字段**（如 `expected`、`variables`）：递归合并，子类字段覆盖父类同名 key
+- **list 字段**（如 `args`、`steps`、`tags`）：子类整列表替换父类，不追加
 
 ```json
 {
@@ -532,18 +566,18 @@ Inheritance uses a **deep merge for dicts, full replacement for lists** strategy
 }
 ```
 
-Merged result: `expected.return_code` = `0` (from parent), `expected.output_contains` = `["child"]` (subclass replaces entire list), `tags` = `["c"]` (entire list replaced).
+合并结果：`expected.return_code` = `0`（来自父类），`expected.output_contains` = `["child"]`（子类整列表替换），`tags` = `["c"]`（整列表替换）。
 
-The `abstract` field takes the subclass's own value (default `false`) and is **not inherited** from the parent, preventing subclasses from accidentally becoming abstract templates.
+`abstract` 字段取子类自身值（默认 `false`），不会从父类继承，防止子类意外成为抽象模板。
 
-### Chained Inheritance
+### 链式继承
 
-Multi-level inheritance is supported (A → B → C):
+支持多层继承（A → B → C）：
 
 ```json
 {
   "name": "_A", "abstract": true,
-  "command": "python", "args": ["-c"], "expected": {},
+  "execution": { "command": "python", "args": ["-c"] }, "expected": {},
   "variables": {"a": "1"}
 }
 {
@@ -554,70 +588,70 @@ Multi-level inheritance is supported (A → B → C):
 {
   "name": "C", "extends": "_B",
   "variables": {"c": "3"},
-  "args": ["print('{a} {b} {c}')"]
+  "execution": { "args": ["print('{a} {b} {c}')"] }
 }
 ```
 
-Circular inheritance is automatically detected at load time and reported as an error.
+加载时自动检测循环继承并报错。
 
-### Variable Substitution Priority
+### 变量替换优先级
 
-Placeholder substitution has two layers:
+占位符替换分为两层：
 
-1. **Case-level `variables`**: Deep-merged from the inheritance chain (subclass overrides parent), applied first to the merged case content
-2. **Global `--var`**: Passed via CLI (`--var KEY=VALUE`), applied after case-level variables; **global takes priority when keys conflict**
+1. **用例级 `variables`**：从继承链一路深合并（子类覆盖父类），先应用到合并后的用例内容
+2. **全局 `--var`**：通过 CLI 传入（`--var KEY=VALUE`），在用例级变量之后叠加，**同名 key 全局优先级更高**
 
 ```bash
 symtest run config.json --var solver=/path/to/solver
 ```
 
-The `setup` block uses only global `--var` substitution (no case-level variables).
+`setup` 区块仅使用全局 `--var` 替换（无用例级变量）。
 
-### validate Checks
+### validate 检查
 
-`symtest validate` performs additional checks on inherited configurations:
+`symtest validate` 对继承配置做额外校验：
 
-- Whether the `extends` target exists
-- Whether a circular inheritance chain exists
-- `abstract` cases are not counted as executable
-- `extends` cases skip required-field checks (content comes from parent)
+- `extends` 目标是否存在
+- 是否形成循环继承链
+- `abstract` 用例不计入可执行用例数
+- `extends` 用例跳过必填字段检查（内容来自父类）
 
-### TUI Editing Limitation
+### TUI 编辑限制
 
-> **Note**: The TUI does not currently support editing inherited cases. Expanded inherited cases can be viewed and run in the TUI, but please edit the JSON/YAML source files directly to make modifications.
+> **注意**：TUI 目前不支持编辑继承用例。继承后的展开用例在 TUI 中可正常查看和运行，但请直接编辑 JSON/YAML 源文件来进行修改。
 
-## Configuration Validation
+## 配置校验
 
-The `validate` command checks configuration file correctness without running tests, suitable for CI pipeline config validation.
+`validate` 命令在不运行测试的情况下检查配置文件的正确性，适合在 CI 流水线中做配置合法性检查。
 
-### Usage
+### 用法
 
 ```bash
-# Validate a single config file
+# 校验单个配置文件
 symtest validate test_cases.json
 
-# Validate a main config with imports (auto-expands and checks all sub-files)
+# 校验带 import 的主配置（自动展开并检查所有子文件）
 symtest validate main_config.json
 
-# Specify working directory
+# 指定工作目录
 symtest validate test_cases.json --workspace /path/to/project
 
-# Output JSON format (for AI/script parsing)
+# 输出 JSON 格式（适合 AI/脚本解析）
 symtest validate test_cases.json --output-format json
 ```
 
-### What Gets Checked
+### 校验内容
 
-| Check | Description |
+| 检查项 | 说明 |
 |---|---|
-| Syntax correctness | Whether JSON/YAML is valid (implicitly checked on load) |
-| Required fields | Whether each case has `name`, `command`, `args`, `expected` (each step in sequence mode) |
-| Import references | Whether referenced sub-files exist |
-| Circular references | Whether an A→B→A cycle exists in the import chain |
+| 语法正确性 | JSON/YAML 格式是否合法（加载时隐式检查） |
+| 必填字段 | 每条用例是否包含 `name`、`execution.command`、`execution.args`、`expected`（序列模式检查每个 step） |
+| import 引用 | 被引用的子文件是否存在 |
+| 循环引用 | import 链中是否存在 A→B→A 的循环 |
 
-### Output Examples
+### 输出示例
 
-On success:
+成功时：
 ```
   [OK] Loaded 15 test cases from 3 file(s)
   [OK] All required fields present
@@ -629,290 +663,290 @@ On success:
     - /project/cases/json_tests.yaml
 ```
 
-On error:
+有错误时：
 ```
   [OK] Loaded 3 test cases from 1 file(s)
   [FAIL] case 'bad_case': missing required field 'expected'
   [FAIL] Import target not found: /project/cases/nonexistent.json
 ```
 
-## TUI Interactive Manager
+## TUI 交互式管理器
 
-When a large project splits cases across many JSON/YAML sub-configurations, locating cases and reviewing scenario coverage across files becomes difficult. The TUI (Terminal User Interface) provides one view over all imported configurations for browsing, global search, and coverage review, with editing and case execution available when needed. It is an aid for large suites, not a requirement for normal test execution.
+当大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。TUI（Terminal User Interface）在所有导入配置之上提供统一视图，用于浏览、全局搜索、辅助检查覆盖场景，并可按需编辑或运行用例。它是大型测试集的辅助工具，不是日常执行测试的必需组件。
 
-### Installation
+### 安装
 
-The TUI depends on the `textual` library and is provided as an optional, on-demand dependency:
+TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
 
 ```bash
-# Install with TUI support
+# 安装时附带 TUI 支持
 pip install "symtest-cli[tui]"
 
-# Or install textual separately on top of an existing framework
+# 或者在已有框架上单独安装 textual
 pip install textual
 ```
 
-If `textual` is not installed and you run `symtest tui`, the framework displays a friendly installation prompt.
+如果未安装 `textual` 就直接执行 `symtest tui`，框架会给出友好的安装提示。
 
-### Launching
+### 启动
 
 ```bash
-# Open TUI to edit test cases
+# 打开 TUI 编辑测试用例
 symtest tui test_cases.json
 
-# YAML files are also supported
+# YAML 文件同样支持
 symtest tui test_cases.yaml
 
-# Specify working directory
+# 指定工作目录
 symtest tui test_cases.json --workspace /path/to/project
 
-# Open a main config with imports (auto-expands all cases from sub-files)
+# 打开带 import 的主配置文件（自动展开子文件中的所有用例）
 symtest tui main_config.json
 ```
 
-The TUI auto-expands `import` references via the [Configuration Splitting](#configuration-splitting) mechanism at startup, loading all cases into the interface for unified management.
+TUI 启动时会自动通过[配置拆分机制](#配置拆分机制)展开 `import` 引用，将所有用例加载到界面中统一管理。
 
-### Interface Overview
+### 界面概览
 
-The TUI shows the **Test Case List main screen** on startup:
+TUI 启动后显示**用例列表主界面**：
 
-- **Top status bar**: Current filename, total case count
-- **Search bar**: Press `/` to focus the search box; supports substring/fuzzy/regex modes
-- **Case table**: Six columns (Index, Name, Command, Tags, Timeout, Mode); keyboard-navigable
-- **Bottom shortcut bar**: Shows all available actions
+- **顶部状态栏**：当前文件名、用例总数
+- **搜索栏**：`/` 键聚焦搜索框，支持子串/模糊/正则三种模式
+- **用例表格**：六列（序号、名称、命令、标签、超时、模式），支持键盘导航
+- **底部快捷键栏**：显示所有可用操作
 
-### Keyboard Shortcuts
+### 快捷键
 
-| Shortcut | Function |
+| 快捷键 | 功能 |
 |---|---|
-| `a` | Add a new test case |
-| `e` | Edit selected test case |
-| `d` | Delete selected test case |
-| `u` | Duplicate selected test case (name gets `_copy` suffix) |
-| `r` | Run selected test case and display results |
-| `F6` / `Ctrl+S` | Save changes to file |
-| `/` | Focus search box |
-| `Esc` | Clear search, restore full list |
-| `Alt+S` | Toggle substring search mode (case-insensitive) |
-| `Alt+F` | Toggle fuzzy search mode (tolerates typos and abbreviations) |
-| `Alt+R` | Toggle regex search mode |
-| `q` / `Ctrl+Q` | Quit |
-| `↑` / `↓` / `j` / `k` | Move cursor up/down |
+| `a` | 新增用例 |
+| `e` | 编辑选中的用例 |
+| `d` | 删除选中的用例 |
+| `u` | 复制选中的用例（名称追加 `_copy` 后缀） |
+| `r` | 运行选中的用例，显示执行结果 |
+| `F6` / `Ctrl+S` | 保存修改到文件 |
+| `/` | 聚焦搜索框 |
+| `Esc` | 清除搜索，恢复完整列表 |
+| `Alt+S` | 切换子串搜索模式（大小写不敏感） |
+| `Alt+F` | 切换模糊搜索模式（容忍拼写差异和缩写） |
+| `Alt+R` | 切换正则搜索模式 |
+| `q` / `Ctrl+Q` | 退出 |
+| `↑` / `↓` / `j` / `k` | 上下移动光标 |
 
-Search matches against `name`, `command`, `args`, `tags`, `description` and other fields simultaneously; matches are highlighted in the table.
+搜索时会同时匹配 `name`、`command`、`args`、`tags`、`description` 等字段，匹配结果在表格中高亮显示。
 
-### Editing a Test Case
+### 编辑用例
 
-Select a case and press `e` to enter edit mode. The edit form has two modes based on the case type:
+选中用例后按 `e` 进入编辑界面。编辑界面根据用例类型有两种模式：
 
-#### Single-Command Mode
+#### 单命令模式
 
-The edit form includes the following fields:
+编辑表单包含以下字段：
 
-| Field | Description |
+| 字段 | 说明 |
 |---|---|
-| `Name` | Case name (required) |
-| `Command` | Command to execute |
-| `Args` | Command arguments, one per line |
-| `Tags` | Tag list, one per line |
-| `Description` | Case description |
-| `Timeout` | Timeout in seconds |
-| Expected | Nested sub-form for expected assertions (see below) |
+| `Name` | 用例名称（必填） |
+| `Command` | 要执行的命令 |
+| `Args` | 命令参数，每行一个 |
+| `Tags` | 标签列表，每行一个 |
+| `Description` | 用例描述 |
+| `Timeout` | 超时秒数 |
+| Expected | 期望断言的嵌套子表单（见下文） |
 
-#### Step Sequence Mode
+#### 步骤序列模式
 
-When a case contains multiple ordered steps, switch to this mode. Each step has its own `Command`, `Args`, `Expected`, and `Timeout`. Supports adding, deleting, editing, and reordering steps.
+当用例包含多个有序步骤时，切换到此模式。每个步骤有独立的 `Command`、`Args`、`Expected` 和 `Timeout`，支持添加、删除、编辑和上下移动步骤。
 
-Switch between modes via keyboard shortcuts within the edit interface; a confirmation prompt appears to prevent data loss.
+两种模式可通过编辑界面内的快捷键切换，切换时会提示确认以免丢失数据。
 
-### Editing the `expected` Field
+### `expected` 字段编辑
 
-The `expected` field is a nested dictionary; the editor provides structured input:
+`expected` 字段是一个嵌套字典，编辑器提供结构化输入：
 
-| Field | Input Method |
+| 字段 | 输入方式 |
 |---|---|
-| `return_code` | Numeric input box |
-| `output_contains` | Multi-line text input, one match string per line |
-| `output_matches` | Regex text input |
-| `compare_files` | One JSON object per line, e.g., `{"actual":"out.txt","baseline":"base.txt","type":"text"}` |
+| `return_code` | 数字输入框 |
+| `output_contains` | 多行文本输入，一行一个匹配字符串 |
+| `output_matches` | 正则表达式文本输入 |
+| `compare_files` | 每行一个 JSON 对象，如 `{"actual":"out.txt","baseline":"base.txt","type":"text"}` |
 
-Beyond the known fields above, you can add custom key=value pairs via the `+ Add` button (value is a string or JSON text). See [Test Case Definition](#test-case-definition) for more details.
+除上述已知字段外，还支持通过 `+ Add` 按钮添加自定义 key=value 对，value 为字符串或 JSON 文本。更多含义见[测试用例定义](#测试用例定义)。
 
-### Running a Test Case
+### 运行用例
 
-Select a case in the list and press `r` to invoke the framework execution engine and run it in real time. A result panel pops up showing:
+在列表中选中某条用例，按 `r` 即可实时调用框架执行引擎运行该用例。运行结束后弹出结果面板，显示：
 
-- Pass/fail status
-- Return code
-- Duration
-- Command output (stdout/stderr)
+- 通过/失败状态
+- 返回码
+- 耗时
+- 命令输出（stdout/stderr）
 
-The result panel is display-only and does not modify the config file.
+结果面板仅展示、不修改配置文件。
 
-### Saving
+### 保存
 
-All add/edit/delete operations on test cases are performed **in memory** and are not immediately written to disk.
+对用例的任何增删改操作都在**内存中**进行，不会立即写入磁盘。
 
-- Press `F6` or `Ctrl+S` to **save**: writes all current cases back to the original config file.
-- Use `save_as` to **save as** a new file (via the interface menu).
+- 按 `F6` 或 `Ctrl+S` **保存**：将当前全部用例写回原配置文件。
+- 通过 `save_as` 可**另存为**新文件（通过界面菜单操作）。
 
-Unsaved changes prompt a confirmation dialog when quitting the TUI.
+退出 TUI 时如有未保存的修改，会弹出确认提示。
 
-## Running Tests
+## 运行测试
 
-### Command Line
+### 命令行
 
 ```bash
-# Run JSON tests
+# 运行 JSON 测试
 symtest run test_cases.json
 
-# Run YAML tests
+# 运行 YAML 测试
 symtest run test_cases.yaml
 
-# Run a main config with import splitting (auto-expands sub-files)
+# 运行带 import 拆分的主配置（自动展开子文件）
 symtest run main_config.json
 
-# Specify working directory
+# 指定工作目录
 symtest run test_cases.json --workspace /path/to/project
 
-# Run in parallel
+# 并行运行
 symtest run test_cases.json --parallel --workers 4
 
-# Specify parallel mode
+# 指定并行模式
 symtest run test_cases.json --parallel --execution-mode process
 
-# Run only specified cases
+# 只运行指定用例
 symtest run test_cases.json -t test_name_1 -t test_name_2
 
-# Filter by tag
+# 按标签过滤
 symtest run test_cases.json --tag smoke
 symtest run test_cases.json --tag smoke --tag regression
 
-# Filter by name and tag simultaneously (AND relationship)
+# 同时按名称和标签过滤（AND 关系）
 symtest run test_cases.json -t test_name_1 --tag smoke
 
-# Verbose output
+# 详细输出
 symtest run test_cases.json --verbose
 
-# Debug mode
+# 调试模式
 symtest run test_cases.json --debug
 
-# Output format
+# 输出格式
 symtest run test_cases.json --output-format json|html|text
 
-# Enable history (smart scheduling + regression detection)
+# 启用历史记录（智能调度 + 回归检测）
 symtest run test_cases.json --history-dir ./hist
 
-# Custom regression threshold (default 1.5x)
+# 自定义回归检测阈值（默认 1.5 倍）
 symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 
-# Output JUnit XML report (consumable by Jenkins/GitLab CI etc.)
+# 输出 JUnit XML 报告（可供 Jenkins/GitLab CI 等工具解析）
 symtest run test_cases.json --junit-xml report.xml
 
-# Run only last-failed cases (overwritten on each run)
+# 只运行上次失败的用例（每次运行时覆盖式更新）
 symtest run test_cases.json --last-failed
 
-# Resume: skip passed steps, continue from failed step
+# 断点续跑：跳过已通过的步骤，从失败步骤继续
 symtest run test_cases.json --resume
 symtest run test_cases.json --resume -t long_pipeline
 
-# Update baseline files on comparison failure (type yes interactively)
+# 比较失败时更新基线文件（交互运行需输入 yes）
 symtest run test_cases.json --update-baseline
 
-# Non-interactive environments must confirm explicitly
+# 非交互环境必须显式确认
 symtest run test_cases.json --update-baseline --yes
 
-# Enable error analysis (full stats output for numerical comparisons)
+# 启用误差分析（数值比较时输出全量统计）
 symtest run test_cases.json --error-analysis
 ```
 
-### Run Only Last-Failed Cases (--last-failed)
+### 只运行上次失败的用例（--last-failed）
 
-`--last-failed` automatically filters to cases that **truly failed** in the previous run (`failed`, `timeout`, and `xpassed`). Ideal for AI iterative fixing scenarios: after fixing one round of code, only verify the previously failed cases without a full rerun (a full FEM run could take hours).
+`--last-failed` 自动过滤出上一次运行中**真正失败**的用例（`failed`、`timeout` 和 `xpassed`），适合 AI 迭代修复场景：修复一轮代码后，只需验证上次失败的用例，无需全量重跑（有限元全量可能几小时）。
 
-**xfail semantics**: Cases marked `expected_failure` that fail (`xfailed`) are _expected behavior_ and are **not** selected by `--last-failed` for rerun. However, if an xfail-marked case unexpectedly passes (`xpassed`), it is treated as a true failure and **is** selected.
+**xfail 语义**：标记为 `expected_failure` 的用例如果失败（`xfailed`），是预期行为，**不会**被 `--last-failed` 选中重跑。但如果 xfail 标记的用例意外通过（`xpassed`），则被视为真正失败，**会**被选中。
 
-**How it works**:
-- After each run, the framework records each case's status in `<workspace>/.symtest/last_run.json`
-- Recording uses **overwrite-update**: cases run this time get new results overwriting old ones; un-run cases retain their previous status
-- This means a fixed case won't show as "failed" in the next display
-- If the file doesn't exist (first run), `--last-failed` warns and runs all cases normally
+**工作原理**：
+- 每次运行结束后，框架在 `<workspace>/.symtest/last_run.json` 中记录每个用例的状态
+- 记录采用**覆盖式更新**：本次跑到的用例用新结果覆盖旧结果，没跑到的保留原状态
+- 这意味着修好的 case 在下一次显示中不再是"failed"
+- 如果文件不存在（首次运行），`--last-failed` 会提示并正常运行全部用例
 
 ```bash
-# First run: all 10 cases, 3 fail
+# 第一次：全量运行 10 个用例，3 个失败
 symtest run config.json
 
-# After fixing code, rerun only those 3 failures
+# 修复代码后，只重跑那 3 个失败的
 symtest run config.json --last-failed
 
-# If all 3 pass, run once more to confirm no regressions
+# 如果 3 个全过，再跑一次全量确认
 symtest run config.json
 ```
 
-**Interaction with `-t`**: `--last-failed` and `-t`/`--tag` can be used together; effects stack (AND relationship).
+**与 `-t` 的交互**：`--last-failed` 与 `-t`/`--tag` 可以同时使用，效果叠加（AND 关系）。
 
-### Resume (--resume)
+### 断点续跑（--resume）
 
-`--resume` is for **sequential step tests (sequence)**. It skips steps that passed in the previous run and continues directly from the failed step. Ideal for long-running multi-step cases — for example, in an FEM analysis where steps 1-3 passed (each taking tens of seconds or minutes), only step 4's assertion failed. `--resume` skips 1-3 and reruns only step 4.
+`--resume` 针对**顺序步骤测试（sequence）**，跳过上次运行中已通过的步骤，直接从失败步骤继续执行。适合耗时长的多步骤用例——例如有限元分析中 step 1-3 通过了（各耗时几十秒甚至分钟），只有 step 4 的断言失败，`--resume` 可以跳过 1-3、只重跑 step 4。
 
-**How it works**:
-- After each step passes, the framework records step status in `<workspace>/.symtest/sequence_state/<case_name>.json` and caches output to the `cache/` subdirectory
-- On the next `--resume`, a config hash (SHA256 of every step's command/args/expected/timeout/retry_count plus case-level expected) is computed and compared against saved state
-- Hash match → skip passed steps, rebuild `combined_output` from cache (so case-level `expected` assertions run correctly)
-- All steps pass → state file and cache automatically deleted to avoid stale data affecting subsequent runs
-- Hash mismatch (config changed) → full rerun automatically, old state discarded
+**工作原理**：
+- 每个步骤通过后，框架在 `<workspace>/.symtest/sequence_state/<case_name>.json` 中记录步骤状态，并将输出缓存到 `cache/` 子目录
+- 下次 `--resume` 时，计算配置哈希（所有步骤的 command/args/expected/timeout/retry_count 及 case 级 expected 的 SHA256）与已保存状态比对
+- 哈希匹配 → 跳过已通过的步骤，从缓存重建 `combined_output`（确保 case 级 `expected` 断言能正常执行）
+- 用例全部通过 → 自动删除状态文件和缓存，避免残留影响后续运行
+- 哈希不匹配（配置有改动）→ 自动全量重跑，并丢弃旧状态
 
-**Trust model**: `--resume` does **not verify workspace artifacts** (input files, files generated by prior steps, etc.). Using `--resume` means the user confirms input files are unmodified. If workspace contamination is suspected, rerun fully without `--resume`.
+**信任模型**：`--resume` **不校验工作区产物**（输入文件、前置步骤生成的文件等）。使用 `--resume` 即表示用户确认输入文件未被修改。如果怀疑工作区被污染，应不带 `--resume` 全量重跑。
 
 ```bash
-# First full run, long_pipeline step 4 fails (total 72s)
+# 首次全量运行，long_pipeline 的 step 4 失败（总耗时 72s）
 symtest run config.json
 
-# After fixing, rerun only long_pipeline, skipping steps 1-3 (~0.14s only)
+# 修复后只重跑 long_pipeline，跳过 step 1-3（仅耗时 ~0.14s）
 symtest run config.json -t long_pipeline --resume
 
-# After all pass, do one full run to confirm no regressions
+# 全部通过后，跑一次全量确认无回归
 symtest run config.json
 ```
 
-**Interaction with `-t`**: `--resume` is typically used with `-t` to first isolate a single failed case then resume from it. Without `-t`, all sequence cases with existing state will attempt to resume.
+**与 `-t` 的交互**：`--resume` 通常与 `-t` 组合使用，先定位到单个失败用例再断点续跑。不带 `-t` 时，所有已存在状态的序列用例都会尝试续跑。
 
-**Limitations**:
-- Only applies to sequential step cases (`steps` mode); single-command mode ignored
-- The state file's config hash is invalidated by any change to a step's command/args/expected/timeout/retry_count or case-level expected
-- Cached output is primarily for rebuilding `combined_output`; the `output` field in the report still contains only the failed step's output
+**限制**：
+- 仅对序列步骤用例（`steps` 模式）生效，单命令模式忽略
+- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count 或 case 级 expected 变化而失效
+- 缓存输出主要用于重建 `combined_output`，报告中的 `output` 字段仍只包含失败步骤的输出
 
-### Auto-Update Baseline Files (--update-baseline)
+### 自动更新基线文件（--update-baseline）
 
-After algorithm improvements or parameter adjustments, you may expect output to change (and the new results to be more correct). `--update-baseline` automatically overwrites baseline files with actual output, avoiding manual copy-paste.
+在进行算法改进或参数调整后，你可能期望输出结果发生变化（且新结果更正确）。`--update-baseline` 会自动用实际产出覆盖基线文件，免去手动复制粘贴。
 
 ```bash
-# Interactive runs ask you to type yes before execution
+# 交互运行会先要求输入 yes
 symtest run config.json --update-baseline
 
-# Explicit confirmation for automation or CI
+# 自动化或 CI 中显式确认
 symtest run config.json --update-baseline --yes
 ```
 
-**Behavior**:
-- Interactive runs start only after the user types the full word `yes`
-- Non-interactive runs do not wait for input and require `--yes`
-- When file comparison fails, the `actual` file is copied to the `baseline` path
-- That assertion is treated as **passed**; the case status is `passed`
-- The report shows a `Baseline Updated` count and lists updated files
-- Both text and JSON reports list all updated baseline paths
+**行为**：
+- 交互运行必须输入完整的 `yes` 才会开始测试
+- 非交互环境不会等待输入，必须同时传入 `--yes`
+- 文件比较失败时，`actual` 文件被复制到 `baseline` 路径
+- 该条断言视为**通过**，用例状态为 `passed`
+- 报告中显示 `Baseline Updated` 计数和更新的文件列表
+- 文本报告与 JSON 报告均会列出所有被更新的 baseline 路径
 
-> **Note**: Confirmation happens before test execution, while the files to update are only known after comparison. Keep baselines under version control and review the report's `Baseline Updated` list. Passing `update_baseline=True` through the Python API is treated as explicit confirmation by the caller.
+> **注意**：确认发生在测试执行前，而实际被更新的文件只有比较后才能确定。请将基线纳入版本控制，并审查报告中的 `Baseline Updated` 列表。Python API 中显式传入 `update_baseline=True` 视为调用方已经确认。
 
-### Configuration Validation JSON Output
+### 配置校验 JSON 输出
 
-The `validate` command has a `--output-format json` option that produces machine-readable JSON reports, suitable for AI/script-based config validation:
+`validate` 命令新增 `--output-format json`，输出机器可读的 JSON 报告，适合 AI/脚本自动检查配置合法性：
 
 ```bash
 symtest validate config.json --output-format json
 ```
 
-Output example:
+输出示例：
 ```json
 {
   "valid": false,
@@ -926,38 +960,38 @@ Output example:
 ```python
 from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner
 
-# Sequential run
+# 顺序运行
 runner = JSONRunner(
     config_file="test_cases.json",
-    workspace="/path/to/project",    # Optional, defaults to project root
-    test_case_filter=["test_1"],     # Optional, run only specified cases
-    test_case_tag_filter=["smoke"],  # Optional, run only cases with specified tags
-    history_dir="./hist",            # Optional, enable history & regression detection
-    regression_threshold=2.0,        # Optional, regression threshold multiplier, default 1.5
-    update_baseline=False,           # Optional, auto-update baseline on comparison failure, default False
-    last_failed=False,               # Optional, run only last-failed cases, default False
-    resume=False,                    # Optional, resume sequence cases from last failed step, default False
+    workspace="/path/to/project",    # 可选，默认项目根目录
+    test_case_filter=["test_1"],     # 可选，只运行指定用例
+    test_case_tag_filter=["smoke"],  # 可选，只运行包含指定标签的用例
+    history_dir="./hist",            # 可选，启用历史记录与回归检测
+    regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
+    update_baseline=False,           # 可选，比较失败时自动更新基线，默认 False
+    last_failed=False,               # 可选，只运行上次失败的用例，默认 False
+    resume=False,                    # 可选，断点续跑序列用例，默认 False
 )
 success = runner.run_tests()
 
-# YAML format
+# YAML 格式
 runner = YAMLRunner(config_file="test_cases.yaml")
 
-# Parallel run (JSON)
+# 并行运行（JSON）
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
-    max_workers=4,                   # Optional, defaults to CPU core count
-    execution_mode="thread",         # "thread" or "process"
+    max_workers=4,                   # 可选，默认 CPU 核心数
+    execution_mode="thread",         # "thread" 或 "process"
     test_case_filter=["test_1"],
-    history_dir="./hist",            # Optional, enable history & smart scheduling
-    regression_threshold=2.0,        # Optional, regression threshold multiplier, default 1.5
-    update_baseline=False,           # Optional
-    last_failed=False,               # Optional
-    resume=False,                    # Optional, resume sequence cases
+    history_dir="./hist",            # 可选，启用历史记录与智能调度
+    regression_threshold=2.0,        # 可选，回归阈值倍数，默认 1.5
+    update_baseline=False,           # 可选
+    last_failed=False,               # 可选
+    resume=False,                    # 可选，断点续跑序列用例
 )
 success = runner.run_tests()
 
-# Parallel run (YAML)
+# 并行运行（YAML）
 from symtest.runners import ParallelYAMLRunner
 runner = ParallelYAMLRunner(
     config_file="test_cases.yaml",
@@ -967,129 +1001,129 @@ runner = ParallelYAMLRunner(
 success = runner.run_tests()
 ```
 
-### Getting Results
+### 获取结果
 
 ```python
 runner.run_tests()
 
-# Summary
+# 汇总
 runner.results["total"]
 runner.results["passed"]
 runner.results["failed"]
-runner.results["xfailed"]      # Expected failure (no exit code impact)
-runner.results["xpassed"]      # Unexpected pass (counted as failure)
-runner.results["updated"]      # Number of baseline files updated by --update-baseline
+runner.results["xfailed"]      # 预期失败（不影响退出码）
+runner.results["xpassed"]      # 意外通过（计入失败）
+runner.results["updated"]   # 被 --update-baseline 更新的基线文件数
 
-# Details — each result dict contains the following fields
+# 详情 — 每个结果字典包含以下字段
 for detail in runner.results["details"]:
-    print(detail["name"])                     # Case name
+    print(detail["name"])                     # 用例名称
     print(detail["status"])                   # "passed" / "failed" / "xfailed" / "xpassed" / "timeout"
-    print(detail.get("message", ""))          # Failure reason
-    print(detail.get("duration"))             # Duration (seconds)
-    print(detail.get("xfail_reason", ""))     # xfail reason (only for xfailed/xpassed status)
-    print(detail.get("expected"))             # Expected assertions (registered acceptance criteria)
-    print(detail.get("description"))          # Case description
-    print(detail.get("tags"))                 # Tag list
-    print(detail.get("failure_kind"))         # Failure type: return_code/output_contains/
+    print(detail.get("message", ""))          # 失败原因
+    print(detail.get("duration"))             # 耗时（秒）
+    print(detail.get("xfail_reason", ""))     # xfail 原因（仅 xfailed/xpassed 状态）
+    print(detail.get("expected"))             # 期望断言（注册的验收标准）
+    print(detail.get("description"))          # 用例描述
+    print(detail.get("tags"))                 # 标签列表
+    print(detail.get("failure_kind"))         # 失败类型：return_code/output_contains/
                                               #   output_matches/file_compare/timeout/
                                               #   execution_error
-    print(detail.get("attempts", 1))          # Number of attempts (including retries)
-    print(detail.get("flaky", False))         # Whether it passed only after retry
-    print(detail.get("attempt_history", []))  # Status history for each attempt
-    print(detail.get("failed_step"))          # Failed step number in step sequence
-    print(detail.get("step_results", []))     # Detailed results for each step
-    print(detail.get("compare_failures", [])) # Structured file comparison failure details
-    print(detail.get("baseline_updated", [])) # List of updated baseline file paths
+    print(detail.get("attempts", 1))          # 尝试次数（含重试）
+    print(detail.get("flaky", False))         # 是否重试后才通过
+    print(detail.get("attempt_history", []))  # 每次尝试的状态历史
+    print(detail.get("failed_step"))          # 步骤序列中的失败步骤号
+    print(detail.get("step_results", []))     # 每个步骤的详细结果
+    print(detail.get("compare_failures", [])) # 文件比较失败的结构化详情
+    print(detail.get("baseline_updated", [])) # 被更新的基线文件列表
 ```
 
-**Key Result Dictionary Fields**:
+**结果字典关键字段说明**：
 
-| Field | Type | Description |
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `status` | str | One of five states: `passed`, `failed`, `xfailed` (expected failure), `xpassed` (unexpected pass), `timeout` |
-| `xfail_reason` | str | xfail reason text (from `xfail_reason` in config); only present for `xfailed`/`xpassed` status |
-| `expected` | dict | Registered expected assertions (return_code, output_contains, compare_files, etc.) for reviewing acceptance criteria |
-| `description` | str | Test case description text |
-| `failure_kind` | str | Failure type enum; AI/scripts can choose repair strategies accordingly |
-| `attempts` | int | Total attempts (including retries); `1` means passed on first try |
-| `flaky` | bool | `true` if the case passed only after retry |
-| `attempt_history` | list | Per-attempt `{attempt, status, message, duration}` |
-| `step_results` | list | Per-step `{step, name, status, message, duration, command}` |
-| `compare_failures` | list | Structured info for each failed file comparison (includes `diff_summary`, `differences`, `error_stats`, `actual`/`baseline` paths, tolerance params) |
-| `baseline_updated` | list | Paths of baseline files overwritten by `--update-baseline` |
+| `status` | str | 四态之一：`passed`（通过）、`failed`（失败）、`xfailed`（预期失败）、`xpassed`（意外通过）、`timeout`（超时） |
+| `xfail_reason` | str | xfail 原因文本（来自配置中的 `xfail_reason` 字段），仅在 `xfailed`/`xpassed` 状态时有值 |
+| `expected` | dict | 注册的期望断言（含 return_code、output_contains、compare_files 等），方便回查验收标准 |
+| `description` | str | 测试用例的描述文本 |
+| `failure_kind` | str | 失败类型枚举，AI/脚本可据此选择修复策略 |
+| `attempts` | int | 总尝试次数（含重试），`1` 表示一次通过 |
+| `flaky` | bool | 重试后才通过时为 `true` |
+| `attempt_history` | list | 每次尝试的 `{attempt, status, message, duration}` |
+| `step_results` | list | 步骤序列每个 step 的 `{step, name, status, message, duration, command}` |
+| `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`error_stats`、`actual`/`baseline` 路径、容差参数） |
+| `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
 
-## Project Entry Script
+## 项目入口脚本
 
-If your test project has a complex structure (requiring preset environment variables, customized report paths, etc.), using `symtest run` directly may not be flexible enough. You can create a project entry script (e.g., `test.py` or `run_tests.py`) that calls the framework API from Python code.
+如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `symtest run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
 
-### When to Use CLI Directly
+### 何时直接用 CLI
 
-| Scenario | Recommendation |
+| 场景 | 推荐方式 |
 |---|---|
-| Simple project, single config file | `symtest run config.json --workers 4` |
-| One-off run, no special environment needs | `symtest run config.yaml --tag smoke` |
-| CI pipeline | `symtest run config.json --junit-xml report.xml` |
+| 简单项目、单个配置文件 | `symtest run config.json --workers 4` |
+| 一次性运行、无特殊环境需求 | `symtest run config.yaml --tag smoke` |
+| CI 流水线 | `symtest run config.json --junit-xml report.xml` |
 
-### When to Wrap in an Entry Script
+### 何时包一层入口脚本
 
-| Scenario | Recommendation |
+| 场景 | 推荐方式 |
 |---|---|
-| Need to set environment variables (e.g., inject venv PATH) | Entry script |
-| Need to output multiple report formats simultaneously (text + JUnit XML) | Entry script |
-| Team-shared fixed run parameters (workers, history-dir, etc.) | Entry script |
-| Need to auto-select JSON/YAML runner by config file extension | Entry script |
-| Windows console-script commands (e.g., `compare-files`) not found | Entry script (inject venv Scripts into PATH) |
+| 需要预设环境变量（如注入 venv PATH） | 入口脚本 |
+| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本 |
+| 团队共享固定运行参数（workers、history-dir 等） | 入口脚本 |
+| 需要根据配置文件扩展名自动选择 JSON/YAML runner | 入口脚本 |
+| Windows 下 console-script 命令（如 `compare-files`）找不到的问题 | 入口脚本（注入 venv Scripts 到 PATH） |
 
-### Entry Script Example
+### 入口脚本示例
 
-The framework provides an out-of-the-box example script `examples/full_runner_example.py`. Copy it to your project root and use it directly or customize as needed. It supports all the following CLI parameters:
+框架提供了开箱即用的示例脚本 `examples/full_runner_example.py`，可复制到你的项目根目录直接使用或按需修改。它支持以下所有 CLI 参数：
 
-| Parameter | Description |
+| 参数 | 说明 |
 |---|---|
-| `config` (positional) | Test config file path (auto-detects .json / .yaml) |
-| `--test-target` / `-t` | Filter cases by name |
-| `--tag` | Filter cases by tag (OR relationship) |
-| `--last-failed` | Run only last-failed cases |
-| `--resume` | Resume sequence cases from last failed step |
-| `--update-baseline` | Update baselines on comparison failure; requires interactive confirmation |
-| `--yes` / `-y` | Skip the baseline confirmation for automation or CI |
-| `--junit-xml` | JUnit XML report output path |
-| `--report` | Text report output path, default `test_report.txt` |
-| `--workers` / `-w` | Number of parallel workers, default 4 |
-| `--execution-mode` | thread or process |
-| `--workspace` | Working directory, defaults to script directory |
-| `--var` | Template variable substitution, format `KEY=VALUE` |
-| `--verbose` / `-v` | Verbose output (DEBUG-level logging) |
+| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .yaml） |
+| `--test-target` / `-t` | 按名称过滤用例 |
+| `--tag` | 按标签过滤用例（OR 关系） |
+| `--last-failed` | 只运行上次失败的用例 |
+| `--resume` | 断点续跑序列用例 |
+| `--update-baseline` | 比较失败时更新基线；交互运行需要二次确认 |
+| `--yes` / `-y` | 跳过基线更新确认，供自动化或 CI 使用 |
+| `--junit-xml` | JUnit XML 报告输出路径 |
+| `--report` | 文本报告输出路径，默认 `test_report.txt` |
+| `--workers` / `-w` | 并行工作线程数，默认 4 |
+| `--execution-mode` | thread 或 process |
+| `--workspace` | 工作目录，默认脚本所在目录 |
+| `--var` | 模板变量替换，格式 `KEY=VALUE` |
+| `--verbose` / `-v` | 详细输出（DEBUG 级别日志） |
 
-### Quick Start
+### 快速上手
 
-1. Copy `examples/full_runner_example.py` to your project root, rename to `run_tests.py`
-2. If you use a virtual environment and need console-script commands, uncomment the venv PATH injection code in the file
-3. Adjust default parameters for your team's preference (e.g., `--workers` default value, `--history-dir` default path)
-4. Run tests:
+1. 复制 `examples/full_runner_example.py` 到你的项目根目录，重命名为 `run_tests.py`
+2. 如果使用了虚拟环境且需要 console-script 命令，取消文件中 venv PATH 注入代码的注释
+3. 按团队习惯修改默认参数（如 `--workers` 默认值、`--history-dir` 默认路径）
+4. 运行测试：
 
 ```bash
-# Full run
+# 全量运行
 python run_tests.py test_cases.json --workers 4
 
-# Only last-failed cases
+# 只跑上次失败的用例
 python run_tests.py test_cases.json --last-failed
 
-# CI with JUnit report
+# CI 中输出 JUnit 报告
 python run_tests.py test_cases.json --junit-xml report.xml
 ```
 
-### Windows WinError 2 Issue
+### Windows 下 WinError 2 问题
 
-If your test case `command` field references console-script commands (e.g., `compare-files`, `symtest` — entry points installed via pip), running the script via double-click or from an unactivated environment on Windows may cause subprocesses to fail finding these executables:
+如果你的测试用例 `command` 字段引用了 console-script 命令（例如 `compare-files`、`symtest` 等通过 pip 安装的入口点），在 Windows 下直接双击运行脚本或通过未激活的环境启动时，子进程可能找不到这些可执行文件，报错：
 
 ```
-FileNotFoundError: [WinError 2] The system cannot find the file specified.
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
 ```
 
-This is because these commands exist as `.exe` wrappers in `venv/Scripts/` and that directory is not in the subprocess PATH.
+这是因为这些命令以 `.exe` 包装器的形式存在于 `venv/Scripts/` 目录下，而子进程的 PATH 中没有该目录。
 
-**Solution**: At the very top of your entry script (beginning of `main()` or at file level), prepend the venv `Scripts` directory to the `PATH` environment variable:
+**解决方案**：在入口脚本的最顶部（`main()` 函数开头或文件级）将 venv 的 `Scripts` 目录前置到 `PATH` 环境变量：
 
 ```python
 import os
@@ -1100,67 +1134,70 @@ if os.path.isdir(venv_scripts):
     os.environ["PATH"] = venv_scripts + os.pathsep + os.environ.get("PATH", "")
 ```
 
-This code is already included in the example script `examples/full_runner_example.py` (commented out by default). Uncomment and adjust the path as needed.
+示例脚本 `examples/full_runner_example.py` 中已包含此段代码（默认注释），按需取消注释并调整路径即可。
 
-## Placeholders (Variable Substitution)
+## 占位符（变量替换）
 
-When the same config file needs different parameters in different environments (e.g., solver path, model file path, etc.), use `{variable_name}` placeholders in the config and pass actual values via `--var` or `variables` at runtime.
+当同一个配置文件需要在不同环境下使用不同参数（如求解器路径、模型文件路径等）时，可以用 `{变量名}` 占位符编写配置，运行时通过 `--var` 或 `variables` 参数传入实际值。
 
-### Writing Configs with Placeholders
+### 编写含占位符的配置
 
-JSON:
+JSON：
 
 ```json
 {
     "test_cases": [
         {
-            "name": "Solver Test",
-            "command": "{solver}",
-            "args": ["--input", "{model}", "--output", "{output}"],
+            "name": "求解器测试",
+            "execution": {
+                "command": "{solver}",
+                "args": ["--input", "{model}", "--output", "{output}"]
+            },
             "expected": { "return_code": 0 }
         }
     ]
 }
 ```
 
-YAML:
+YAML：
 
 ```yaml
 test_cases:
-  - name: Solver Test
-    command: "{solver}"
-    args: ["--input", "{model}", "--output", "{output}"]
+  - name: 求解器测试
+    execution:
+      command: "{solver}"
+      args: ["--input", "{model}", "--output", "{output}"]
     expected:
       return_code: 0
 ```
 
-Placeholders `{variable_name}` can appear in any string value in the config file, including `command`, `args`, `name`, `expected.output_contains`, etc. Multiple placeholders in the same string are supported, e.g., `"{solver} --input {model}"`.
+占位符 `{变量名}` 可出现在配置文件的任意字符串值中，包括 `command`、`args`、`name`、`expected.output_contains` 等。支持同一个字符串中使用多个占位符，如 `"{solver} --input {model}"`。
 
-> **Safety design**: Only keys present in the `variables` dictionary are replaced. Unmatched `{xxx}` is left as-is without error. Therefore, regex patterns in `expected.output_matches` (like `{2,}`, `\d{4}`) are unaffected.
+> **安全设计**：只有 `variables` 字典中存在的 key 才会被替换。`{xxx}` 若无匹配不会报错，而是原样保留。因此 `expected.output_matches` 中的正则模式（如 `{2,}`、`\d{4}`）不受影响。
 
-### Usage
+### 用法
 
 #### CLI
 
 ```bash
-# Single variable
+# 单个变量
 symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe
 
-# Multiple variables
+# 多个变量
 symtest run test_cases.json --var solver=/opt/solver/bin/solver.exe --var model=./data/model.dat
 
-# Combined with parallel mode, tag filtering, etc.
+# 与并行模式、标签过滤等组合使用
 symtest run test_cases.json --var solver=solver.exe --parallel --workers 4 --tag smoke
 ```
 
-`--var` format is `KEY=VALUE`, usable multiple times. Separated by `=`; whitespace around key and value is auto-trimmed.
+`--var` 格式为 `KEY=VALUE`，可多次使用。等号分隔，key 和 value 两侧的空格会被自动去除。
 
 #### Python API
 
 ```python
 from symtest.runners import JSONRunner, YAMLRunner, ParallelJSONRunner, ParallelYAMLRunner
 
-# Sequential run
+# 顺序运行
 runner = JSONRunner(
     config_file="test_cases.json",
     variables={
@@ -1171,14 +1208,14 @@ runner = JSONRunner(
 )
 success = runner.run_tests()
 
-# Parallel run
+# 并行运行
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
     variables={"solver": "/opt/solver/bin/solver.exe"},
 )
 success = runner.run_tests()
 
-# YAML also supported
+# YAML 同样支持
 runner = YAMLRunner(
     config_file="test_cases.yaml",
     variables={"solver": "/opt/solver/bin/solver.exe"},
@@ -1186,37 +1223,41 @@ runner = YAMLRunner(
 success = runner.run_tests()
 ```
 
-### Use Cases
+### 适用场景
 
-| Scenario | Example |
+| 场景 | 示例 |
 |---|---|
-| Different solver versions | `--var solver=v1.0/solver.exe` vs `--var solver=v2.0/solver.exe` |
-| Different input data | `--var model=case_1.dat` vs `--var model=case_2.dat` |
-| CI/CD environment adaptation | Local `/opt/solver.exe`, CI `/runner/solver.exe` |
-| Cross-platform paths | Windows `--var solver=C:\solver.exe`, Linux `--var solver=/opt/solver.exe` |
+| 不同求解器版本测试 | `--var solver=v1.0/solver.exe` ↔ `--var solver=v2.0/solver.exe` |
+| 不同输入数据 | `--var model=case_1.dat` ↔ `--var model=case_2.dat` |
+| CI/CD 环境适配 | 本地 `/opt/solver.exe`，CI `/runner/solver.exe` |
+| 多平台路径 | Windows `--var solver=C:\solver.exe`，Linux `--var solver=/opt/solver.exe` |
 
-## Tag Filtering
+## 标签过滤
 
-Tags allow classifying test cases and batch-filtering them at runtime. Tag filtering and name filtering can be used simultaneously (AND relationship — both conditions must be met).
+通过标签（tags）可以对测试用例进行分类，并在运行时按标签批量过滤。标签过滤与名称过滤可同时使用，满足 AND 关系（两个条件都必须满足）。
 
-### Defining Tags in Test Cases
+### 在测试用例中定义标签
 
-JSON:
+JSON：
 
 ```json
 {
     "test_cases": [
         {
-            "name": "Quick Test",
-            "command": "echo",
-            "args": ["hello"],
+            "name": "快速测试",
+            "execution": {
+                "command": "echo",
+                "args": ["hello"]
+            },
             "tags": ["smoke", "fast"],
             "expected": { "return_code": 0 }
         },
         {
-            "name": "Full Regression Test",
-            "command": "python",
-            "args": ["long_test.py"],
+            "name": "完整回归测试",
+            "execution": {
+                "command": "python",
+                "args": ["long_test.py"]
+            },
             "tags": ["regression", "slow"],
             "expected": { "return_code": 0 }
         }
@@ -1224,30 +1265,31 @@ JSON:
 }
 ```
 
-YAML:
+YAML：
 
 ```yaml
 test_cases:
-  - name: Quick Test
-    command: echo
-    args: ["hello"]
+  - name: 快速测试
+    execution:
+      command: echo
+      args: ["hello"]
     tags: ["smoke", "fast"]
     expected:
       return_code: 0
 ```
 
-`tags` is optional; defaults to an empty list if not specified. Each case can have multiple tags.
+`tags` 是可选字段，不指定则默认为空列表。每个用例可以有多个标签。
 
-### Runtime Filtering
+### 运行时过滤
 
 ```bash
-# Run only cases with the "smoke" tag
+# 只运行带 "smoke" 标签的用例
 symtest run test_cases.json --tag smoke
 
-# Run cases with "smoke" or "regression" tags (OR relationship)
+# 运行带 "smoke" 或 "regression" 标签的用例（OR 关系）
 symtest run test_cases.json --tag smoke --tag regression
 
-# Combine name and tag filtering (AND relationship)
+# 同时按名称和标签过滤（AND 关系）
 symtest run test_cases.json -t alpha --tag fast
 ```
 
@@ -1256,11 +1298,11 @@ symtest run test_cases.json -t alpha --tag fast
 ```python
 runner = JSONRunner(
     config_file="test_cases.json",
-    test_case_tag_filter=["smoke"],     # Run only cases with the smoke tag
+    test_case_tag_filter=["smoke"],     # 只运行含 smoke 标签的用例
 )
 success = runner.run_tests()
 
-# Combine with name filtering
+# 结合名称过滤
 runner = JSONRunner(
     config_file="test_cases.json",
     test_case_filter=["alpha", "beta"],
@@ -1269,13 +1311,13 @@ runner = JSONRunner(
 success = runner.run_tests()
 ```
 
-## Setup Module
+## Setup 模块
 
-The Setup module performs initialization before tests and cleanup after tests.
+Setup 模块在测试前执行初始化、测试后执行清理。
 
-### Environment Variables (Config File Approach)
+### 环境变量（配置文件方式）
 
-JSON:
+JSON：
 
 ```json
 {
@@ -1289,7 +1331,7 @@ JSON:
 }
 ```
 
-YAML:
+YAML：
 
 ```yaml
 setup:
@@ -1300,20 +1342,20 @@ test_cases:
   [...]
 ```
 
-Environment variables in the config file are set before tests and restored to their original values after tests.
+配置文件中的环境变量会在测试前设置、测试后恢复原值。
 
-### Custom Setup Plugin
+### 自定义 Setup 插件
 
 ```python
 from symtest import BaseSetup, JSONRunner
 
 class DatabaseSetup(BaseSetup):
     def setup(self):
-        # Initialization operations
+        # 初始化操作
         pass
 
     def teardown(self):
-        # Cleanup operations (executed even if tests fail)
+        # 清理操作（即使测试失败也会执行）
         pass
 
 runner = JSONRunner("test_cases.json")
@@ -1321,37 +1363,37 @@ runner.setup_manager.add_setup(DatabaseSetup({"connection": "test_db"}))
 success = runner.run_tests()
 ```
 
-Multiple plugins execute `setup()` in addition order and `teardown()` in reverse order.
+多个插件按添加顺序执行 setup，按逆序执行 teardown。
 
-### Execution Order
+### 执行顺序
 
-1. Load setup configuration from config file (environment variables, etc.)
-2. Execute `setup()` for all setup plugins (in addition order)
-3. Run tests
-4. Execute `teardown()` for all setup plugins (in reverse order, guaranteed to execute)
+1. 加载配置文件中的 setup 配置（环境变量等）
+2. 执行所有 setup 插件的 `setup()`（按添加顺序）
+3. 运行测试
+4. 执行所有 setup 插件的 `teardown()`（逆序，保证执行）
 
-## Parallel Testing
+## 并行测试
 
 ```python
 from symtest.runners import ParallelJSONRunner
 
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
-    max_workers=4,                # Maximum concurrency, defaults to CPU core count
-    execution_mode="thread"       # "thread" or "process"
+    max_workers=4,                # 最大并发数，默认 CPU 核心数
+    execution_mode="thread"       # "thread" 或 "process"
 )
 success = runner.run_tests()
 
-# Fallback to sequential execution
+# 回退到顺序执行
 runner.run_tests_sequential()
 ```
 
-**Thread mode**: Shared memory, supports resource-aware scheduling (see next section).  
-**Process mode**: Process isolation, does not support resource scheduling.
+**线程模式**：共享内存，支持资源感知调度（见下节）。  
+**进程模式**：进程隔离，不支持资源调度。
 
-## Sequential Step Testing
+## 顺序步骤测试
 
-A test case can contain multiple ordered steps. If any step fails, subsequent steps are skipped (fail-fast).
+一个测试用例可包含多个有序步骤，某步失败则跳过后续步骤（fail-fast）。
 
 ### JSON
 
@@ -1359,20 +1401,22 @@ A test case can contain multiple ordered steps. If any step fails, subsequent st
 {
     "test_cases": [
         {
-            "name": "Multi-step Test",
-            "steps": [
-                {
-                    "command": "echo",
-                    "args": ["step1"],
-                    "expected": { "return_code": 0 }
-                },
-                {
-                    "command": "echo",
-                    "args": ["step2"],
-                    "expected": { "return_code": 0 },
-                    "retry_count": 2
-                }
-            ]
+            "name": "多步骤测试",
+            "execution": {
+                "steps": [
+                    {
+                        "command": "echo",
+                        "args": ["step1"],
+                        "expected": { "return_code": 0 }
+                    },
+                    {
+                        "command": "echo",
+                        "args": ["step2"],
+                        "expected": { "return_code": 0 },
+                        "retry_count": 2
+                    }
+                ]
+            }
         }
     ]
 }
@@ -1382,47 +1426,50 @@ A test case can contain multiple ordered steps. If any step fails, subsequent st
 
 ```yaml
 test_cases:
-  - name: Multi-step Test
-    steps:
-      - command: echo
-        args: ["step1"]
-        expected:
-          return_code: 0
-      - command: echo
-        args: ["step2"]
-        expected:
-          return_code: 0
+  - name: 多步骤测试
+    execution:
+      steps:
+        - command: echo
+          args: ["step1"]
+          expected:
+            return_code: 0
+        - command: echo
+          args: ["step2"]
+          expected:
+            return_code: 0
 ```
 
-Each step supports `command`, `args`, `expected`, `timeout`, and `retry_count` fields.
+每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。
 
-**Failure output trimming**: When a step fails in the sequence, the `output` field in the result dictionary **contains only the failed step's output** — not the concatenated output of all prior successful steps. This significantly reduces failure report size, ideal for AI quick diagnosis of failed steps.
+**失败输出瘦身**：当序列中某一步失败时，结果字典的 `output` 字段**仅包含失败步骤的输出**——不会拼接前面成功步骤的大量输出。这大幅减少了失败报告的体积，适合 AI 快速诊断失败的步骤。
 
-**Step details**: View each step's individual status via `detail["step_results"]` (even if all passed), making it easy to understand the entire sequence's execution flow.
+**步骤详情**：通过 `detail["step_results"]` 可查看每个步骤的独立状态（即使全部通过），方便了解整个序列的执行流程。
 
-**Failure marking**: On failure, the `failed_step` field indicates the failed step number, e.g., "Failed at step 2/3".
+**失败标记**：失败时结果中 `failed_step` 字段标注失败步骤编号，如 "Failed at step 2/3"。
 
-**Resume**: After a sequence case fails, use `--resume` to skip already-passed steps and continue from the failed step, dramatically reducing iteration cost for long-running cases. See [Resume](#resume---resume) for details.
+**断点续跑**：序列用例失败后，可通过 `--resume` 跳过已通过的步骤，直接从失败步骤继续执行，大幅节省长耗时用例的迭代成本。详见[断点续跑](#断点续跑resume)。
 
-### Case-Level expected (Sequential Steps)
+### Case 级别 expected（顺序步骤）
 
-After all steps have passed, you can define additional case-level `expected` assertions to perform unified validation (e.g., file comparison) on files produced by all steps. The case-level `expected` field format is identical to single-command mode, supporting `return_code`, `output_contains`, `output_matches`, and `compare_files`.
+当所有步骤都执行通过后，可以在 case 级别定义额外的 `expected` 断言，对所有步骤产生的文件做统一的验证（如文件比较）。Case 级别的 `expected` 字段格式与单命令模式完全一致，支持 `return_code`、`output_contains`、`output_matches`、`compare_files`。
 
 ```json
 {
-    "name": "Multi-step + File Comparison",
-    "steps": [
-        {
-            "command": "python",
-            "args": ["./generate.py", "output.csv"],
-            "expected": { "return_code": 0 }
-        },
-        {
-            "command": "python",
-            "args": ["./process.py", "output.csv"],
-            "expected": { "return_code": 0, "output_contains": ["Done"] }
-        }
-    ],
+    "name": "多步骤+文件对比",
+    "execution": {
+        "steps": [
+            {
+                "command": "python",
+                "args": ["./generate.py", "output.csv"],
+                "expected": { "return_code": 0 }
+            },
+            {
+                "command": "python",
+                "args": ["./process.py", "output.csv"],
+                "expected": { "return_code": 0, "output_contains": ["Done"] }
+            }
+        ]
+    },
     "expected": {
         "compare_files": [
             {
@@ -1438,57 +1485,61 @@ After all steps have passed, you can define additional case-level `expected` ass
 }
 ```
 
-> **Note**: Case-level `expected` only runs after all steps pass. If any step fails, case-level assertions are not executed. When a case-level assertion fails, the error message includes a "Case-level assertion failed" prefix to distinguish it.
+> **注意**：case 级别的 `expected` 只在所有 step 通过后才执行。如果某个 step 失败，case 级断言不会运行。case 级断言失败时，错误消息包含 "Case-level assertion failed" 前缀以便区分。
 
-## Resource-Aware Scheduling
+## 资源感知调度
 
-Only effective in thread mode. Configured via the `resources` field; the framework automatically manages CPU core allocation.
+仅线程模式生效。通过 `scheduling.resources` 字段配置，框架自动管理 CPU 核心分配。
 
 ```json
 {
     "name": "Heavy_Simulation",
-    "command": "solver",
-    "args": ["-i", "input.dat"],
-    "timeout": 36000,
-    "resources": {
-        "cpu_cores": 4,
-        "estimated_time": 18000,
-        "min_memory_mb": 16000,
-        "priority": 10
+    "execution": {
+        "command": "solver",
+        "args": ["-i", "input.dat"],
+        "timeout": 36000
+    },
+    "scheduling": {
+        "resources": {
+            "cpu_cores": 4,
+            "estimated_time": 18000,
+            "min_memory_mb": 16000,
+            "priority": 10
+        }
     },
     "expected": { "return_code": 0 }
 }
 ```
 
-| Field | Description |
+| 字段 | 说明 |
 |---|---|
-| `cpu_cores` | Required CPU core count, default 1. The framework uses semaphores to control allocation; tasks exceeding the limit wait in queue |
-| `estimated_time` | Estimated duration (seconds), used for LPT scheduling (long tasks start first) |
-| `min_memory_mb` | Estimated memory (MB), currently used for log warnings only |
-| `priority` | Priority 0-10, currently used for informational labeling only |
+| `cpu_cores` | 所需 CPU 核心数，默认 1。框架用信号量控制分配，超限任务排队等待 |
+| `estimated_time` | 预估耗时（秒），用于 LPT 调度（长任务优先启动） |
+| `min_memory_mb` | 预估内存（MB），目前仅用于日志警告 |
+| `priority` | 优先级 0-10，目前仅用于信息标注 |
 
-Framework behavior:
-- Automatically detects CPU core count, reserving 2 cores for the system
-- Automatically injects `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `NPROC` environment variables when a task starts, preventing solver thread runaway
-- Schedules by `estimated_time` in descending order (LPT strategy); if `--history-dir` is enabled, prefers historical `avg_duration` for ordering
+框架行为：
+- 自动检测 CPU 核心数，预留 2 核给系统
+- 任务启动时自动注入 `OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`NPROC` 环境变量，防止求解器线程失控
+- 按 `estimated_time` 降序调度（LPT 策略）；若启用 `--history-dir`，优先使用历史 `avg_duration` 排序
 
-## History & Regression Detection
+## 历史记录与回归检测
 
-Use `--history-dir` to specify a directory where the framework maintains a `.symtest` file recording each case's historical run times.
+通过 `--history-dir` 指定一个目录，框架会在该目录下维护一个 `.symtest` 文件，记录每个 case 的历史运行时间。
 
-### How It Works
+### 工作原理
 
-1. **First run**: No `.symtest` in the directory; an empty file is auto-created; ordering still uses `estimated_time` from the config
-2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order
-3. **Regression detection**: After each run, if any case's duration exceeds the historical average by the threshold multiplier (default 1.5), a warning is printed
+1. **首次运行**：目录下没有 `.symtest`，自动创建空文件，排序仍使用配置中的 `estimated_time`
+2. **后续运行**：读取 `.symtest` 中的历史数据，优先使用 `avg_duration` 做调度排序
+3. **回归检测**：每次运行结束后，如果某 case 耗时超过历史均值的阈值倍数（默认 1.5），打印警告
 
-### CLI Usage
+### CLI 用法
 
 ```bash
-# Enable history
+# 启用历史记录
 symtest run test_cases.json --history-dir ./hist
 
-# Custom regression threshold (warn only if 2x the average)
+# 自定义回归阈值（超过 2 倍均值才警告）
 symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 ```
 
@@ -1497,15 +1548,15 @@ symtest run test_cases.json --history-dir ./hist --regression-threshold 2.0
 ```python
 from symtest.runners import JSONRunner, ParallelJSONRunner
 
-# Sequential run + history
+# 顺序运行 + 历史记录
 runner = JSONRunner(
     config_file="test_cases.json",
     history_dir="./hist",
-    regression_threshold=2.0,  # Optional, default 1.5
+    regression_threshold=2.0,  # 可选，默认 1.5
 )
 success = runner.run_tests()
 
-# Parallel run + history (scheduling also uses historical data)
+# 并行运行 + 历史记录（调度排序也会使用历史数据）
 runner = ParallelJSONRunner(
     config_file="test_cases.json",
     history_dir="./hist",
@@ -1513,7 +1564,7 @@ runner = ParallelJSONRunner(
 success = runner.run_tests()
 ```
 
-### .symtest File Format
+### .symtest 文件格式
 
 ```json
 {
@@ -1528,53 +1579,55 @@ success = runner.run_tests()
 }
 ```
 
-| Field | Description |
+| 字段 | 说明 |
 |---|---|
-| `avg_duration` | Cumulative average duration (seconds), used for scheduling and regression baseline |
-| `last_duration` | Most recent run duration |
-| `run_count` | Historical run count |
+| `avg_duration` | 累计平均耗时（秒），用于调度排序和回归基线 |
+| `last_duration` | 最近一次运行耗时 |
+| `run_count` | 历史运行次数 |
 
-### Regression Warning Example
+### 回归警告示例
 
-When a case's runtime exceeds the historical average by the threshold multiplier:
+当某 case 运行时间超过历史均值的阈值倍数时：
 
 ```
 ⚠ WARNING: Case 'heavy_simulation' regressed: 18.2s vs avg 10.5s (1.73x slower)
 ```
 
-### Without History
+### 不启用历史记录
 
-When `--history-dir` is not provided, behavior is identical to before — no extra files are created.
+不传 `--history-dir` 时行为与之前完全一致，不创建任何额外文件。
 
-### Reset History (--update-history)
+### 清零历史记录（--update-history）
 
-When algorithm refactoring or environment changes make historical duration data no longer representative, `--update-history` clears the history entries for the cases involved in this run from `.symtest`, making this run the new baseline for regression detection.
+当算法重构或环境变化导致历史耗时数据不再有代表性时，`--update-history`
+会清除本次运行涉及的 case 在 `.symtest` 中的历史记录，让本次运行成为
+新的回归检测基线。
 
 ```bash
-# Clear history and make this run the new baseline (requires --history-dir)
+# 清除历史后本次运行成为新基线（需搭配 --history-dir）
 symtest run config.json --history-dir ./hist --update-history
 ```
 
-**Behavior**:
-- Clears the history entries in `.symtest` for **the cases involved in this run**
-- History data for cases not in this run is preserved
-- No false positives from regression detection in this run (no historical baseline for comparison)
-- The durations of passing cases in this run are recorded as a fresh starting point
-- The report shows a `History Reset` count
+**行为**：
+- 清除 `.symtest` 中**本次运行涉及的 case** 的历史条目
+- 未参与本次运行的 case 的历史数据保留不动
+- 本次运行的回归检测不会产生误报（无历史基线可比）
+- 本次通过 case 的耗时会被记录为全新起点
+- 报告中显示 `History Reset` 计数
 
-> **Note**: Must be used with `--history-dir`. Reset scope is limited to the cases run this time; other cases' history data is unaffected.
+> **注意**：需搭配 `--history-dir` 使用。清零范围仅限本次运行的 case，不影响其他 case 的历史数据。
 
-## JUnit XML Report
+## JUnit XML 报告
 
-Use `--junit-xml` to output a JUnit-format XML report alongside test execution, compatible with Jenkins, GitLab CI, CircleCI, and other CI tools.
+通过 `--junit-xml` 可在运行测试的同时输出 JUnit 格式的 XML 报告，兼容 Jenkins、GitLab CI、CircleCI 等 CI 工具。
 
-### CLI Usage
+### CLI 用法
 
 ```bash
 symtest run test_cases.json --junit-xml report.xml
 ```
 
-`--junit-xml` is a supplementary output, coexisting with `--output-format` (text/json/html) without affecting the console report.
+`--junit-xml` 是补充输出，与 `--output-format`（text/json/html）并存，不影响控制台报告。
 
 ### Python API
 
@@ -1585,49 +1638,49 @@ runner.run_tests()
 write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 ```
 
-Status mapping: `passed` → pass; `failed` → failure (assertion failure) or error (execution error); `timeout` → error; `xfailed` → **skipped** (expected failure, no build impact); `xpassed` → **failure** (unexpected pass, treated as build failure). Each testcase element includes command output and failure reason.
+状态映射：`passed` 记为通过；`failed` 记为 failure（断言失败）或 error（执行错误）；`timeout` 记为 error；`xfailed` 记为 **skipped**（预期失败，不影响构建）；`xpassed` 记为 **failure**（意外通过，视为构建失败）。每个 testcase 元素附带命令输出与失败原因。
 
-## Logging Configuration
+## 日志配置
 
-All framework diagnostic and status information is output through Python's standard `logging` module, unified under the `symtest` namespace. Logs are written to **stderr** by default, keeping `stdout` clean for safe use with `--output-format json` for machine-readable output.
+框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `symtest` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
 
-### CLI Log Level Control
+### 命令行控制日志级别
 
-Both `run` and `compare` subcommands support:
+`run` 与 `compare` 子命令均支持：
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--verbose` / `-v` | Verbose output; log level raised to DEBUG |
-| `--debug` | Debug mode; also raised to DEBUG, and prints full stack traces on error |
+| `--verbose` / `-v` | 详细输出，日志级别提升至 DEBUG |
+| `--debug` | 调试模式，同样提升至 DEBUG，并在出错时打印完整堆栈 |
 
-Default level is INFO, showing only key progress and errors; adding `--verbose` or `--debug` outputs command output, scheduling details, and other DEBUG-level information.
+默认级别为 INFO，仅显示关键进度与错误；加 `--verbose` 或 `--debug` 后会输出命令输出、调度细节等 DEBUG 级信息。
 
 ```bash
-# Verbose mode (includes command output etc. at DEBUG level)
+# 详细模式（含命令输出等 DEBUG 信息）
 symtest run test_cases.json --verbose
 
-# Debug mode (prints stack trace on error)
+# 调试模式（出错时打印堆栈）
 symtest run test_cases.json --debug
 ```
 
-### Library Usage
+### 库使用方式
 
-When imported as a library, the framework only attaches a `NullHandler` by default, producing no output (following the polite library logging convention). To see logs, call `setup_console_logging()` to enable console output:
+作为库被 import 时，框架默认只挂载 `NullHandler`，不产生任何输出（符合库的礼貌日志规范）。需要看到日志时，调用 `setup_console_logging()` 启用控制台输出：
 
 ```python
 import logging
 from symtest.logging_config import setup_console_logging, get_logger
 
-# Enable console logging (stderr), with optional level
+# 启用控制台日志（stderr），可指定级别
 setup_console_logging(level=logging.DEBUG)
 
-logger = get_logger(__name__)   # Automatically under symtest namespace
-logger.info("Custom log message")
+logger = get_logger(__name__)   # 自动归入 symtest 命名空间
+logger.info("自定义日志信息")
 ```
 
-### Output to Log File
+### 输出到日志文件
 
-The framework does not have a built-in `--log-file` option, but you can use Python's standard `logging` to add a file handler for the `symtest` logger:
+框架未内置 `--log-file` 选项，但可借助 Python 标准 `logging` 自行为 `symtest` logger 添加文件处理器：
 
 ```python
 import logging
@@ -1639,142 +1692,142 @@ file_handler.setFormatter(
     logging.Formatter("%(asctime)s %(levelname)-7s %(name)s %(message)s")
 )
 
-# Add file handler to framework root logger; all child loggers inherit it
+# 给框架根 logger 加文件处理器，所有子 logger 都会继承
 logging.getLogger("symtest").addHandler(file_handler)
 ```
 
-The above code works both for library usage and in scripts alongside `symtest`. Console and file handlers can coexist.
+上述代码既适用于库调用，也可放在脚本中配合 `symtest` 一起使用。控制台与文件处理器可并存。
 
-## File Comparison
+## 文件比较
 
-The framework provides standalone file comparison capabilities, supporting text, JSON, CSV, XML, HDF5, binary, and more formats. Usable via command-line tools or automatically invoked in test case `expected.compare_files` (see [File Comparison Assertions](#file-comparison-assertions-compare_files)).
+框架提供独立的文件比较能力，支持文本、JSON、CSV、XML、HDF5、二进制等多种格式。既可通过命令行工具使用，也可在测试用例的 `expected.compare_files` 中自动调用（见[文件比较断言](#文件比较断言compare_files)）。
 
-### Command Line Tools
+### 命令行工具
 
-Two equivalent invocation methods with identical parameters:
+有两种等价的调用方式，参数完全一致：
 
 ```bash
-# Standalone command
-compare-files <file1> <file2> [options]
+# 独立命令
+compare-files <file1> <file2> [选项]
 
-# symtest subcommand
-symtest compare <file1> <file2> [options]
+# symtest 子命令
+symtest compare <file1> <file2> [选项]
 ```
 
-### Common Options
+### 通用选项
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--file-type` | File type: `auto` (default), `text`, `json`, `csv`, `xml`, `h5`, `binary` |
-| `--start-line` | Start line number (1-based), default 1 |
-| `--end-line` | End line number (1-based) |
-| `--start-column` | Start column number (1-based), default 1 |
-| `--end-column` | End column number (1-based) |
-| `--encoding` | Text encoding, default `utf-8` |
-| `--output-format` | Output format: `text`, `json`, `html` |
-| `--verbose` / `-v` | Verbose output |
-| `--debug` | Debug mode |
-| `--num-threads` | Number of parallel threads, default 4 |
+| `--file-type` | 文件类型：`auto`（默认）、`text`、`json`、`csv`、`xml`、`h5`、`binary` |
+| `--start-line` | 起始行号（1-based），默认 1 |
+| `--end-line` | 结束行号（1-based） |
+| `--start-column` | 起始列号（1-based），默认 1 |
+| `--end-column` | 结束列号（1-based） |
+| `--encoding` | 文本编码，默认 `utf-8` |
+| `--output-format` | 输出格式：`text`、`json`、`html` |
+| `--verbose` / `-v` | 详细输出 |
+| `--debug` | 调试模式 |
+| `--num-threads` | 并行线程数，默认 4 |
 
-### Text File Comparison
+### 文本文件比较
 
 ```bash
 compare-files file1.txt file2.txt --start-line 10 --end-line 20
 ```
 
-### JSON File Comparison
+### JSON 文件比较
 
 ```bash
-# Exact comparison (default)
+# 精确比较（默认）
 compare-files data1.json data2.json
 
-# Compare by key field
+# 按 key 字段比较
 compare-files data1.json data2.json --json-compare-mode key-based --json-key-field id
 ```
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--json-compare-mode` | `exact` (default) or `key-based` |
-| `--json-key-field` | Matching field for key-based mode, supports comma-separated multi-field |
+| `--json-compare-mode` | `exact`（默认）或 `key-based` |
+| `--json-key-field` | key-based 模式的匹配字段，支持逗号分隔多字段 |
 
-### CSV File Comparison
+### CSV 文件比较
 
 ```bash
-# Basic comparison
+# 基本比较
 compare-files data1.csv data2.csv
 
-# Custom delimiter and numerical tolerance
+# 自定义分隔符与数值容差
 compare-files data1.csv data2.csv --csv-delimiter ';' --csv-rtol 1e-4 --csv-atol 1e-6
 
-# TSV files (auto-detected as csv type)
+# TSV 文件（自动识别为 csv 类型）
 compare-files data1.tsv data2.tsv
 
-# Data filtering (compare only numeric cells matching the condition)
+# 数据过滤（只比较满足条件的数值单元格）
 compare-files data1.csv data2.csv --csv-data-filter '>1e-6'
 compare-files data1.csv data2.csv --csv-data-filter 'abs>1e-9'
 compare-files data1.csv data2.csv --csv-data-filter '<=0.01'
 ```
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--csv-rtol` | Relative tolerance for numerics, default 1e-5 |
-| `--csv-atol` | Absolute tolerance for numerics, default 1e-8 |
-| `--csv-delimiter` | Field delimiter, default `,` |
-| `--csv-quotechar` | Quote character, default `"` |
-| `--csv-data-filter` | Data filter expression: `>`, `>=`, `<`, `<=`, `==`; supports `abs` prefix. Only compares numeric cells that **both files** satisfy the condition for |
+| `--csv-rtol` | 数值相对容差，默认 1e-5 |
+| `--csv-atol` | 数值绝对容差，默认 1e-8 |
+| `--csv-delimiter` | 字段分隔符，默认 `,` |
+| `--csv-quotechar` | 引用字符，默认 `"` |
+| `--csv-data-filter` | 数据过滤表达式：`>`, `>=`, `<`, `<=`, `==`，支持 `abs` 前缀。只比较两个文件中**都满足**条件的数值单元格 |
 
-CSV comparison compares cell by cell in row-column structure; numeric cells within tolerance are considered equal. After `--csv-data-filter` filtering, numeric cell pairs that don't satisfy the condition won't report differences. The difference report includes row/column count mismatches and cell inconsistencies, listing up to 10 entries.
+CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内视为相等。`--csv-data-filter` 过滤后，不满足条件的数值单元格对不会报差异。差异报告包含行数、列数不匹配与单元格不一致，最多列出 10 条。
 
-#### Error Analysis (--error-analysis)
+#### 误差分析（--error-analysis）
 
-By default, CSV and HDF5 comparators stop reporting after finding 10 differences. When you need statistical insight into **all numeric cells**, enable streaming full statistics via `--error-analysis`.
+默认情况下，CSV 和 HDF5 比较器在发现 10 条差异后停止报告。当需要了解**全体数值单元格**的统计特征时，可通过 `--error-analysis` 启用流式全量统计。
 
-When enabled, each failed file comparison appends `error_stats` to the Compare Failures section of the report:
+启用后，每个失败的文件比较会在报告的 Compare Failures 区块中附加 `error_stats` 信息：
 
-| Statistic | Description |
+| 统计量 | 说明 |
 |---|---|
-| `total_numeric_cells` | Total number of numeric cells compared |
-| `mismatched_cells` | Number of cells exceeding tolerance |
-| `max_abs_error` | Maximum absolute error and its location |
-| `max_rel_error` | Maximum relative error and its location |
-| `mean_abs_error` | Mean absolute error |
-| `rms_abs_error` | Root-mean-square absolute error (RMSE) |
+| `total_numeric_cells` | 参与数值比较的单元格总数 |
+| `mismatched_cells` | 超出容差的单元格数 |
+| `max_abs_error` | 最大绝对误差及其位置 |
+| `max_rel_error` | 最大相对误差及其位置 |
+| `mean_abs_error` | 平均绝对误差 |
+| `rms_abs_error` | 均方根绝对误差（RMSE） |
 
-Statistics are computed **in streaming fashion**, independent of the difference truncation, covering all numeric cells. By default only failed comparisons output statistics; passed comparisons do not.
+统计是**流式**计算的，不依赖差异截断，覆盖全体数值单元格。默认仅失败的比较输出统计，通过的比较不输出。
 
-To also output statistics for **passed** cases (e.g. to monitor tolerance headroom), use `--error-analysis-all` instead (it implicitly enables `--error-analysis`):
+如需让**通过**的用例也输出统计信息（例如用于监控容差余量），可改用 `--error-analysis-all`（它会隐含启用 `--error-analysis`）：
 
 ```bash
-# Output error statistics for all cases (including passed ones)
+# 对所有用例（含通过的）输出误差统计
 symtest run config.json --error-analysis-all
 ```
 
-When enabled, each **passed** case lists the above statistics in the Detailed Results section as `error_stats:`. For passed cases the statistics are also written to the `assertion_results[].error_stats` field of the `--output json` report for programmatic consumption. Statistics for passed cases are produced only when `--error-analysis-all` is enabled; otherwise behavior is unchanged.
+启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline vs actual):` 的形式列出上述统计量（与失败用例的 `error_stats` 字段一致）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`，便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
 
-**CLI Usage**:
+**CLI 用法**：
 
 ```bash
-# Enable error analysis
+# 启用误差分析
 symtest run config.json --error-analysis
 
-# Enable error analysis and also output statistics for passed cases
+# 启用误差分析并对通过的用例也输出统计
 symtest run config.json --error-analysis-all
 
-# Combine with comparison parameters
+# 与比较参数组合使用
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
 
-**Python API**:
+**Python API**：
 
 ```python
-# Enable in comparator
+# 在比较器中启用
 comparator = ComparatorFactory.create_comparator(
     "csv", rtol=1e-5, atol=1e-8, error_analysis=True
 )
 result = comparator.compare_files("data1.csv", "data2.csv")
-print(result.error_stats)  # dict or None
+print(result.error_stats)  # dict 或 None
 
-# Enable via Assertions.compare_files
+# 通过 Assertions.compare_files 启用
 from symtest.core.assertions import Assertions
 cf_result = Assertions.compare_files(
     "actual.csv", "baseline.csv",
@@ -1784,169 +1837,164 @@ cf_result = Assertions.compare_files(
 print(cf_result["error_stats"])
 ```
 
-> **Note**: `--error-analysis` only applies to numeric comparators (CSV, HDF5); text/JSON/XML/binary comparators ignore this parameter. When disabled, behavior is unchanged with no overhead.
+> **注意**：`--error-analysis` 仅对数值型比较器（CSV、HDF5）生效，文本/JSON/XML/二进制比较器忽略此参数。未启用时行为不变，无额外开销。
 
-### XML File Comparison
+### XML 文件比较
 
 ```bash
-# Structural comparison (tags, attributes, text, child elements)
+# 结构化比较（标签、属性、文本、子元素）
 compare-files config1.xml config2.xml
 
-# HTML files (auto-detected as xml type)
+# HTML 文件（自动识别为 xml 类型）
 compare-files page1.html page2.html
 ```
 
-XML comparison recursively compares tags, attributes, text content, and child element counts by DOM structure. The difference report locates specific paths (e.g., `/root/item[0]/@id`), listing up to 10 entries.
+XML 比较按 DOM 结构递归比对标签、属性、文本内容与子元素数量。差异报告定位到具体路径（如 `/root/item[0]/@id`），最多列出 10 条。
 
-### HDF5 File Comparison
+### HDF5 文件比较
 
 ```bash
-# Compare specified tables
+# 比较指定表
 compare-files data1.h5 data2.h5 --h5-table table1,table2
 
-# Use regex to match table names
+# 用正则匹配表名
 compare-files data1.h5 data2.h5 --h5-table-regex "result_.*"
 
-# Comma-separated multiple regex patterns
+# 逗号分隔多个正则
 compare-files data1.h5 data2.h5 --h5-table-regex "table1,table2,table3"
 
-# Numerical tolerance
+# 数值容差
 compare-files data1.h5 data2.h5 --h5-rtol 1e-5 --h5-atol 1e-8
 
-# Data filtering (compare only data matching the condition)
+# 数据过滤（只比较满足条件的数据）
 compare-files data1.h5 data2.h5 --h5-data-filter '>1e-6'
 compare-files data1.h5 data2.h5 --h5-data-filter 'abs>1e-9'
 compare-files data1.h5 data2.h5 --h5-data-filter '<=0.01'
 
-# Disable automatic group path expansion
+# 禁止自动展开 group 路径
 compare-files data1.h5 data2.h5 --h5-table group1 --h5-no-expand-path
 ```
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--h5-table` | Specify table names, comma-separated |
-| `--h5-table-regex` | Regex pattern for table names, comma-separated multi-pattern |
-| `--h5-structure-only` | Compare structure only, not content |
-| `--h5-show-content-diff` | Show content difference details |
-| `--h5-rtol` | Relative tolerance, default 1e-5 |
-| `--h5-atol` | Absolute tolerance, default 1e-8 |
-| `--h5-data-filter` | Data filter expression: `>`, `>=`, `<`, `<=`, `==`; supports `abs` prefix |
-| `--h5-no-expand-path` | Disable automatic expansion of sub-items under group paths |
+| `--h5-table` | 指定表名，逗号分隔 |
+| `--h5-table-regex` | 正则匹配表名，逗号分隔多个模式 |
+| `--h5-structure-only` | 只比较结构，不比较内容 |
+| `--h5-show-content-diff` | 显示内容差异详情 |
+| `--h5-rtol` | 相对容差，默认 1e-5 |
+| `--h5-atol` | 绝对容差，默认 1e-8 |
+| `--h5-data-filter` | 数据过滤表达式：`>`, `>=`, `<`, `<=`, `==`，支持 `abs` 前缀 |
+| `--h5-no-expand-path` | 禁止自动展开 group 路径下的子项 |
 
-### Binary File Comparison
+### 二进制文件比较
 
 ```bash
 compare-files binary1.bin binary2.bin --similarity --chunk-size 16384
 ```
 
-| Option | Description |
+| 选项 | 说明 |
 |---|---|
-| `--similarity` | Calculate similarity index |
-| `--chunk-size` | Read chunk size, default 8192 |
+| `--similarity` | 计算相似度指数 |
+| `--chunk-size` | 读取块大小，默认 8192 |
 
 ### Python API
 
 ```python
 from symtest.file_comparator import ComparatorFactory
 
-# Text comparison
+# 文本比较
 comparator = ComparatorFactory.create_comparator("text", encoding="utf-8", verbose=True)
 result = comparator.compare_files("file1.txt", "file2.txt")
 
-# JSON comparison
+# JSON 比较
 comparator = ComparatorFactory.create_comparator("json", compare_mode="key-based", key_field="id")
 result = comparator.compare_files("data1.json", "data2.json")
 
-# CSV comparison
+# CSV 比较
 comparator = ComparatorFactory.create_comparator("csv", rtol=1e-5, atol=1e-8, delimiter=",")
 result = comparator.compare_files("data1.csv", "data2.csv")
 
-# CSV comparison (with error analysis)
+# CSV 比较（启用误差分析）
 comparator = ComparatorFactory.create_comparator("csv", rtol=1e-5, atol=1e-8, delimiter=",", error_analysis=True)
 result = comparator.compare_files("data1.csv", "data2.csv")
-print(result.error_stats)  # Full numeric statistics
+print(result.error_stats)  # 全量数值统计
 
-# XML comparison
+# XML 比较
 comparator = ComparatorFactory.create_comparator("xml", encoding="utf-8")
 result = comparator.compare_files("config1.xml", "config2.xml")
 
-# HDF5 comparison
+# HDF5 比较
 comparator = ComparatorFactory.create_comparator("h5", tables=["table1"], rtol=1e-5)
 result = comparator.compare_files("data1.h5", "data2.h5")
 
-# Results
+# 结果
 result.identical   # bool
 result.differences # list
 ```
 
-## Extension Development
+## 扩展开发
 
-### Custom Runner
+### 自定义 Runner
 
 ```python
 from symtest.core.base_runner import BaseRunner
 
 class CustomRunner(BaseRunner):
     def load_test_cases(self):
-        # Load test cases into self.test_cases
+        # 加载测试用例到 self.test_cases
         pass
 
     def run_single_test(self, test_case):
-        # Execute a single test, return result dictionary
+        # 执行单个测试，返回结果字典
         pass
 ```
 
-### Custom Setup Plugin
+### 自定义 Setup 插件
 
 ```python
 from symtest import BaseSetup
 
 class MySetup(BaseSetup):
     def setup(self):
-        # self.config gives access to the passed config dict
+        # self.config 可获取传入的配置字典
         pass
 
     def teardown(self):
         pass
 ```
 
-### Custom File Comparator
+### 自定义文件比较器
 
-The framework supports three ways to extend comparison capabilities:
+框架支持三种方式扩展比较能力：
 
-#### Method 1: Workspace Plugin Directory (Recommended)
+#### 方式一：工作区插件目录（推荐）
 
-Create a `comparators/` directory under your workspace and place `*_comparator.py` files inside (following the same naming convention as built-in comparators). The framework auto-discovers and registers the `*Comparator` classes on first use.
+在 workspace 下创建 `comparators/` 目录，放入 `*_comparator.py` 文件（命名与内置比较器一致），框架会在首次使用时自动发现并注册其中的 `*Comparator` 类。
 
 ```
 your-workspace/
 ├── comparators/
-│   └── my_analysis_comparator.py   # Auto-discovered by the framework
+│   └── my_analysis_comparator.py   # 由框架自动发现
 └── test_config.json
 ```
 
-You can specify additional plugin directories via the CLI `--plugin-dir` parameter (usable multiple times):
+可通过 CLI `--plugin-dir` 参数指定额外插件目录（支持多次使用）：
 
 ```bash
 symtest run test_config.json --plugin-dir ./extra_plugins
 ```
 
-Plugins are also automatically inherited by process-mode child processes via the `CLITEST_PLUGIN_DIRS` environment variable.
+插件也会通过环境变量 `CLITEST_PLUGIN_DIRS` 自动继承到 process 模式子进程。
 
-A complete, runnable starting point is `assets/templates/my_analysis_comparator.py` — copy it into your `comparators/` directory and adapt the logic. It demonstrates all the pitfalls below (constructor forwarding, `ComparisonResult` population, `command_output`).
+**插件开发注意事项**：
+- 继承 `symtest.file_comparator.BaseComparator`
+- 类名必须以 `Comparator` 结尾（如 `MyAnalysisComparator`）
+- 注册的 type 名 = 类名去掉 `Comparator` 再小写（如 `myanalysis`）
+- 推荐重写 `compare_files(file1, file2, **kwargs)` 方法而非 `read_content`/`compare_content`（若比较器不使用两文件模型）
+- 通过 `from symtest.file_comparator import ComparisonResult, Difference` 构造结构化结果
+- `extra_kwargs` 自动从 config `compareSpec` 透传
 
-**Plugin development notes**:
-- Inherit from `symtest.file_comparator.BaseComparator`
-- Class name must end with `Comparator` (e.g., `MyAnalysisComparator`)
-- The registered type name = class name without `Comparator`, lowercased (e.g., `myanalysis`)
-- Prefer overriding the `compare_files(file1, file2, **kwargs)` method over `read_content`/`compare_content` (if your comparator doesn't use the two-file model). Note that `read_content` and `compare_content` are `@abstractmethod` on `BaseComparator`, so you MUST provide a concrete implementation (even a stub that raises `NotImplementedError`) or the class cannot be instantiated.
-- Construct structured results via `from symtest.file_comparator import ComparisonResult` and `from symtest.file_comparator.result import Difference` (note: `Difference` is not re-exported from the package root)
-- `extra_kwargs` are auto-passed from the config `compareSpec`
-- **Constructor**: the framework instantiates your comparator with `verbose=True`, `error_analysis=...` plus every extra config kwarg. If you define `__init__`, it MUST accept `**kwargs` and forward them to `super().__init__(**kwargs)` — otherwise construction raises `TypeError`.
-- **`compare_files` argument order**: the framework calls `compare_files(baseline_path, actual_path, **method_params)`, i.e. `file1` is the baseline and `file2` is the actual output. It may also pass `start_line`/`end_line`/`start_column`/`end_column` as keywords.
-- **`ComparisonResult`**: build it with `ComparisonResult(file1=..., file2=...)`; `identical`, `differences`, `error_stats`, and `command_output` are attributes set AFTER construction (they are not constructor parameters). Set `command_output` to a subprocess stdout string to show it in the report's `Comparator Output` section.
-
-Use the registered type name directly in your config:
+在配置中直接使用注册的类型名：
 
 ```json
 {
@@ -1957,9 +2005,9 @@ Use the registered type name directly in your config:
 }
 ```
 
-#### Method 2: Built-in `script` Type Comparator
+#### 方式二：内置 `script` 类型比较器
 
-For quickly integrating standalone analysis scripts without writing a comparator class:
+适用于独立分析脚本快速接入，无需编写比较器类：
 
 ```json
 {
@@ -1975,47 +2023,47 @@ For quickly integrating standalone analysis scripts without writing a comparator
 }
 ```
 
-**Parameter Descriptions**:
+**参数说明**：
 
-| Parameter | Required | Default | Description |
+| 参数 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `script` | Yes | — | Script path (relative to workspace or absolute) |
-| `actual` | No | — | First file argument passed to the script |
-| `baseline` | No | — | Second file argument passed to the script |
-| `cwd` | No | — | Script working directory |
-| `interpreter` | No | `sys.executable` | Python interpreter |
-| `pass_exit_code` | No | `0` | Exit code considered a pass |
-| `pass_pattern` | No | — | stdout must match this regex to be considered a pass |
-| `fail_pattern` | No | — | stdout matching this regex forces a failure (highest priority) |
-| `timeout` | No | `3600` | Timeout in seconds |
+| `script` | 是 | — | 脚本路径（相对 workspace 或绝对） |
+| `actual` | 否 | — | 传给脚本的第一个文件参数 |
+| `baseline` | 否 | — | 传给脚本的第二个文件参数 |
+| `cwd` | 否 | — | 脚本工作目录 |
+| `interpreter` | 否 | `sys.executable` | Python 解释器 |
+| `pass_exit_code` | 否 | `0` | 判定为通过的退出码 |
+| `pass_pattern` | 否 | — | stdout 必须匹配此正则才判定为通过 |
+| `fail_pattern` | 否 | — | stdout 匹配此正则则强制判定为失败（优先级最高） |
+| `timeout` | 否 | `3600` | 超时秒数 |
 
-**Judgment Logic**:
-1. `fail_pattern` match → failure (highest priority)
-2. `pass_pattern` set but not matched → failure
-3. `pass_pattern` matched → use exit code to judge
-4. No pattern → directly use exit code to judge
+**判定逻辑**：
+1. `fail_pattern` 匹配 → 失败（优先级最高）
+2. `pass_pattern` 设置但不匹配 → 失败
+3. `pass_pattern` 匹配 → 使用退出码判定
+4. 无 pattern → 直接使用退出码判定
 
-The script's stdout and stderr are fully captured in the `Comparator Output` section, displayed up to 20 lines in the rendered report.
+脚本的 stdout 和 stderr 会完整捕获到 `Comparator Output` 区块中，在报告渲染时限 20 行展示。
 
-#### Method 3: Manual Registration (Programmatic)
+#### 方式三：手动注册（编程方式）
 
 ```python
 from symtest.file_comparator import ComparatorFactory
 from symtest.file_comparator.base_comparator import BaseComparator
 
 class FooComparator(BaseComparator):
-    # Implement read_content / compare_content etc.
+    # 实现 read_content / compare_content 等方法
     pass
 
 ComparatorFactory.register_comparator("foo", FooComparator)
 
-# Then usable in compare_files assertions or CLI --file-type foo
+# 之后即可在 compare_files 断言或命令行 --file-type foo 中使用
 comparator = ComparatorFactory.create_comparator("foo")
 ```
 
-#### Specialized Plugin Example: Hourglass Tangent Stiffness Analysis
+#### 专用插件示例：hourglass 切线刚度分析
 
-`examples/plugins/hourglass_tangent_comparator.py` is a complete workspace plugin example demonstrating how to integrate a dedicated `analyze_*_tangent.py` analysis script into the framework:
+`examples/plugins/hourglass_tangent_comparator.py` 是一个完整的工作区插件示例，展示了如何将专用的 `analyze_*_tangent.py` 分析脚本接入框架：
 
 ```json
 {
@@ -2027,18 +2075,18 @@ comparator = ComparatorFactory.create_comparator("foo")
 }
 ```
 
-**Features**:
-- Calls the analysis script via subprocess (**zero changes** to analyze code), parses `RESULT:` lines and numerical metrics like `full_rel`/`aa_rel`/`hh_rel`/`asymmetry` from stdout using regex
-- Constructs a structured `ComparisonResult`: `identical` determined by `full_rel < pass_threshold`; `differences` lists exceeded metrics; `error_stats` contains all numeric values
-- Script stdout goes into the `Comparator Output` section
+**特点**：
+- 通过 subprocess 调分析脚本（**零改动** analyze 代码），捕获 stdout 后用正则解析 `RESULT:` 行和 `full_rel`/`aa_rel`/`hh_rel`/`asymmetry` 等数值指标
+- 构造结构化 `ComparisonResult`：`identical` 基于 `full_rel < pass_threshold` 判定；`differences` 列出超限指标；`error_stats` 包含全部数值
+- 脚本 stdout 进入 `Comparator Output` 区块
 
-Usage: copy the plugin file into your workspace's `comparators/` directory for auto-discovery — no framework code changes needed.
+使用方法：将插件文件复制到 workspace 的 `comparators/` 目录下即可自动发现，无需改框架代码。
 
-> **More plugin development guidance**: See `assets/templates/my_analysis_comparator.py` for a minimal runnable template. Entry points (pip install → just works) will be supported in a future iteration.
+> **更多插件开发指导**：参见 `examples/plugins/README.md`。entry points (`pip install` 即生效) 将在后续迭代中支持。
 
-### Assertions & File Comparison
+### 断言与文件比较
 
-The `Assertions` class provides static assertion methods; all checks in `expected` are performed by it:
+`Assertions` 类提供静态断言方法，`expected` 中的校验均由其完成：
 
 ```python
 from symtest.core.assertions import Assertions
@@ -2048,59 +2096,59 @@ Assertions.contains(output, "expected text")
 Assertions.matches(output, r".*regex.*")
 Assertions.compare_files("actual.txt", "baseline.txt", file_type="text", workspace="/ws")
 
-# Enable error analysis (CSV/H5 only)
+# 启用误差分析（仅 CSV/H5 生效）
 Assertions.compare_files("actual.h5", "baseline.h5", file_type="h5", workspace="/ws", rtol=1e-5, error_analysis=True)
 ```
 
-`compare_files` auto-detects type by extension (`.h5/.hdf5/.hdf`→h5, `.json`→json, `.csv/.tsv`→csv, `.xml/.html/.htm`→xml, `.txt/.log/.out/.py`→text, everything else→binary); relative paths are resolved against `workspace`; extra parameters (including `error_analysis`) are passed through to the comparator.
+`compare_files` 会自动按扩展名识别类型（`.h5/.hdf5/.hdf`→h5、`.json`→json、`.csv/.tsv`→csv、`.xml/.html/.htm`→xml、`.txt/.log/.out/.py`→text、其余→binary），相对路径按 `workspace` 解析，额外参数（含 `error_analysis`）透传给比较器。
 
-On success, returns a structured dict (with `identical`, `actual`, `baseline`, `diff_summary`, `differences`, etc.); on failure, raises `ValidationError(AssertionError)` carrying `failure_kind` and a `compare_failures` list.
+成功时返回结构化字典（含 `identical`、`actual`、`baseline`、`diff_summary`、`differences` 等字段），失败时抛出 `ValidationError(AssertionError)`，携带 `failure_kind` 和 `compare_failures` 列表。
 
-## Running Framework Tests
+## 运行框架自带测试
 
-The project includes a unified test entry point `tests/run_all.py`. Use `--scope` to select the test range and `--extra` to pass arbitrary pytest arguments.
+项目自带统一测试入口 `tests/run_all.py`，通过 `--scope` 选择测试范围（test target），并可用 `--extra` 透传任意 pytest 参数。
 
-### Test Scopes
+### 测试范围
 
-| Scope | Description | Corresponding Directory |
+| scope | 说明 | 对应目录 |
 |---|---|---|
-| `unit` | Unit tests (core, runners, etc.) | `tests/unit` |
-| `integration` | Integration tests (file comparison, parallel, path handling, etc.) | `tests/integration` |
-| `e2e` | End-to-end tests (user workflows) | `tests/e2e` |
-| `all` | Run all of the above (default) | All three combined |
+| `unit` | 单元测试（core、runners 等） | `tests/unit` |
+| `integration` | 集成测试（文件比较、并行、路径处理等） | `tests/integration` |
+| `e2e` | 端到端测试（用户流程） | `tests/e2e` |
+| `all` | 运行上述全部范围（默认） | 三者合集 |
 
-> Note: Scripts under `tests/demos/` are manual/interactive demos, not included in scope runs; they must be executed separately.
+> 注：`tests/demos/` 下的脚本为手动/交互演示，不纳入 scope 运行，需单独执行。
 
-### Usage
+### 用法
 
 ```bash
-# Run all tests (default)
+# 运行全部测试（默认）
 python tests/run_all.py
 
-# Developers can install all optional and test dependencies at once
+# 开发者也可一次安装全部可选与测试依赖
 pip install -e ".[dev]"
 
-# Run unit tests only
+# 只运行单元测试
 python tests/run_all.py --scope unit
 
-# Run integration tests only
+# 只运行集成测试
 python tests/run_all.py --scope integration
 
-# Run end-to-end tests only
+# 只运行端到端测试
 python tests/run_all.py --scope e2e
 
-# Pass pytest arguments, e.g., filter by keyword
+# 透传 pytest 参数，例如按关键字过滤
 python tests/run_all.py --scope integration --extra "-k h5"
 
-# Pass multiple pytest arguments
+# 透传多个 pytest 参数
 python tests/run_all.py --scope unit --extra "-v -k assertions"
 ```
 
-`--extra` accepts a string that is split via `shlex` and appended to the pytest command line. The script invokes pytest through the current interpreter (`sys.executable -m pytest`), ensuring the activated environment is used rather than the first `pytest` found on PATH.
+`--extra` 接收的字符串会经 `shlex` 拆分后追加到 pytest 命令行。脚本通过当前解释器（`sys.executable -m pytest`）调用 pytest，确保使用激活的环境而非 PATH 中首个 `pytest`。
 
-Activate your Python environment (e.g. conda) before running tests:
+测试环境需先激活你的 Python 环境（如 conda）：
 
 ```bash
-conda activate <your-env>
+conda activate <你的环境名>
 python tests/run_all.py
 ```

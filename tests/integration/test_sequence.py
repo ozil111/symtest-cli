@@ -27,10 +27,12 @@ class TestSequenceLoadJSON(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -51,15 +53,16 @@ class TestSequenceLoadJSON(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "single",
-                    "command": "echo",
-                    "args": ["hello"],
+                    "execution": {"command": "echo", "args": ["hello"]},
                     "expected": {"return_code": 0},
                 },
                 {
                     "name": "seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 },
             ]
         }
@@ -75,10 +78,12 @@ class TestSequenceLoadJSON(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "timeout_seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}, "timeout": 5},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}, "timeout": 5},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -93,9 +98,11 @@ class TestSequenceLoadJSON(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "bad_seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"]},  # missing expected
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"]},  # missing expected
+                        ],
+                    },
                 }
             ]
         }
@@ -131,10 +138,12 @@ class TestSequenceLoadYAML(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -169,10 +178,12 @@ class TestSequenceExecution(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "seq",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -195,11 +206,13 @@ class TestSequenceExecution(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "seq_fail",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["c"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["c"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -223,10 +236,12 @@ class TestSequenceExecution(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "seq_agg",
-                    "steps": [
-                        {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-                        {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-                    ],
+                    "execution": {
+                        "steps": [
+                            {"command": "echo", "args": ["a"], "expected": {"return_code": 0}},
+                            {"command": "echo", "args": ["b"], "expected": {"return_code": 0}},
+                        ],
+                    },
                 }
             ]
         }
@@ -249,8 +264,7 @@ class TestSequenceExecution(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "single",
-                    "command": "echo",
-                    "args": ["hello"],
+                    "execution": {"command": "echo", "args": ["hello"]},
                     "expected": {"return_code": 0},
                 }
             ]
@@ -290,17 +304,17 @@ class TestTestCaseStepDataclass(unittest.TestCase):
         ]
         case = TestCase(name="seq", steps=steps, retry_count=3)
         d = case.to_dict()
-        self.assertIn("steps", d)
-        self.assertEqual(d["steps"][0]["command"], "echo")
-        self.assertEqual(d["steps"][0]["retry_count"], 0)
-        self.assertEqual(d["steps"][1]["retry_count"], 2)
-        self.assertEqual(d["retry_count"], 3)
+        self.assertIn("steps", d["execution"])
+        self.assertEqual(d["execution"]["steps"][0]["command"], "echo")
+        self.assertEqual(d["execution"]["steps"][0]["retry_count"], 0)
+        self.assertEqual(d["execution"]["steps"][1]["retry_count"], 2)
+        self.assertEqual(d["execution"]["retry_count"], 3)
 
     def test_test_case_to_dict_without_steps(self):
         case = TestCase(name="s", command="echo", args=["x"], expected={"return_code": 0}, retry_count=5)
         d = case.to_dict()
-        self.assertNotIn("steps", d)
-        self.assertEqual(d["retry_count"], 5)
+        self.assertNotIn("steps", d["execution"])
+        self.assertEqual(d["execution"]["retry_count"], 5)
 
 
 if __name__ == "__main__":

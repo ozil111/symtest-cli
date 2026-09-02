@@ -8,10 +8,11 @@ setup:
 
 test_cases:
   - name: "Test YAML environment setup"
-    command: "python"
-    args:
-      - "-c"
-      - "import os; print(f'YAML env: {os.environ.get(\"YAML_TEST_ENV\", \"NOT_SET\")}')"
+    execution:
+      command: "python"
+      args:
+        - "-c"
+        - "import os; print(f'YAML env: {os.environ.get(\"YAML_TEST_ENV\", \"NOT_SET\")}')"
     expected:
       return_code: 0
       output_contains:
@@ -19,10 +20,11 @@ test_cases:
     description: "Verify YAML-defined environment variables work correctly"
 
   - name: "Test database configuration"
-    command: "python"
-    args:
-      - "-c"
-      - "import os; print(f'DB: {os.environ.get(\"DATABASE_HOST\")}:{os.environ.get(\"DATABASE_PORT\")}')"
+    execution:
+      command: "python"
+      args:
+        - "-c"
+        - "import os; print(f'DB: {os.environ.get(\"DATABASE_HOST\")}:{os.environ.get(\"DATABASE_PORT\")}')"
     expected:
       return_code: 0
       output_contains:
@@ -30,13 +32,14 @@ test_cases:
     description: "Test database connection parameters from environment"
 
   - name: "Test feature flags parsing"
-    command: "python"
-    args:
-      - "-c"
-      - "import os; flags = os.environ.get('FEATURE_FLAGS', '').split(','); print(f'Features: {len(flags)} flags, experimental={\"experimental\" in flags}')"
+    execution:
+      command: "python"
+      args:
+        - "-c"
+        - "import os; flags = os.environ.get('FEATURE_FLAGS', '').split(','); print(f'Features: {len(flags)} flags, experimental={\"experimental\" in flags}')"
     expected:
       return_code: 0
       output_contains:
         - "Features: 2 flags"
         - "experimental=True"
-    description: "Test parsing of comma-separated feature flags" 
+    description: "Test parsing of comma-separated feature flags"

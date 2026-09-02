@@ -36,26 +36,26 @@ def sample_config(tmp_path, sample_cases):
         "test_cases": [
             {
                 "name": "echo_hello",
-                "command": "echo",
-                "args": ["hello"],
+                "execution": {"command": "echo", "args": ["hello"]},
                 "expected": {"return_code": 0},
                 "tags": ["smoke"],
                 "description": "A simple echo test",
             },
             {
                 "name": "python_script",
-                "command": "python",
-                "args": ["-c", "print('hi')"],
+                "execution": {"command": "python", "args": ["-c", "print('hi')"]},
                 "expected": {"output_contains": ["hi"]},
                 "tags": ["regression"],
                 "description": "",
             },
             {
                 "name": "multi_step",
-                "steps": [
-                    {"command": "echo", "args": ["step1"], "expected": {"return_code": 0}},
-                    {"command": "echo", "args": ["step2"], "expected": {"return_code": 0}},
-                ],
+                "execution": {
+                    "steps": [
+                        {"command": "echo", "args": ["step1"], "expected": {"return_code": 0}},
+                        {"command": "echo", "args": ["step2"], "expected": {"return_code": 0}},
+                    ],
+                },
                 "tags": ["seq"],
                 "description": "A sequence test case",
             },

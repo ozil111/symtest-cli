@@ -4,23 +4,25 @@
             "name": "multi_step_example",
             "description": "Example: ordered step sequence with fail-fast",
             "tags": ["integration"],
-            "steps": [
-                {
-                    "command": "echo",
-                    "args": ["step1: prepare"],
-                    "expected": { "return_code": 0 }
-                },
-                {
-                    "command": "echo",
-                    "args": ["step2: execute"],
-                    "expected": { "return_code": 0, "output_contains": ["execute"] }
-                },
-                {
-                    "command": "echo",
-                    "args": ["step3: verify"],
-                    "expected": { "return_code": 0 }
-                }
-            ],
+            "execution": {
+                "steps": [
+                    {
+                        "command": "echo",
+                        "args": ["step1: prepare"],
+                        "expected": { "return_code": 0 }
+                    },
+                    {
+                        "command": "echo",
+                        "args": ["step2: execute"],
+                        "expected": { "return_code": 0, "output_contains": ["execute"] }
+                    },
+                    {
+                        "command": "echo",
+                        "args": ["step3: verify"],
+                        "expected": { "return_code": 0 }
+                    }
+                ]
+            },
             "expected": {
                 "return_code": 0
             }

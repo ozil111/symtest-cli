@@ -76,8 +76,8 @@ def test_yaml_import_from_json():
 
     # json_steps should be a sequence
     json_steps = next(tc for tc in result["test_cases"] if tc["name"] == "json_steps")
-    assert "steps" in json_steps
-    assert len(json_steps["steps"]) == 2
+    assert "steps" in json_steps["execution"]
+    assert len(json_steps["execution"]["steps"]) == 2
 
 
 def test_setup_merge():

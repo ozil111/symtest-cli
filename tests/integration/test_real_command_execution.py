@@ -17,8 +17,10 @@ def test_runner_executes_python_c_without_path_resolver_patch(tmp_path):
             "test_cases": [
                 {
                     "name": "python -c quoting",
-                    "command": f'"{sys.executable}" -c "print(\'real-output\')"',
-                    "args": [],
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "print(\'real-output\')"',
+                        "args": [],
+                    },
                     "expected": {"return_code": 0, "output_contains": ["real-output"]},
                 }
             ]
@@ -38,8 +40,10 @@ def test_runner_reports_real_command_failure(tmp_path):
             "test_cases": [
                 {
                     "name": "nonzero exit",
-                    "command": f'"{sys.executable}" -c "import sys; sys.exit(7)"',
-                    "args": [],
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "import sys; sys.exit(7)"',
+                        "args": [],
+                    },
                     "expected": {"return_code": 0},
                 }
             ]
@@ -62,9 +66,11 @@ def test_runner_reports_real_command_timeout(tmp_path):
             "test_cases": [
                 {
                     "name": "timeout",
-                    "command": f'"{sys.executable}" -c "import time; time.sleep(2)"',
-                    "args": [],
-                    "timeout": 0.2,
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "import time; time.sleep(2)"',
+                        "args": [],
+                        "timeout": 0.2,
+                    },
                     "expected": {"return_code": 0},
                 }
             ]
@@ -88,7 +94,8 @@ def test_sequence_stops_before_later_real_steps_after_failure(tmp_path):
             "test_cases": [
                 {
                     "name": "fail fast sequence",
-                    "steps": [
+                    "execution": {
+                        "steps": [
                         {
                             "command": (
                                 f'"{sys.executable}" -c '
@@ -110,7 +117,8 @@ def test_sequence_stops_before_later_real_steps_after_failure(tmp_path):
                             "args": [],
                             "expected": {"return_code": 0},
                         },
-                    ],
+                        ],
+                    },
                 }
             ]
         },
