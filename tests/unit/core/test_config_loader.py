@@ -8,7 +8,7 @@ from symtest.core.config_loader import (
     substitute_placeholders,
     parse_test_cases,
 )
-from symtest.core.test_case import TestCaseStep
+from symtest.core.test_case import TestStep
 from symtest.core.orchestration.sequence import execute_sequence
 from symtest.core.validation.result import ValidationResult
 
@@ -369,9 +369,9 @@ def _failed_result(name="step"):
 
 
 def _steps(*specs):
-    """Build TestCaseStep objects from (command, args, expected) tuples."""
+    """Build TestStep objects from (command, args, expected) tuples."""
     return [
-        TestCaseStep(command=cmd, args=args, expected=expected)
+        TestStep.from_flat(command=cmd, args=args, expected=expected)
         for cmd, args, expected in specs
     ]
 

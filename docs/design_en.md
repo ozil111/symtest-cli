@@ -164,10 +164,6 @@ stdout / stderr / returncode / duration) → assertions (return_code / contains 
 matches / compare_files) → retries on failure up to `retry_count` → kills the
 whole process group on timeout → structured result with `next_action_hint`.
 
-Today these behaviors are aggregated in one place; 1.4 rearranges them into
-Executor / Validator / Orchestration per the §10 Constitution (migration details
-in docs/design_1_4.md).
-
 ### 4.6 Assertions and File Comparison Integration
 
 - `compare_files` is a first-class assertion dispatched via ComparatorFactory (see §6)
@@ -266,8 +262,7 @@ TUI side itself (§10 Principle 6).
 > project's core architectural contract with supreme authority over all future
 > features — resolve ownership against this constitution before writing any code.
 > Amending it requires explicitly naming the clause being relaxed/waived and the
-> rationale in the change description. Pre-ratification evolution history lives in
-> the development-phase document docs/design_1_4.md.
+> rationale in the change description.
 
 ### 10.1 Data Flow Spine
 
@@ -398,17 +393,3 @@ architecture guard tests enforced by CI:
 - Guard tests are part of the regular regression suite
   (`python tests\run_all.py`); violations fail the build;
 - Conflict resolution order: guard tests > this text > personal preference.
-
-### 10.6 Current Gap to This Constitution
-
-Known deviations of the current implementation from this constitution as of
-ratification (1.4 Phase 0). Each item converges during the corresponding 1.4
-phase (migration details in docs/design_1_4.md):
-
-| Current state | Violated | Convergence |
-|---|---|---|
-| `execution.py::validate_result` lives in the execution layer | Principle 2 | Phase 2: move to `validation/validator.py` |
-| `next_action_hint` built in the execution layer | Principle 5 | Phase 2: move to `reporting/diagnosis.py` |
-| Retry loop inside the executor | Principles 2 / 4 | Phase 2: lift to orchestration |
-| update_baseline writes files inside validation | Principle 3 | Phase 2: runner-side independent accept step |
-| `parse_test_cases` TUI-mode back door | Principle 6 | Phase 2: remove; single parser |

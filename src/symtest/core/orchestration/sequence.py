@@ -7,7 +7,8 @@
   （executor 参数仍可注入，保持 monkeypatch 支持）；
 - case 级判定经由 ``validation.validator.validate_result``（只读），
   ``--update-baseline`` 经由 ``orchestration.accept`` accept 步骤；
-- ``next_action_hint`` 由 ``reporting.diagnosis`` 生成。
+- 结果只携带 ``failure_kind``；``next_action_hint`` 由表现层装配点
+  （``reporting.diagnosis.attach_next_action_hint``）填充（原则 5）。
 """
 from __future__ import annotations
 
@@ -20,22 +21,21 @@ from ..validation.validator import validate_result
 from ..validation.assertions import ValidationError  # noqa: F401  (legacy except 兼容)
 from .accept import apply_baseline_accept
 from .single import execute_single_test_case
-from ...reporting.diagnosis import build_next_action_hint
 
 logger = logging.getLogger("symtest.core.orchestration.sequence")
 
 
 # ---------------------------------------------------------------------------
-# Step helper (duck-typed access for TestCaseStep / dict)
+# Step helper (duck-typed access for TestStep / dict)
 # ---------------------------------------------------------------------------
 
 def _step_attr(step: Any, key: str, default: Any = None) -> Any:
-    """Get attribute from a ``TestCaseStep``（dict 支持已在 Phase 3 移除）。"""
+    """Get attribute from a ``TestStep``（dict 支持已在 Phase 3 移除）。"""
     return getattr(step, key, default)
 
 
 # ---------------------------------------------------------------------------
-# Shared sequence execution (TestCaseStep list → result dict)
+# Shared sequence execution (TestStep list → result dict)
 # ---------------------------------------------------------------------------
 
 def execute_sequence(
@@ -54,7 +54,7 @@ def execute_sequence(
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
-    ``steps`` must be a list of ``TestCaseStep`` objects（v2：dict 形态已在
+    ``steps`` must be a list of ``TestStep`` objects（v2：dict 形态已在
     Schema v2 落地后移除，跨进程路径由 process_worker 重建为对象）。
 
     Parameters
@@ -101,7 +101,6 @@ def execute_sequence(
     failed_step = None
     step_results: List[Dict[str, Any]] = []
     case_assertion_results: List[Dict[str, Any]] = []
-    case_hint: Optional[Dict[str, Any]] = None
 
     prefix = f"{print_prefix} " if print_prefix else ""
 
@@ -289,9 +288,6 @@ def execute_sequence(
                     all_passed = False
                     failed_step = len(steps) + 1  # synthetic step number
                     case_assertion_results = case_vr.assertion_results
-                    case_hint = build_next_action_hint(
-                        case_vr.failure_kind, update_baseline=update_baseline,
-                    )
                     last_result = {
                         "name": case_name,
                         "status": "failed",
@@ -317,9 +313,6 @@ def execute_sequence(
             all_passed = False
             failed_step = len(steps) + 1  # synthetic step number
             case_assertion_results = getattr(exc, "assertion_results", [])
-            case_hint = build_next_action_hint(
-                getattr(exc, "failure_kind", None), update_baseline=update_baseline,
-            )
             last_result = {
                 "name": case_name,
                 "status": "failed",
@@ -374,23 +367,18 @@ def execute_sequence(
     else:
         slim_output = ""
 
-    # ── assertion_results / next_action_hint resolution ──
+    # ── assertion_results resolution ──
     # Case-level assertion data takes precedence; otherwise propagate the
     # failed step's data so sequence results honor the same contract as
-    # single-command results.
+    # single-command results.  ``next_action_hint`` is left None here: the
+    # presentation layer (reporting attach point) builds it from
+    # ``failure_kind``（原则 5 单向流）.
     if case_assertion_results:
         assertion_results = case_assertion_results
     elif not all_passed and last_result is not None:
         assertion_results = last_result.get("assertion_results", [])
     else:
         assertion_results = []
-
-    if case_hint is not None:
-        next_action_hint = case_hint
-    elif not all_passed and last_result is not None:
-        next_action_hint = last_result.get("next_action_hint")
-    else:
-        next_action_hint = None
 
     command_summary = " -> ".join(
         f"{_step_attr(s, 'command')} {' '.join(_step_attr(s, 'args'))}".strip()
@@ -412,5 +400,5 @@ def execute_sequence(
         "attempts": last_result.get("attempts", 1) if last_result else 1,
         "flaky": last_result.get("flaky", False) if last_result else False,
         "assertion_results": assertion_results,
-        "next_action_hint": next_action_hint,
+        "next_action_hint": None,
     }

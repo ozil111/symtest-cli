@@ -15,7 +15,7 @@ from textual.containers import Vertical, Horizontal
 from textual.message import Message
 from textual.app import ComposeResult
 
-from ...core.test_case import TestCaseStep
+from ...core.test_case import TestStep
 
 
 class StepsEditor(Vertical):
@@ -59,7 +59,7 @@ class StepsEditor(Vertical):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._steps: List[TestCaseStep] = []
+        self._steps: List[TestStep] = []
         self._editing_idx: int = -1  # -1 = new step
 
     def compose(self) -> ComposeResult:
@@ -91,7 +91,7 @@ class StepsEditor(Vertical):
 
     # -- public API ----------------------------------------------------------
 
-    def load(self, steps: List[TestCaseStep]) -> None:
+    def load(self, steps: List[TestStep]) -> None:
         """Populate the editor with *steps*."""
         self._steps = copy.deepcopy(steps)
         self._editing_idx = -1
@@ -99,7 +99,7 @@ class StepsEditor(Vertical):
             self._refresh_list()
             self._clear_edit_form()
 
-    def to_steps(self) -> List[TestCaseStep]:
+    def to_steps(self) -> List[TestStep]:
         if self.is_mounted:
             # Pull any in-progress edit from UI into steps before returning
             pass  # edits are applied immediately via buttons
@@ -177,7 +177,7 @@ class StepsEditor(Vertical):
         retry_text = self.query_one("#step-retry-count", Input).value.strip()
         retry_count = int(retry_text) if retry_text else 0
 
-        new_step = TestCaseStep(
+        new_step = TestStep.from_flat(
             command=cmd, args=args, expected=expected, timeout=timeout, retry_count=retry_count,
         )
 

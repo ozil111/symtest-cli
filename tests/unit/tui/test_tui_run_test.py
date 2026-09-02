@@ -13,7 +13,7 @@ from symtest.tui.widgets.search_bar import SearchBar
 from symtest.tui.widgets.case_table import CaseTable
 from symtest.tui.widgets.steps_editor import StepsEditor
 from symtest.tui.widgets.expected_editor import ExpectedEditor
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 
 
 # =============================================================================
@@ -280,8 +280,8 @@ class TestStepsEditorMounted:
 
             # Load steps via the widget API
             steps = [
-                TestCaseStep(command="step1", args=["a"], expected={}),
-                TestCaseStep(command="step2", args=["b"], expected={"return_code": 0}),
+                TestStep.from_flat(command="step1", args=["a"], expected={}),
+                TestStep.from_flat(command="step2", args=["b"], expected={"return_code": 0}),
             ]
             steps_editor.load(steps)
 

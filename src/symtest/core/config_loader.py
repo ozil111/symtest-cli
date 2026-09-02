@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .test_case import TestCase, TestCaseStep
+from .test_case import TestCase, TestStep
 from ..utils.path_resolver import resolve_paths
 
 logger = logging.getLogger("symtest.core.config_loader")
@@ -94,8 +94,6 @@ def parse_test_cases(
     config: Dict[str, Any],
     workspace: Optional[Path] = None,
     path_resolver: Any = None,
-    *,
-    strict: bool = True,
 ) -> List[TestCase]:
     """Parse ``config['test_cases']`` (Schema v2) into ``TestCase`` objects.
 
@@ -106,11 +104,9 @@ def parse_test_cases(
     When *workspace* and *path_resolver* are provided (Runner mode),
     command/args paths are resolved.
 
-    Required-field validation is controlled by the explicit *strict* flag
-    (1.4 原则 6：拆除隐式 TUI 后门).  Runners use the default ``strict=True``;
-    the TUI passes ``strict=False`` explicitly and owns the relaxed form
-    (missing fields get sensible defaults and raw values are kept as-is for
-    display purposes).
+    解析器全系统唯一且只接受 canonical TestCase：必填字段缺失即抛
+    ``ValueError``（1.4 原则 6：无 TUI 宽松模式后门）。编辑半成品的
+    宽松形态由 TUI 侧自行 normalize 后再调用本函数。
     """
     cases: List[TestCase] = []
     resolve = workspace is not None and path_resolver is not None
@@ -122,8 +118,16 @@ def parse_test_cases(
 
         # Normalize both modes to a single ``steps`` list.  A single-command
         # shorthand becomes a single-element list; a sequence case uses its
-        # ``execution.steps`` directly.
+        # ``execution.steps`` directly.  Declaring both forms is ambiguous
+        # (Schema v2 oneOf 互斥) and is rejected outright instead of being
+        # silently resolved.
         is_sequence = "steps" in execution
+        if is_sequence and ("command" in execution or "args" in execution):
+            raise ValueError(
+                f"Test case '{case.get('name', 'unnamed')}': 'execution' "
+                f"declares both 'steps' and 'command'/'args' — the two forms "
+                f"are mutually exclusive (choose one)"
+            )
         if is_sequence:
             step_configs: List[Dict[str, Any]] = list(execution.get("steps", []))
         else:
@@ -135,15 +139,14 @@ def parse_test_cases(
                 "retry_count": execution.get("retry_count", 0),
             }]
 
-        steps: List[TestCaseStep] = []
+        steps: List[TestStep] = []
         for step in step_configs:
-            if strict:
-                step_required = ["command", "args", "expected"]
-                if not all(field in step for field in step_required):
-                    raise ValueError(
-                        f"Step in test case '{case.get('name', 'unnamed')}' "
-                        f"is missing required fields"
-                    )
+            step_required = ["command", "args", "expected"]
+            if not all(field in step for field in step_required):
+                raise ValueError(
+                    f"Step in test case '{case.get('name', 'unnamed')}' "
+                    f"is missing required fields"
+                )
             if resolve:
                 executable, resolved_args = _split_and_resolve(
                     step["command"], step["args"], workspace, path_resolver
@@ -151,7 +154,7 @@ def parse_test_cases(
             else:
                 executable = step.get("command", "")
                 resolved_args = step.get("args", [])
-            steps.append(TestCaseStep(
+            steps.append(TestStep.from_flat(
                 command=executable,
                 args=resolved_args,
                 expected=step["expected"] if "expected" in step else step.get("expected", {}),
@@ -175,14 +178,13 @@ def parse_test_cases(
             ))
         else:
             # ── Single-command mode: execution shorthand fields → steps[0] ──
-            if strict:
-                missing = [f for f in ("name", "execution", "expected") if f not in case]
-                missing += [f for f in ("command", "args") if f not in execution]
-                if missing:
-                    raise ValueError(
-                        f"Test case {case.get('name', 'unnamed')} "
-                        f"is missing required fields"
-                    )
+            missing = [f for f in ("name", "execution", "expected") if f not in case]
+            missing += [f for f in ("command", "args") if f not in execution]
+            if missing:
+                raise ValueError(
+                    f"Test case {case.get('name', 'unnamed')} "
+                    f"is missing required fields"
+                )
             cases.append(TestCase(
                 name=case.get("name", ""),
                 steps=None,

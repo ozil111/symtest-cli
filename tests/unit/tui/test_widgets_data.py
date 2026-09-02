@@ -8,13 +8,13 @@ work against the internal state even when the widget is not mounted.
 import copy
 import pytest
 
-from symtest.core.test_case import TestCaseStep
+from symtest.core.test_case import TestStep
 from symtest.tui.widgets.steps_editor import StepsEditor
 from symtest.tui.widgets.expected_editor import ExpectedEditor
 
 
 def _step(cmd="echo", args=None, expected=None, timeout=None, retry_count=0):
-    return TestCaseStep(
+    return TestStep.from_flat(
         command=cmd,
         args=args or [],
         expected=expected or {},

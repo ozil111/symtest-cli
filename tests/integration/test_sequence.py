@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from symtest.runners.json_runner import JSONRunner
 from symtest.runners.yaml_runner import YAMLRunner
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 
 
 class TestSequenceLoadJSON(unittest.TestCase):
@@ -279,18 +279,18 @@ class TestSequenceExecution(unittest.TestCase):
         self.temp_dir.cleanup()
 
 
-class TestTestCaseStepDataclass(unittest.TestCase):
-    """Test TestCaseStep and TestCase with steps field."""
+class TestTestStepDataclass(unittest.TestCase):
+    """Test TestStep and TestCase with steps field."""
 
     def test_test_case_step_creation(self):
-        step = TestCaseStep(command="echo", args=["hello"], expected={"return_code": 0})
+        step = TestStep.from_flat(command="echo", args=["hello"], expected={"return_code": 0})
         self.assertEqual(step.command, "echo")
         self.assertEqual(step.timeout, None)
 
     def test_test_case_with_steps(self):
         steps = [
-            TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
-            TestCaseStep(command="echo", args=["b"], expected={"return_code": 0}, timeout=5),
+            TestStep.from_flat(command="echo", args=["a"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["b"], expected={"return_code": 0}, timeout=5),
         ]
         case = TestCase(name="seq", steps=steps)
         self.assertEqual(case.command, "")  # default for sequence mode
@@ -299,8 +299,8 @@ class TestTestCaseStepDataclass(unittest.TestCase):
 
     def test_test_case_to_dict_with_steps(self):
         steps = [
-            TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
-            TestCaseStep(command="echo", args=["b"], expected={"return_code": 0}, retry_count=2),
+            TestStep.from_flat(command="echo", args=["a"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["b"], expected={"return_code": 0}, retry_count=2),
         ]
         case = TestCase(name="seq", steps=steps, retry_count=3)
         d = case.to_dict()

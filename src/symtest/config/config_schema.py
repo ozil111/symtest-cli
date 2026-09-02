@@ -164,11 +164,24 @@ CONFIG_SCHEMA: Dict[str, Any] = {
         },
         "executionSpec": {
             "type": "object",
-            "additionalProperties": False,
             "description": (
                 "Execution semantics (v2): single-command shorthand "
                 "(command/args/timeout/retry_count/env) OR the full steps form "
-                "(steps[]) — 二选一. Case-level env applies to all steps."
+                "(steps[]) — 二选一，由 oneOf 强制互斥. Case-level env applies "
+                "to all steps. Declaring both forms is a schema violation."
+            ),
+            "oneOf": [
+                {"$ref": "#/$defs/commandExecution"},
+                {"$ref": "#/$defs/stepsExecution"},
+            ],
+        },
+        "commandExecution": {
+            "type": "object",
+            "required": ["command", "args"],
+            "additionalProperties": False,
+            "description": (
+                "Single-command shorthand form: requires command + args; "
+                "the steps form must not be declared alongside."
             ),
             "properties": {
                 "command": {
@@ -201,11 +214,40 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                         "and scheduler-injected environment variables."
                     ),
                 },
+            },
+        },
+        "stepsExecution": {
+            "type": "object",
+            "required": ["steps"],
+            "additionalProperties": False,
+            "description": (
+                "Full steps form: requires steps; command/args must not be "
+                "declared alongside."
+            ),
+            "properties": {
                 "steps": {
                     "type": "array",
                     "minItems": 1,
                     "items": {"$ref": "#/$defs/step"},
                     "description": "Steps run in order with fail-fast semantics.",
+                },
+                "timeout": {
+                    "type": ["number", "null"],
+                    "description": "Timeout in seconds (default 3600); null = no limit.",
+                },
+                "retry_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["string", "number", "boolean"]},
+                    "description": (
+                        "Case-level environment variables injected into every "
+                        "step (subprocess). Overrides setup-level and "
+                        "scheduler-injected environment variables."
+                    ),
                 },
             },
         },

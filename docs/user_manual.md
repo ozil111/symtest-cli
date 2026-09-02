@@ -275,6 +275,13 @@ test_cases:
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
 | `expected.compare_files` | 否 | 文件比较断言列表，见下文 |
 
+### execution 二选一（互斥）
+
+`execution` 有两种形态，**二选一**且互斥，同时声明两种形态属于配置错误：
+
+- **单命令形态**：`command` + `args`（`timeout` / `retry_count` / `env` 可选）
+- **序列形态**：`steps`（列表，每个 step 为 `command + args + expected`）；`command` / `args` 不得与 `steps` 并存
+
 ## Case 级环境变量（env）
 
 通过 `execution` 内与 `command`、`steps` 同级的 `env` 字段，可为单个用例注入环境变量，仅在该用例（序列模式为所有 step）的子进程内生效，不影响其他用例。

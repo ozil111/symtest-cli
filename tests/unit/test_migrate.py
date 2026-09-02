@@ -19,8 +19,9 @@ import pytest
 
 from symtest.commands.migrate import run_migrate
 from symtest.config.migrate import migrate_case, migrate_config
+from symtest.config.normalize import normalize_draft_config
 from symtest.core.config_loader import parse_test_cases
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 
 V1_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "migration" / "v1"
 
@@ -166,7 +167,7 @@ def _legacy_case_to_testcase(case):
     steps = None
     if "steps" in case:
         steps = [
-            TestCaseStep(
+            TestStep.from_flat(
                 command=s.get("command", ""),
                 args=s.get("args", []),
                 expected=s.get("expected", {}),
@@ -227,11 +228,12 @@ def test_migration_equivalence_invariant(path):
     # A 侧：legacy dict 经 TestCase 平铺 kwargs 构造（legacy 语义）→ to_dict()
     side_a = [_legacy_case_to_testcase(tc).to_dict() for tc in v1_cases]
 
-    # B 侧：migrate(legacy) 经生产 parse_test_cases → to_dict()
+    # B 侧：migrate(legacy) → draft normalize（迁移不补必填，宽松形态由
+    # DSL 层 normalize 承担）→ 生产 parse_test_cases → to_dict()
     migrated = migrate_config({"test_cases": v1_cases})
     side_b = [
         tc.to_dict()
-        for tc in parse_test_cases(migrated, strict=False)
+        for tc in parse_test_cases(normalize_draft_config(migrated))
     ]
 
     assert side_a == side_b

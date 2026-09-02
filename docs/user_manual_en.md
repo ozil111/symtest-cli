@@ -275,6 +275,13 @@ test_cases:
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |
 | `expected.compare_files` | No | File comparison assertions list, see below |
 
+### execution — pick one form (mutually exclusive)
+
+`execution` has two forms, **choose exactly one**; declaring both is a configuration error:
+
+- **Single-command form**: `command` + `args` (with optional `timeout` / `retry_count` / `env`)
+- **Steps form**: `steps` (a list; each step is `command + args + expected`); `command` / `args` must not be declared alongside `steps`
+
 ### File Comparison Assertions (compare_files)
 
 Declare one or more file comparison rules in `expected.compare_files`. The framework automatically uses the corresponding comparator to diff the actual output file against the baseline after command execution. The test passes only when all comparisons pass; these coexist with `return_code`, `output_contains`, and other assertions.

@@ -6,9 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 from symtest.core.config_loader import parse_test_cases
 from symtest.tui.controllers.case_controller import CaseController
+from symtest.config.normalize import normalize_draft_config
 
 
 # ---------------------------------------------------------------------------
@@ -30,8 +31,8 @@ def _seq_tc(steps=None, **kwargs) -> TestCase:
     return TestCase(**defaults)
 
 
-def _step(cmd="echo", args=None, expected=None) -> TestCaseStep:
-    return TestCaseStep(command=cmd,
+def _step(cmd="echo", args=None, expected=None) -> TestStep:
+    return TestStep.from_flat(command=cmd,
                         args=args or [],
                         expected=expected or {})
 
@@ -375,13 +376,13 @@ class TestDirtyFlag:
 
 
 class TestParseFromDict:
-    """TUI 侧显式宽松形态（1.4 原则 6：strict=False，非隐式 workspace 嗅探）。"""
+    """TUI 宽松形态自处理（原则 6）：draft 先 normalize 再走严格 parser。"""
 
     def test_single_cmd_case(self):
-        result = parse_test_cases({"test_cases": [
+        result = parse_test_cases(normalize_draft_config({"test_cases": [
             {"name": "simple", "execution": {"command": "echo", "args": ["hello"]},
              "expected": {"return_code": 0}, "tags": ["demo"]},
-        ]}, strict=False)
+        ]}))
         assert len(result) == 1
         tc = result[0]
         assert tc.name == "simple"
@@ -390,7 +391,7 @@ class TestParseFromDict:
         assert tc.tags == ["demo"]
 
     def test_sequence_case(self):
-        result = parse_test_cases({"test_cases": [
+        result = parse_test_cases(normalize_draft_config({"test_cases": [
             {"name": "seq",
              "execution": {
                  "steps": [
@@ -398,7 +399,7 @@ class TestParseFromDict:
                      {"command": "step2", "args": ["b"], "expected": {"return_code": 1}},
                  ],
              }},
-        ]}, strict=False)
+        ]}))
         assert len(result) == 1
         tc = result[0]
         assert tc.name == "seq"
@@ -408,9 +409,9 @@ class TestParseFromDict:
         assert tc.steps[1].expected == {"return_code": 1}
 
     def test_missing_fields_get_defaults(self):
-        result = parse_test_cases({"test_cases": [
+        result = parse_test_cases(normalize_draft_config({"test_cases": [
             {"name": "minimal"},
-        ]}, strict=False)
+        ]}))
         tc = result[0]
         assert tc.command == ""
         assert tc.args == []
@@ -422,12 +423,17 @@ class TestParseFromDict:
         assert parse_test_cases({"test_cases": []}) == []
 
     def test_step_timeout(self):
-        result = parse_test_cases({"test_cases": [
+        result = parse_test_cases(normalize_draft_config({"test_cases": [
             {"name": "with_timeout",
              "execution": {
                  "steps": [{"command": "sleep", "args": ["10"], "expected": {},
                             "timeout": 30.0}],
              }},
-        ]}, strict=False)
+        ]}))
         tc = result[0]
         assert tc.steps[0].timeout == 30.0
+
+    def test_strict_parser_rejects_incomplete_case(self):
+        """core parser 无宽松模式：半成品未经 normalize 直接解析即报错。"""
+        with pytest.raises(ValueError):
+            parse_test_cases({"test_cases": [{"name": "minimal"}]})

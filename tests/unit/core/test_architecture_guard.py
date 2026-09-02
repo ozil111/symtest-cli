@@ -5,9 +5,8 @@
   expected 的存在 —— Phase 2 唯一验收标准）；
 - 原则 3：validation 只允许 import execution 的 result 类型（读取执行事实），
   不得 import 编排层；
-- 原则 6：core 不得 import cli / tui / commands / runners（表现层）。
-  注：``symtest.reporting.diagnosis`` 是唯一例外 —— 它是 result consumer
-  工具，被 orchestration 调用以填充 wire format 的 next_action_hint 字段。
+- 原则 6：core 不得 import cli / tui / commands / runners / reporting
+  （表现层与 result consumer）。
 """
 import re
 from pathlib import Path
@@ -78,8 +77,9 @@ class TestCoreDoesNotImportPresentation:
     """原则 6：核心模型不依赖表现层。"""
 
     def test_core_has_no_presentation_imports(self):
-        forbidden_abs = ("symtest.cli", "symtest.tui", "symtest.commands", "symtest.runners")
-        forbidden_rel = ("cli", "tui", "commands", "runners")
+        forbidden_abs = ("symtest.cli", "symtest.tui", "symtest.commands",
+                         "symtest.runners", "symtest.reporting")
+        forbidden_rel = ("cli", "tui", "commands", "runners", "reporting")
         offenders = []
         for f in _py_files(SRC / "core"):
             for mod in _imports(f):

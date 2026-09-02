@@ -8,13 +8,16 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...core.test_case import TestCase, TestCaseStep
+from ...core.test_case import TestCase, TestStep
 from ...core.orchestration.single import execute_single_test_case
 from ...core.orchestration.sequence import execute_sequence
 from ...core.config_loader import parse_test_cases
 from ...config.config_io import load_config, save_config
+from ...config.normalize import normalize_draft_config
+from ...reporting.diagnosis import attach_next_action_hint
 
 logger = logging.getLogger("symtest.tui.controller")
+
 
 # ---------------------------------------------------------------------------
 # Search helpers
@@ -169,10 +172,10 @@ class CaseController:
         self._file_path = path
         self._workspace = workspace
 
-        # Parse test cases via unified entry point. TUI owns the relaxed
-        # form explicitly (1.4 原则 6)：no path resolution for display and
-        # strict=False so incomplete cases get sensible defaults.
-        self._cases = parse_test_cases(config, strict=False)
+        # Parse test cases via the unified strict entry point. TUI owns the
+        # relaxed form (1.4 原则 6)：draft configs are normalized here before
+        # parsing; no path resolution for display purposes.
+        self._cases = parse_test_cases(normalize_draft_config(config))
         self._dirty = False
         return len(self._cases)
 
@@ -297,6 +300,13 @@ class CaseController:
                 update_baseline=self._update_baseline,
             )
         self._record_history(case.name, result)
+        # ── Reporting 装配点（原则 5）：TUI 属表现层，在此按 failure_kind
+        # 填充 next_action_hint（orchestration 只产出失败结论） ──
+        attach_next_action_hint(
+            result,
+            update_baseline=self._update_baseline,
+            config_path=str(self._file_path) if self._file_path else None,
+        )
         return result
 
     def _record_history(self, case_name: str, result: Dict[str, Any]) -> None:

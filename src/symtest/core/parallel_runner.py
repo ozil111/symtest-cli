@@ -382,7 +382,6 @@ class ParallelRunner(BaseRunner):
     def _update_results_skipped(self, result: Dict[str, Any], test_index: int, case_name: str) -> None:
         """Thread-safe result update for skipped cases (no xfail processing)."""
         with self.lock:
-            self._fill_hint_command(result, case_name)
             self.results["details"].append(result)
             logger.warning("⊘ Test %d skipped: %s", test_index, case_name)
             if result.get("message"):
@@ -400,7 +399,6 @@ class ParallelRunner(BaseRunner):
             # Apply xfail status mapping before counting
             self._apply_xfail_status(result, case)
 
-            self._fill_hint_command(result, case.name)
             self.results["details"].append(result)
             duration = result.get("duration", 0)
             status = result["status"]

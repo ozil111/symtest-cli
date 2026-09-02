@@ -6,7 +6,7 @@ from symtest.core.sequence_state import (
     save_sequence_state,
     save_step_output,
 )
-from symtest.core.test_case import TestCaseStep
+from symtest.core.test_case import TestStep
 
 
 def test_config_hash_is_stable_for_mapping_key_order():
@@ -36,14 +36,14 @@ def test_config_hash_preserves_argument_order():
 
 
 def test_config_hash_covers_step_controls_and_case_expected():
-    step = TestCaseStep(
+    step = TestStep.from_flat(
         command="solver",
         args=["model.dat"],
         expected={"return_code": 0},
         timeout=10,
         retry_count=1,
     )
-    changed_timeout = TestCaseStep(
+    changed_timeout = TestStep.from_flat(
         command="solver",
         args=["model.dat"],
         expected={"return_code": 0},

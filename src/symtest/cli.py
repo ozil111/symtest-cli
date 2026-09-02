@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from .logging_config import setup_console_logging
+from .reporting.diagnosis import attach_next_action_hints
 from .runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
 from .utils.report_generator import ReportGenerator
 from .utils.junit_xml_writer import write_junit_xml
@@ -396,6 +397,15 @@ def run_tests(args):
         # Output results using ReportGenerator and honor --output-format
         if hasattr(runner, 'results'):
             results = runner.results
+
+            # ── Reporting 装配点（原则 5）：next_action_hint 在报告输出前
+            # 按 failure_kind 填充，orchestration 只产出失败结论 ──
+            attach_next_action_hints(
+                results,
+                update_baseline=bool(getattr(args, 'update_baseline', False)),
+                config_path=str(config_file),
+            )
+
             output_format = getattr(args, 'output_format', 'text')
 
             if output_format == 'json':

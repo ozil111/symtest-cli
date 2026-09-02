@@ -155,9 +155,6 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 → 超时 kill 整个进程组
 → 返回附带 `next_action_hint` 的结构化结果。
 
-当前实现的上述行为仍聚合在一处；1.4 将按 §10 宪法重排为
-Executor / Validator / Orchestration 三段（迁移明细见 docs/design_1_4.md）。
-
 ### 4.6 断言与文件比较集成
 
 - `compare_files` 是一等断言，经 ComparatorFactory 按类型分发（详见 §6）
@@ -252,7 +249,6 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 > **地位与效力**：本节自 Symtest 1.4 Phase 0 评审定稿，是本项目的核心架构契约，
 > 对所有后续 feature 具有最高约束力——任何功能需求先对照本宪法确定归属，再写代码。
 > 修订宪法必须在变更说明中显式指出所放宽/违反的条款及理由。
-> 定稿前的演进推导见开发阶段文档 docs/design_1_4.md。
 
 ### 10.1 数据流主线
 
@@ -373,16 +369,3 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
   `reporter`；
 - guard 测试纳入常规回归套件（`python tests\run_all.py`），违规即失败；
 - 冲突裁决次序：guard 测试 > 本节文字 > 个人偏好。
-
-### 10.6 现状差距与收敛路径
-
-定稿时刻（1.4 Phase 0）现行实现与本宪法的已知偏差如下，将在 1.4 对应 Phase 内
-逐项收敛（迁移明细见 docs/design_1_4.md）：
-
-| 现状 | 违反 | 收敛 |
-|---|---|---|
-| `execution.py::validate_result` 住在执行层 | 原则 2 | Phase 2 迁入 `validation/validator.py` |
-| `next_action_hint` 在 execution 层构造 | 原则 5 | Phase 2 迁入 `reporting/diagnosis.py` |
-| retry 循环在 executor 内部 | 原则 2 / 4 | Phase 2 上移编排层 |
-| Validator 侧 update_baseline 写文件 | 原则 3 | Phase 2 改为 runner 独立 accept 步骤 |
-| `parse_test_cases` TUI mode 后门 | 原则 6 | Phase 2 拆除，单一解析器 |

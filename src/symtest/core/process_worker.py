@@ -3,7 +3,7 @@
 用于多进程并行测试执行，避免序列化问题
 
 Phase 3 Schema v2：跨进程传递 v2 wire dict（``TestCase.to_dict()`` 输出），
-本模块负责将其重建为 ``ExecutionSpec`` / ``TestCaseStep`` 对象后进入编排层。
+本模块负责将其重建为 ``ExecutionSpec`` / ``TestStep`` 对象后进入编排层。
 """
 
 import logging
@@ -11,17 +11,17 @@ from typing import Any, Dict
 
 from .orchestration.sequence import execute_sequence
 from .orchestration.single import execute_single_test_case
-from .test_case import ExecutionSpec, TestCaseStep
+from .test_case import ExecutionSpec, TestStep
 
 logger = logging.getLogger("symtest.core.process_worker")
 
 
 def _spec_from_v2(case_data: Dict[str, Any]) -> ExecutionSpec:
-    """v2 wire dict（case.to_dict()）→ ExecutionSpec（含 TestCaseStep 重建）。"""
+    """v2 wire dict（case.to_dict()）→ ExecutionSpec（含 TestStep 重建）。"""
     execution = case_data.get("execution") or {}
     if "steps" in execution:
         steps = [
-            TestCaseStep(
+            TestStep.from_flat(
                 command=s["command"],
                 args=s["args"],
                 expected=s.get("expected") or {},

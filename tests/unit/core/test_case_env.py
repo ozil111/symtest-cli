@@ -14,7 +14,7 @@ import pytest
 from symtest.core.config_loader import parse_test_cases
 from symtest.core.orchestration.sequence import execute_sequence
 from symtest.core.orchestration.single import execute_single_test_case
-from symtest.core.test_case import ExecutionSpec, TestCaseStep
+from symtest.core.test_case import ExecutionSpec, TestStep
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +178,12 @@ class TestEnvSequence:
 
     def test_env_applied_to_all_steps(self):
         steps = [
-            TestCaseStep(
+            TestStep.from_flat(
                 command=sys.executable,
                 args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
                 expected={"return_code": 0, "output_contains": ["S=1.0"]},
             ),
-            TestCaseStep(
+            TestStep.from_flat(
                 command=sys.executable,
                 args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
                 expected={"return_code": 0, "output_contains": ["S=1.0"]},
@@ -200,7 +200,7 @@ class TestEnvAffectsConfigHash:
         from symtest.core.sequence_state import compute_config_hash
 
         steps = [
-            TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["a"], expected={"return_code": 0}),
         ]
         h1 = compute_config_hash(steps, None, {"SCALE": "1.0"})
         h2 = compute_config_hash(steps, None, {"SCALE": "2.0"})

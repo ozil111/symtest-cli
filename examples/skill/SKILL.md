@@ -118,6 +118,8 @@ starting point.
   (`execution.command` form).
 - **Step sequence** (`execution.steps`): multiple ordered commands, fail-fast.
   Use when output of step N is input to step N+1.
+- The two forms are mutually exclusive: declaring both `command`/`args` and
+  `steps` in one `execution` block is a configuration error.
 
 ### When to use `import` (config splitting)
 - When the config grows large (>30 cases) or cases naturally group by module.

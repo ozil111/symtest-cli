@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 from symtest.tui.controllers.case_controller import CaseController
 
 
@@ -19,8 +19,8 @@ def sample_cases():
         TestCase(
             name="multi_step",
             steps=[
-                TestCaseStep(command="echo", args=["step1"], expected={"return_code": 0}),
-                TestCaseStep(command="echo", args=["step2"], expected={"return_code": 0}),
+                TestStep.from_flat(command="echo", args=["step1"], expected={"return_code": 0}),
+                TestStep.from_flat(command="echo", args=["step2"], expected={"return_code": 0}),
             ],
             tags=["seq"], description="A sequence test case",
         ),
