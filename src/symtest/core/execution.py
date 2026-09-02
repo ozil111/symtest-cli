@@ -294,6 +294,7 @@ def _dispatch_file_compare(
             return {
                 "assertion": "compare_files",
                 "passed": True,
+                "error_stats": cf_result.get("error_stats"),
                 "compare_failures": [],
                 "baseline_updated": [baseline_path],
                 "message": "",
@@ -301,6 +302,7 @@ def _dispatch_file_compare(
         return {
             "assertion": "compare_files",
             "passed": True,
+            "error_stats": cf_result.get("error_stats"),
             "compare_failures": [],
             "baseline_updated": [],
             "message": "",
@@ -325,7 +327,9 @@ def _execute_command_once(
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
 ) -> TestResultData:
     """Execute a single command once (no retry logic)."""
-    start_time = time.time()
+    # perf_counter: high-resolution monotonic clock; on Windows, time.time()
+    # has ~15.6ms granularity and can yield duration == 0.0 for fast commands.
+    start_time = time.perf_counter()
     cmd_list = _normalize_cmd_list(case["command"], [str(arg) for arg in case["args"]])
     timeout_limit = case.get("timeout", 3600)
 
@@ -434,7 +438,7 @@ def _execute_command_once(
         result["failure_kind"] = "execution_error"
         result["next_action_hint"] = _build_next_action_hint("execution_error")
     finally:
-        result["duration"] = time.time() - start_time
+        result["duration"] = time.perf_counter() - start_time
 
     return result
 

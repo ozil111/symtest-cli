@@ -102,10 +102,12 @@ def compare_numeric(expected, actual, rtol=1e-5, atol=1e-8,
         if total > 0:
             c, _ = _symmetric_close(expected[keep], actual[keep], rtol, atol)
             close[keep] = c
+        # Only kept positions can be mismatches; excluded cells were never compared.
+        mismatch_mask = keep & ~close
         return NumericComparisonStats(
             total=total,
-            mismatched=int(np.sum(~close)),
-            mismatch_mask=~close,
+            mismatched=int(np.sum(mismatch_mask)),
+            mismatch_mask=mismatch_mask,
             max_abs_error=None,
             max_abs_error_index=None,
             max_rel_error=None,

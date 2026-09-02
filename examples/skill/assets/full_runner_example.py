@@ -28,7 +28,7 @@
   python run_tests.py test_cases.json --last-failed
 
   # 断点续跑序列用例（跳过已通过的步骤）
-  python run_tests.py test_cases.json --resume -t BS-U_01
+  python run_tests.py test_cases.json --resume -t long_pipeline
 
   # 比较失败时自动更新基线文件
   python run_tests.py test_cases.json --update-baseline
@@ -128,7 +128,7 @@ def main():
   python run_tests.py test_cases.json --test-target alpha gamma
   python run_tests.py test_cases.json --tag smoke
   python run_tests.py test_cases.json --last-failed
-  python run_tests.py test_cases.json --resume -t BS-U_01
+  python run_tests.py test_cases.json --resume -t long_pipeline
   python run_tests.py test_cases.json --update-baseline
   python run_tests.py test_cases.json --update-history
   python run_tests.py test_cases.json --junit-xml report.xml --workers 4

@@ -28,7 +28,7 @@
   python run_tests.py test_cases.json --last-failed
 
   # 断点续跑序列用例（跳过已通过的步骤）
-  python run_tests.py test_cases.json --resume -t BS-U_01
+  python run_tests.py test_cases.json --resume -t long_pipeline
 
   # 比较失败时自动更新基线文件
   python run_tests.py test_cases.json --update-baseline
@@ -38,6 +38,9 @@
 
   # 启用误差分析（CSV/HDF5 数值比较的统计信息）
   python run_tests.py test_cases.json --error-analysis
+
+  # 启用误差分析，并对通过的用例也输出统计（隐含 --error-analysis）
+  python run_tests.py test_cases.json --error-analysis-all
 
   # 输出 JUnit XML 供 Jenkins/GitLab CI 解析
   python run_tests.py test_cases.json --junit-xml report.xml
@@ -128,7 +131,7 @@ def main():
   python run_tests.py test_cases.json --test-target alpha gamma
   python run_tests.py test_cases.json --tag smoke
   python run_tests.py test_cases.json --last-failed
-  python run_tests.py test_cases.json --resume -t BS-U_01
+  python run_tests.py test_cases.json --resume -t long_pipeline
   python run_tests.py test_cases.json --update-baseline
   python run_tests.py test_cases.json --update-history
   python run_tests.py test_cases.json --junit-xml report.xml --workers 4
@@ -194,6 +197,13 @@ def main():
         help="启用数值比较的流式误差统计（CSV/HDF5）："
              "total_numeric_cells、mismatched_cells、"
              "max_abs/rel_error、mean/rms_abs_error",
+    )
+    parser.add_argument(
+        "--error-analysis-all",
+        action="store_true",
+        default=False,
+        help="同 --error-analysis，且对通过的用例也在报告中输出误差统计"
+             "（隐含启用 --error-analysis）",
     )
 
     # ---- 输出 ----
@@ -317,6 +327,7 @@ def main():
         variables=variables,
         plugin_dirs=args.plugin_dir,
         error_analysis=args.error_analysis,
+        error_analysis_all=args.error_analysis_all,
     )
 
     # ---- 运行测试 ----

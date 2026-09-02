@@ -130,6 +130,9 @@ Examples:
                            help='Enable streaming error statistics for numerical file comparisons '
                                 '(CSV/H5): total_numeric_cells, mismatched_cells, '
                                 'max_abs/rel_error, mean/rms_abs_error')
+    run_parser.add_argument('--error-analysis-all', action='store_true',
+                           help='Like --error-analysis, but also report error statistics for '
+                                'PASSED file comparisons in the report (implies --error-analysis)')
     run_parser.add_argument('--plugin-dir', action='append', default=None,
                            dest='plugin_dirs',
                            help='Add a directory for workspace-level comparator plugins '
@@ -273,6 +276,9 @@ def run_tests(args):
     update_baseline = getattr(args, 'update_baseline', False)
     update_history = getattr(args, 'update_history', False)
     error_analysis = getattr(args, 'error_analysis', False)
+    error_analysis_all = getattr(args, 'error_analysis_all', False)
+    if error_analysis_all:
+        error_analysis = True
     last_failed = getattr(args, 'last_failed', False)
     resume = getattr(args, 'resume', False)
     plugin_dirs = getattr(args, 'plugin_dirs', None)
@@ -294,6 +300,7 @@ def run_tests(args):
                     update_baseline=update_baseline,
                     update_history=update_history,
                     error_analysis=error_analysis,
+                    error_analysis_all=error_analysis_all,
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
@@ -312,6 +319,7 @@ def run_tests(args):
                     update_baseline=update_baseline,
                     update_history=update_history,
                     error_analysis=error_analysis,
+                    error_analysis_all=error_analysis_all,
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
@@ -333,6 +341,7 @@ def run_tests(args):
                     update_baseline=update_baseline,
                     update_history=update_history,
                     error_analysis=error_analysis,
+                    error_analysis_all=error_analysis_all,
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
@@ -349,6 +358,7 @@ def run_tests(args):
                     update_baseline=update_baseline,
                     update_history=update_history,
                     error_analysis=error_analysis,
+                    error_analysis_all=error_analysis_all,
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
