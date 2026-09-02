@@ -95,10 +95,11 @@ class ParallelRunner(BaseRunner):
             **kwargs: 透传给 BaseRunner 的额外参数
                 (test_case_filter, test_case_tag_filter, history_dir, regression_threshold)
         """
+        error_analysis_all = kwargs.get('error_analysis_all', False)
         super().__init__(config_file, workspace, **kwargs)
         self.max_workers = max_workers
         self.execution_mode = execution_mode
-        self.error_analysis = error_analysis
+        self.error_analysis = error_analysis or error_analysis_all
         self.lock = threading.Lock()  # 用于线程安全的结果更新
         
     def run_tests(self) -> bool:

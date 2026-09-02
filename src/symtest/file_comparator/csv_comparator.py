@@ -10,10 +10,11 @@
 
 import csv
 import io
-import math
 import re
+import numpy as np
 from .text_comparator import TextComparator
 from .result import Difference
+from .numeric_compare import compare_numeric, parse_data_filter
 
 class CsvComparator(TextComparator):
     """
@@ -107,16 +108,13 @@ class CsvComparator(TextComparator):
         differences = []
         max_diffs = 10
 
-        # ── Error analysis accumulators ──
-        total_numeric_cells = 0
-        mismatched_cells = 0
-        sum_abs_error = 0.0
-        sum_sq_abs_error = 0.0
-        max_abs_error = None
-        max_abs_error_at = None
-        max_rel_error = None
-        max_rel_error_at = None
-        
+        # ── Numeric core accumulators ──
+        # error_analysis mode collects ALL filtered numeric cells (matching or not)
+        # and delegates statistics to the shared numeric core.
+        stats_exp = []
+        stats_act = []
+        stats_pos = []  # (row, col) 0-based, aligned with stats_exp/stats_act
+
         # Check row count
         if len(content1) != len(content2):
             differences.append(Difference(
@@ -140,42 +138,65 @@ class CsvComparator(TextComparator):
                 if not self.error_analysis and len(differences) >= max_diffs:
                     break
             
-            # Compare column values
+            # Collect numeric cells in this row (for delegated closeness check)
+            row_exp = []
+            row_act = []
+            row_pos = []  # (row, col) 0-based
             for j, (cell1, cell2) in enumerate(zip(row1, row2)):
-                if cell1 != cell2:
-                    # Try numeric tolerance comparison
-                    try:
-                        num1 = float(cell1)
-                        num2 = float(cell2)
-                        # Apply data filter
-                        if self.filter_func:
-                            if not (self.filter_func(num1) and self.filter_func(num2)):
-                                continue
-                        total_numeric_cells += 1
-                        abs_err = abs(num2 - num1)
-                        if math.isclose(num1, num2, rel_tol=self.rtol, abs_tol=self.atol):
-                            continue  # Within tolerance
+                num1 = num2 = None
+                try:
+                    num1 = float(cell1)
+                    num2 = float(cell2)
+                except (ValueError, TypeError):
+                    pass  # Non-numeric
 
-                        # Mismatched numeric cell
-                        mismatched_cells += 1
-                        sum_abs_error += abs_err
-                        sum_sq_abs_error += abs_err * abs_err
-                        rel_err = abs_err / max(abs(num1), 1e-300) if abs(num1) > 0 else float("inf")
+                is_numeric = num1 is not None and num2 is not None
+                passes_filter = True
+                if is_numeric and self.filter_func:
+                    # vectorized filter applied element-wise on scalar input
+                    if not (bool(self.filter_func(np.asarray(num1))) and
+                            bool(self.filter_func(np.asarray(num2)))):
+                        passes_filter = False
 
-                        if max_abs_error is None or abs_err > max_abs_error:
-                            max_abs_error = abs_err
-                            max_abs_error_at = f"row {i+1}, column {j+1}"
-                        if max_rel_error is None or rel_err > max_rel_error:
-                            max_rel_error = rel_err
-                            max_rel_error_at = f"row {i+1}, column {j+1}"
-                    except (ValueError, TypeError):
-                        pass  # Non-numeric, fall through
+                if is_numeric and passes_filter:
+                    # Counted as a numeric cell (regardless of text equality)
+                    row_exp.append(num1)
+                    row_act.append(num2)
+                    row_pos.append((i, j))
+                    if self.error_analysis:
+                        stats_exp.append(num1)
+                        stats_act.append(num2)
+                        stats_pos.append((i, j))
 
-                    if len(differences) < max_diffs:
+                if cell1 == cell2:
+                    continue
+                if is_numeric:
+                    # Numeric cell: within-tolerance decisions are made below via the core.
+                    # Filtered-out numeric cells are skipped entirely (no difference).
+                    continue
+
+                # Non-numeric text mismatch
+                if len(differences) < max_diffs:
+                    differences.append(Difference(
+                        position=f"row {i+1}, column {j+1}",
+                        expected=cell1,
+                        actual=cell2,
+                        diff_type="cell_mismatch"
+                    ))
+
+            # Determine closeness for this row's numeric cells via the shared core.
+            if row_exp:
+                row_res = compare_numeric(
+                    row_exp, row_act, rtol=self.rtol, atol=self.atol,
+                    filter_func=self.filter_func, collect_stats=False,
+                )
+                for k, is_mismatch in enumerate(row_res.mismatch_mask):
+                    if is_mismatch and len(differences) < max_diffs:
+                        ri, cj = row_pos[k]
                         differences.append(Difference(
-                            position=f"row {i+1}, column {j+1}",
-                            expected=cell1,
-                            actual=cell2,
+                            position=f"row {ri+1}, column {cj+1}",
+                            expected=content1[ri][cj],
+                            actual=content2[ri][cj],
                             diff_type="cell_mismatch"
                         ))
 
@@ -184,17 +205,31 @@ class CsvComparator(TextComparator):
 
         truncated = len(differences) >= max_diffs
 
-        # ── Store error stats ──
-        if self.error_analysis and total_numeric_cells > 0:
+        # ── Store error stats via the shared numeric core ──
+        if self.error_analysis and stats_exp:
+            res = compare_numeric(
+                stats_exp, stats_act, rtol=self.rtol, atol=self.atol,
+                filter_func=self.filter_func, collect_stats=True,
+            )
+            max_abs_error = res.max_abs_error
+            max_rel_error = res.max_rel_error
+            max_abs_error_at = None
+            max_rel_error_at = None
+            if max_abs_error is not None:
+                ri, cj = stats_pos[res.max_abs_error_index]
+                max_abs_error_at = f"row {ri+1}, column {cj+1}"
+            if max_rel_error is not None:
+                ri, cj = stats_pos[res.max_rel_error_index]
+                max_rel_error_at = f"row {ri+1}, column {cj+1}"
             self._error_stats = {
-                "total_numeric_cells": total_numeric_cells,
-                "mismatched_cells": mismatched_cells,
+                "total_numeric_cells": res.total,
+                "mismatched_cells": res.mismatched,
                 "max_abs_error": max_abs_error,
                 "max_abs_error_at": max_abs_error_at,
                 "max_rel_error": max_rel_error,
                 "max_rel_error_at": max_rel_error_at,
-                "mean_abs_error": sum_abs_error / mismatched_cells if mismatched_cells > 0 else 0.0,
-                "rms_abs_error": math.sqrt(sum_sq_abs_error / mismatched_cells) if mismatched_cells > 0 else 0.0,
+                "mean_abs_error": res.mean_abs_error,
+                "rms_abs_error": res.rms_abs_error,
             }
 
         if not differences:
@@ -202,40 +237,5 @@ class CsvComparator(TextComparator):
         return False, differences, truncated
 
     def _parse_filter(self):
-        """Parse data filter string and return a scalar filter function"""
-        if not self.data_filter:
-            return None
-        self.logger.debug(f"Parsing data filter: {self.data_filter}")
-        try:
-            match = re.match(
-                r"^(abs)?([><]=?|==)([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)$",
-                self.data_filter.replace(" ", ""),
-            )
-            if not match:
-                self.logger.warning(
-                    f"Invalid data filter format: {self.data_filter}. Ignoring filter."
-                )
-                return None
-            use_abs, op, value_str = match.groups()
-            value = float(value_str)
-            op_map = {
-                ">": lambda x: x > value,
-                ">=": lambda x: x >= value,
-                "<": lambda x: x < value,
-                "<=": lambda x: x <= value,
-                "==": lambda x: x == value,
-            }
-
-            def filter_func(x):
-                target = abs(x) if use_abs else x
-                return op_map[op](target)
-
-            self.logger.debug(
-                f"Created filter function for pattern: {use_abs or ''}{op}{value}"
-            )
-            return filter_func
-        except Exception as e:
-            self.logger.error(
-                f"Failed to parse data filter '{self.data_filter}': {e}. Ignoring filter."
-            )
-            return None
+        """Parse data filter string and return a filter function (delegates to numeric core)"""
+        return parse_data_filter(self.data_filter, logger=self.logger)

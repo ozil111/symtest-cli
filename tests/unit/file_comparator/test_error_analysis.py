@@ -35,10 +35,9 @@ class TestCsvErrorAnalysis:
         assert not identical
         assert cmp._error_stats is not None
         stats = cmp._error_stats
-        # All 4 cells are numeric
-        # Only mismatched cells go through the numeric parse path.
-        # Matching cells skip numeric comparison entirely.
-        assert stats["total_numeric_cells"] == 1
+        # All 4 cells are numeric and counted (shared numeric core counts ALL
+        # filtered numeric cells, matching cells included).
+        assert stats["total_numeric_cells"] == 4
         assert stats["mismatched_cells"] >= 1
         assert stats["max_abs_error"] >= 0.0
         assert stats["mean_abs_error"] >= 0.0

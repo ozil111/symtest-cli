@@ -2,13 +2,13 @@
 name: cli-test-framework
 description: >-
   This skill should be used when writing functional tests for CLI programs,
-  defining acceptance criteria, performing TDD development, or using the
-  symtest-cli / symtest framework. It covers JSON/YAML test case authoring,
-  multi-step sequence tests, numerical golden file comparison (HDF5/CSV/XML),
-  parallel execution, and the TDD iteration workflow with --last-failed and
-  --resume. Trigger when the task involves creating test configurations for
-  command-line tools, writing acceptance specs as structured assertions, or
-  running regression tests with symtest.
+  defining acceptance criteria, or using the symtest-cli / symtest framework.
+  It covers JSON/YAML test case authoring, multi-step sequence tests,
+  numerical golden file comparison (HDF5/CSV/XML), parallel execution, and
+  targeted re-runs with --last-failed and --resume. Trigger when the task
+  involves creating test configurations for command-line tools, writing
+  acceptance specs as structured assertions, or running regression tests
+  with symtest.
 ---
 
 # CLI Test Framework (symtest-cli)
@@ -18,14 +18,12 @@ description: >-
 CLI Test Framework (`symtest-cli`) is a functional testing framework for
 command-line programs. It uses a single JSON or YAML configuration file to
 describe both the execution workflow and the acceptance criteria. This skill
-provides the knowledge needed to author test configurations, run tests, and
-integrate the framework into a TDD development loop.
+provides the knowledge needed to author test configurations and run tests.
 
 ## When to Use
 
 - Writing functional/regression tests for CLI programs
 - Defining machine-readable acceptance criteria for a feature
-- Performing TDD: write acceptance spec → run → fix → verify
 - Comparing numerical output files (HDF5, CSV) against golden baselines
 - Setting up parallel test execution or CI integration
 
@@ -44,7 +42,7 @@ integrate the framework into a TDD development loop.
    - `return_code` — expected exit code (default 0).
    - `output_contains` — list of strings that must appear in stdout.
    - `output_matches` — regex pattern for stdout.
-   - `compare_files` — file comparison assertions (see Workflow 3).
+   - `compare_files` — file comparison assertions (see Workflow 2).
 4. Add metadata: `tags` for filtering, `description` for context,
    `timeout` for long-running commands, `retry_count` for flaky tests.
 5. Validate the configuration:
@@ -60,46 +58,7 @@ For all available fields and their meanings, consult
 `references/field_reference.md`. For complete usage details (setup plugins,
 TUI, resource scheduling, etc.), consult `references/user_manual.md`.
 
-### Workflow 2: TDD Iteration Loop
-
-Use ordinary failing tests for the red phase of TDD. Do **not** mark a newly
-written acceptance test as `expected_failure` merely because the
-implementation does not support it yet. The purpose of the red phase is to
-make the missing behavior visible and keep it in the work queue; the
-development goal is to turn every failure into a pass.
-
-The framework's structured failure output makes it ideal for AI-assisted TDD:
-
-```
-1. Define acceptance criteria (write test_cases.json)
-2. Run:  symtest run test_cases.json
-   Expect new acceptance cases to have status `failed` until the
-   implementation is ready.
-3. Read structured failure info from the report and choose the next fix:
-   - failure_kind: return_code | output_contains | output_matches |
-                   file_compare | timeout | execution_error
-   - compare_failures: structured diff details (diff_summary, error_stats)
-   - failed_step: which step in a sequence failed
-4. Fix the implementation
-5. Targeted re-run of only failed cases:
-   symtest run test_cases.json --last-failed
-6. For step sequences, skip already-passed steps:
-   symtest run test_cases.json -t case_name --resume
-7. Repeat steps 3–6 until the targeted run is green.
-8. Full regression run to confirm no regressions:
-   symtest run test_cases.json
-```
-
-Key TDD-friendly features:
-- `--last-failed` re-runs cases that truly failed (`failed`, `timeout`, and
-  `xpassed`). This is the normal iteration command after the initial run.
-- On the first run, when no previous result exists, the framework runs all
-  cases, so newly authored acceptance tests are discovered immediately.
-- `--resume` skips passed steps in sequence tests, reusing cached outputs.
-- JSON output format (`--output-format json`) gives machine-readable results.
-- `validate --output-format json` gives machine-readable config validation.
-
-### Workflow 3: Numerical Golden File Testing
+### Workflow 2: Numerical Golden File Testing
 
 For scientific computing (FEM solvers, etc.), file comparison is the primary
 acceptance criterion. Use `assets/templates/test_cases_golden_file.json` as a
@@ -125,7 +84,9 @@ starting point.
    `<workspace>/comparators/*_comparator.py`. When troubleshooting a
    custom `type`, check that directory first — verify the plugin file
    exists and its class imports succeed (use `from symtest.file_comparator...`,
-   not other package names).
+   not other package names). To author a new one, start from
+   `assets/templates/my_analysis_comparator.py` (see
+   `references/user_manual.md` → "Custom File Comparator").
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
@@ -158,15 +119,11 @@ starting point.
 - Use `variables` for parameterization (`{placeholder}` substitution).
 
 ### When to use `expected_failure` (xfail)
-- Use only for a separately tracked, known defect that is intentionally not
-  part of the current implementation scope—for example, a compatibility
-  issue blocked on an external dependency.
-- Do **not** use it for the initial red phase of TDD or to silence a failing
-  acceptance test. Those cases must remain ordinary `failed` cases so that
-  `--last-failed` keeps them in the development loop.
+- Use for a known defect that is intentionally not part of the current
+  implementation scope—for example, a compatibility issue blocked on an
+  external dependency.
 - `xfailed` (fails as expected) does not affect the exit code and is not
-  selected by `--last-failed`; this is precisely why it is unsuitable for
-  unfinished feature work.
+  selected by `--last-failed`.
 - `xpassed` (unexpectedly passes) is treated as a failure and prompts removal
   of the xfail mark.
 
@@ -256,5 +213,7 @@ For a complete project entry script with all CLI options, copy and adapt
 - `assets/templates/test_cases_steps.json` — Multi-step sequence test.
 - `assets/templates/test_cases_golden_file.json` — Numerical golden file test
   with HDF5/CSV comparison.
+- `assets/templates/my_analysis_comparator.py` — Minimal runnable template
+  for a user-defined custom comparator plugin.
 - `assets/full_runner_example.py` — Full project entry script with all CLI
   options, report generation, and JUnit XML output.

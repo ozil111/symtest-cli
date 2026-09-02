@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 import logging
 import re
+from .numeric_compare import compare_numeric, parse_data_filter
 
 class H5Comparator(BaseComparator):
     def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, **kwargs):
@@ -403,55 +404,38 @@ class H5Comparator(BaseComparator):
                             if self.filter_func:
                                 self.logger.debug(f"Applied filter to {table_name}: {np.sum(combined_mask)}/{data1.size} elements meet criteria")
                             
-                            # 对于数值类型数据使用 isclose
+                            # 对于数值类型数据使用 shared numeric core
                             if np.issubdtype(data1.dtype, np.number) and np.issubdtype(data2.dtype, np.number):
-                                is_close = np.isclose(filtered_data1, filtered_data2, equal_nan=True, rtol=self.rtol, atol=self.atol)
-                                all_close = np.all(is_close)
+                                res = compare_numeric(
+                                    filtered_data1, filtered_data2,
+                                    rtol=self.rtol, atol=self.atol,
+                                    collect_stats=self.error_analysis,
+                                )
+                                all_close = res.mismatched == 0
 
-                                # ── Error analysis: streaming stats over ALL numeric cells ──
+                                # ── Error analysis: stats over ALL filtered numeric cells ──
                                 if self.error_analysis:
-                                    f1 = np.asarray(filtered_data1, dtype=np.float64)
-                                    f2 = np.asarray(filtered_data2, dtype=np.float64)
-                                    n_cells = int(f1.size)
-                                    _ea_total += n_cells
-                                    if not all_close:
-                                        mismatched = int(np.sum(~is_close))
-                                        _ea_mismatched += mismatched
-                                        diff = np.abs(f2 - f1)
-                                        abs_err_vals = diff[~is_close]
-                                        _ea_sum_abs += float(np.sum(abs_err_vals))
-                                        _ea_sum_sq += float(np.sum(abs_err_vals ** 2))
-                                        table_max_abs = float(np.max(abs_err_vals))
-                                        if _ea_max_abs is None or table_max_abs > _ea_max_abs:
-                                            _ea_max_abs = table_max_abs
+                                    _ea_total += res.total
+                                    _ea_mismatched += res.mismatched
+                                    _ea_sum_abs += res.sum_abs_error
+                                    _ea_sum_sq += res.sum_sq_abs_error
+                                    if res.max_abs_error is not None:
+                                        if _ea_max_abs is None or res.max_abs_error > _ea_max_abs:
+                                            _ea_max_abs = res.max_abs_error
                                             _ea_max_abs_at = table_name
-                                        # Relative error (avoid div by zero)
-                                        d1_vals = np.abs(f1[~is_close])
-                                        safe_div = np.where(d1_vals > 0, d1_vals, 1e-300)
-                                        rel_errs = abs_err_vals / safe_div
-                                        table_max_rel = float(np.max(rel_errs))
-                                        if _ea_max_rel is None or table_max_rel > _ea_max_rel:
-                                            _ea_max_rel = table_max_rel
+                                    if res.max_rel_error is not None:
+                                        if _ea_max_rel is None or res.max_rel_error > _ea_max_rel:
+                                            _ea_max_rel = res.max_rel_error
                                             _ea_max_rel_at = table_name
 
                                 if not all_close:
-                                    if self.show_content_diff:
-                                        # 如果过滤后数据不相等，需要找到原始数据的索引来报告差异
-                                        # 简化处理：直接报告内容不同
-                                        differences.append(self._create_difference(
-                                            position=table_name,
-                                            expected="Same content (after filtering)",
-                                            actual="Content differs (after filtering)",
-                                            diff_type="content"
-                                        ))
-                                    else:
-                                        # Just report that content differs
-                                        differences.append(self._create_difference(
-                                            position=table_name,
-                                            expected="Same content (after filtering)",
-                                            actual="Content differs (after filtering)",
-                                            diff_type="content"
-                                        ))
+                                    # 过滤后数据内容不同，报告差异（位置语义使用 dataset path）
+                                    differences.append(self._create_difference(
+                                        position=table_name,
+                                        expected="Same content (after filtering)",
+                                        actual="Content differs (after filtering)",
+                                        diff_type="content"
+                                    ))
                                     identical = False
                             # 对于字符串或其他类型直接比较
                             else:
@@ -574,41 +558,8 @@ class H5Comparator(BaseComparator):
         return Difference(position=position, expected=expected, actual=actual, diff_type=diff_type)
 
     def _parse_filter(self):
-        """Parse data filter string and return a filter function"""
-        if not self.data_filter:
-            return None
-
-        self.logger.debug(f"Parsing data filter: {self.data_filter}")
-        try:
-            # 匹配模式，例如 'abs>0.1', '>=1e-5', '<-10'
-            match = re.match(r"^(abs)?([><]=?|==)([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)$", self.data_filter.replace(" ", ""))
-            if not match:
-                self.logger.warning(f"Invalid data filter format: {self.data_filter}. Ignoring filter.")
-                return None
-
-            use_abs, op, value_str = match.groups()
-            value = float(value_str)
-
-            op_map = {
-                '>': np.greater,
-                '>=': np.greater_equal,
-                '<': np.less,
-                '<=': np.less_equal,
-                '==': np.equal
-            }
-
-            def filter_func(data):
-                if not isinstance(data, np.ndarray) or not np.issubdtype(data.dtype, np.number):
-                    return np.ones_like(data, dtype=bool)  # 对于非数字类型，不过滤
-                
-                target_data = np.abs(data) if use_abs else data
-                return op_map[op](target_data, value)
-
-            self.logger.debug(f"Created filter function for pattern: {use_abs or ''}{op}{value}")
-            return filter_func
-        except Exception as e:
-            self.logger.error(f"Failed to parse data filter '{self.data_filter}': {e}. Ignoring filter.")
-            return None
+        """Parse data filter string and return a vectorized filter function (delegates to numeric core)"""
+        return parse_data_filter(self.data_filter, logger=self.logger)
     
     def _compare_dataset_chunked(self, table1, table2, table_name, file1_path, file2_path):
         """
@@ -660,9 +611,10 @@ class H5Comparator(BaseComparator):
                             slice1 = slice1[combined_mask]
                             slice2 = slice2[combined_mask]
                         
-                        # Compare slices
+                        # Compare slices via shared numeric core
                         if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            if not np.all(np.isclose(slice1, slice2, equal_nan=True, rtol=self.rtol, atol=self.atol)):
+                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
+                            if res.mismatched > 0:
                                 differences.append(self._create_difference(
                                     position=f"{table_name}[{start_idx}:{end_idx}]",
                                     expected="Content matches",
@@ -701,9 +653,10 @@ class H5Comparator(BaseComparator):
                             slice1 = flat1[combined_mask.flatten()]
                             slice2 = flat2[combined_mask.flatten()]
                         
-                        # Compare slices
+                        # Compare slices via shared numeric core
                         if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            if not np.all(np.isclose(slice1, slice2, equal_nan=True, rtol=self.rtol, atol=self.atol)):
+                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
+                            if res.mismatched > 0:
                                 differences.append(self._create_difference(
                                     position=f"{table_name}[{start_idx}:{end_idx},:]",
                                     expected="Content matches",
@@ -745,9 +698,10 @@ class H5Comparator(BaseComparator):
                             slice1 = flat1[combined_mask]
                             slice2 = flat2[combined_mask]
                         
-                        # Compare slices
+                        # Compare slices via shared numeric core
                         if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            if not np.all(np.isclose(slice1, slice2, equal_nan=True, rtol=self.rtol, atol=self.atol)):
+                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
+                            if res.mismatched > 0:
                                 differences.append(self._create_difference(
                                     position=f"{table_name}[{start_idx}:{end_idx},...]",
                                     expected="Content matches",
