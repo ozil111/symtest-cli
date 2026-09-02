@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..execution.result import ExecutionResult
+from ..test_case import ExecutionSpec
 from ..validation.validator import validate_result
 from ..validation.assertions import ValidationError  # noqa: F401  (legacy except 兼容)
 from .accept import apply_baseline_accept
@@ -29,9 +30,7 @@ logger = logging.getLogger("symtest.core.orchestration.sequence")
 # ---------------------------------------------------------------------------
 
 def _step_attr(step: Any, key: str, default: Any = None) -> Any:
-    """Get attribute from a ``TestCaseStep`` or key from a ``dict``."""
-    if isinstance(step, dict):
-        return step.get(key, default)
+    """Get attribute from a ``TestCaseStep``（dict 支持已在 Phase 3 移除）。"""
     return getattr(step, key, default)
 
 
@@ -55,8 +54,8 @@ def execute_sequence(
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
-    ``steps`` may be a list of ``TestCaseStep`` objects or plain dicts
-    containing ``command`` / ``args`` / ``expected`` / (optional) ``timeout``.
+    ``steps`` must be a list of ``TestCaseStep`` objects（v2：dict 形态已在
+    Schema v2 落地后移除，跨进程路径由 process_worker 重建为对象）。
 
     Parameters
     ----------
@@ -190,24 +189,27 @@ def execute_sequence(
 
         step_idx = i + 1
         step_name = f"{case_name} [step {step_idx}/{len(steps)}]"
-        step_case: Dict[str, Any] = {
-            "name": step_name,
-            "command": _step_attr(step, "command"),
-            "args": _step_attr(step, "args"),
-            "expected": _step_attr(step, "expected"),
-            "description": None,
-            "timeout": _step_attr(step, "timeout"),
-            "resources": None,
-            "retry_count": _step_attr(step, "retry_count", 0),
-            "env": env or {},
-        }
+        step_spec = ExecutionSpec(
+            name=step_name,
+            command=_step_attr(step, "command"),
+            args=_step_attr(step, "args"),
+            timeout=_step_attr(step, "timeout"),
+            retry_count=_step_attr(step, "retry_count", 0),
+            env=env or {},
+        )
+        step_expected = _step_attr(step, "expected") or {}
 
         command_preview = (
-            f"{step_case['command']} {' '.join(step_case['args'])}".strip()
+            f"{step_spec.command} {' '.join(step_spec.args)}".strip()
         )
         logger.info("  %sExecuting step %d/%d: %s", prefix, step_idx, len(steps), command_preview)
 
-        result = executor(step_case, workspace, update_baseline=update_baseline, error_analysis=error_analysis)
+        result = executor(
+            step_spec, workspace,
+            expectation=step_expected,
+            update_baseline=update_baseline,
+            error_analysis=error_analysis,
+        )
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)
@@ -220,7 +222,7 @@ def execute_sequence(
             "status": result["status"],
             "message": result.get("message", ""),
             "duration": result.get("duration", 0),
-            "command": f"{step_case['command']} {' '.join(step_case['args'])}".strip(),
+            "command": f"{step_spec.command} {' '.join(step_spec.args)}".strip(),
         }
         step_results.append(step_result)
 

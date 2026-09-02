@@ -21,6 +21,13 @@ describe both the execution workflow and the acceptance criteria. This skill
 provides the knowledge needed to author test configurations, run tests, and
 integrate the framework into a TDD development loop.
 
+**Config DSL (Schema v2, 1.4+)**: each test case is layered — execution
+semantics live in `execution` (single-command shorthand or `execution.steps`),
+validation semantics in top-level `expected`, scheduling semantics
+(`depends_on`, `resources`) in `scheduling`. The pre-1.4 flat layout
+(`command`/`args`/`steps`/`depends_on` at case top level) was removed; convert
+legacy configs with `symtest migrate`.
+
 ## When to Use
 
 - Writing functional/regression tests for CLI programs
@@ -33,20 +40,23 @@ integrate the framework into a TDD development loop.
 
 ### Workflow 1: Authoring Test Cases / Acceptance Criteria
 
-1. Identify the program under test: its `command`, `args`, and expected outputs.
+1. Identify the program under test: its `execution.command`, `execution.args`,
+   and expected outputs.
 2. Choose a test mode:
    - **Single command** — one command, one set of assertions. Use
      `assets/templates/test_cases_simple.json` as the starting point.
    - **Step sequence** — ordered steps with fail-fast. Use
      `assets/templates/test_cases_steps.json` when a test requires multiple
-     commands in sequence (e.g., preprocess → solve → postprocess).
+     commands in sequence (e.g., preprocess → solve → postprocess). Steps live
+     in `execution.steps`.
 3. Fill in the `expected` assertions:
    - `return_code` — expected exit code (default 0).
    - `output_contains` — list of strings that must appear in stdout.
    - `output_matches` — regex pattern for stdout.
    - `compare_files` — file comparison assertions (see Workflow 3).
-4. Add metadata: `tags` for filtering, `description` for context,
-   `timeout` for long-running commands, `retry_count` for flaky tests.
+4. Add metadata: `tags` for filtering, `description` for context. Put
+   `timeout` for long-running commands and `retry_count` for flaky tests
+   inside `execution`; declare `depends_on`/`resources` in `scheduling`.
 5. Validate the configuration:
    ```bash
    symtest validate test_cases.json
@@ -145,8 +155,9 @@ starting point.
 - Both are fully equivalent in functionality.
 
 ### Single command vs step sequence
-- **Single command**: one program invocation, one result to check.
-- **Step sequence** (`steps`): multiple ordered commands, fail-fast.
+- **Single command**: one program invocation, one result to check
+  (`execution.command` form).
+- **Step sequence** (`execution.steps`): multiple ordered commands, fail-fast.
   Use when output of step N is input to step N+1.
 
 ### When to use `import` (config splitting)

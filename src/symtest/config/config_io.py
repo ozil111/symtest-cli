@@ -93,25 +93,48 @@ def save_config(
 # Validation
 # ---------------------------------------------------------------------------
 
-def _validate_required_fields(test_case: Dict[str, Any], index: int, source: str) -> List[str]:
-    """Check required fields for a single test case dict. Returns list of error messages."""
-    errors: List[str] = []
-    prefix = f"[{source}] case #{index}"
+def _get_execution(test_case: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the v2 ``execution`` block of a case dict (empty dict if absent)."""
+    execution = test_case.get("execution")
+    return execution if isinstance(execution, dict) else {}
 
+
+def _get_depends_on(test_case: Dict[str, Any]) -> Any:
+    """Return the v2 ``scheduling.depends_on`` of a case dict (default [])."""
+    scheduling = test_case.get("scheduling")
+    if isinstance(scheduling, dict):
+        return scheduling.get("depends_on", [])
+    return []
+
+
+def _validate_required_fields(test_case: Dict[str, Any], index: int, source: str) -> List[str]:
+    """Check required fields for a single test case dict (Schema v2). Returns list of error messages."""
+    errors: List[str] = []
     name = test_case.get("name", "<unnamed>")
     prefix = f"[{source}] case '{name}'"
 
-    if "steps" in test_case:
-        # Sequence mode
-        for si, step in enumerate(test_case["steps"]):
+    if "name" not in test_case:
+        errors.append(f"{prefix}: missing required field 'name'")
+
+    execution = _get_execution(test_case)
+    if not execution:
+        errors.append(f"{prefix}: missing required field 'execution'")
+        return errors
+
+    if "steps" in execution:
+        # Sequence mode (case-level expected optional)
+        for si, step in enumerate(execution["steps"]):
             for field in ("command", "args", "expected"):
                 if field not in step:
                     errors.append(f"{prefix} step {si}: missing required field '{field}'")
     else:
         # Single-command mode
-        for field in ("name", "command", "args", "expected"):
-            if field not in test_case:
-                errors.append(f"{prefix}: missing required field '{field}'")
+        for field in ("expected", "command", "args"):
+            if field not in (test_case if field == "expected" else execution):
+                errors.append(
+                    f"{prefix}: missing required field "
+                    f"'{field if field == 'expected' else f'execution.{field}'}'"
+                )
 
     return errors
 
@@ -176,13 +199,14 @@ def _baseline_warnings(expected: Any, prefix: str, workspace: Path) -> List[str]
 def _validate_case_warnings(
     test_case: Dict[str, Any], source: str, workspace: Path,
 ) -> List[str]:
-    """Warning-level checks for a single test case dict."""
+    """Warning-level checks for a single test case dict (Schema v2)."""
     warnings: List[str] = []
     name = test_case.get("name", "<unnamed>")
     prefix = f"[{source}] case '{name}'"
 
-    if "steps" in test_case:
-        for si, step in enumerate(test_case.get("steps", [])):
+    execution = _get_execution(test_case)
+    if "steps" in execution:
+        for si, step in enumerate(execution.get("steps", [])):
             if not isinstance(step, dict):
                 continue
             step_prefix = f"{prefix} step {si}"
@@ -196,7 +220,7 @@ def _validate_case_warnings(
             _baseline_warnings(test_case.get("expected"), prefix, workspace)
         )
     else:
-        cmd_warn = _command_warning(test_case.get("command"), workspace)
+        cmd_warn = _command_warning(execution.get("command"), workspace)
         if cmd_warn:
             warnings.append(f"{prefix}: {cmd_warn}")
         warnings.extend(
@@ -345,7 +369,7 @@ def validate_config(
 
         for case_dict, source in all_cases:
             case_name = case_dict.get("name", "<unnamed>")
-            deps = case_dict.get("depends_on", [])
+            deps = _get_depends_on(case_dict)
             if not deps:
                 continue
             if not isinstance(deps, list):
@@ -378,7 +402,7 @@ def validate_config(
             visited: List[str] = []
             current = name
             while current in names:
-                deps = names[current][0].get("depends_on", [])
+                deps = _get_depends_on(names[current][0])
                 if not deps or not isinstance(deps, list):
                     break
                 # Check each dependency for a cycle

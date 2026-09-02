@@ -10,14 +10,13 @@
   （``accept.apply_baseline_accept``）；
 - ``next_action_hint`` 由 ``reporting.diagnosis`` 生成（原则 5）。
 
-兼容性：``case`` 接受 ``ExecutionSpec`` 或旧 dict 形态（读取
-name/command/args/timeout/retry_count/env[/expected]），dict 支持在
-Phase 3 Schema v2 落地后移除。
+Phase 3 Schema v2：``case`` 只接受 ``ExecutionSpec``，期望规格由调用方
+显式传入（``expectation``），不再回落读取旧 dict 形态。
 """
 import logging
 import time
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from ..execution.executor import DEFAULT_OUTPUT_MAX_CHARS, _spec_get, execute_command
 from ..result import TestResult
@@ -28,18 +27,6 @@ from .accept import apply_baseline_accept
 from ...reporting.diagnosis import build_next_action_hint
 
 logger = logging.getLogger("symtest.core.orchestration.single")
-
-
-def _resolve_expectation(
-    case: Any,
-    expectation: Optional[Mapping[str, Any]],
-) -> Mapping[str, Any]:
-    """期望规格解析：显式参数优先；旧 dict 形态回落到 ``case["expected"]``。"""
-    if expectation is not None:
-        return expectation
-    if isinstance(case, Mapping):
-        return case.get("expected") or {}
-    return {}
 
 
 def _execute_command_once(
@@ -144,12 +131,11 @@ def execute_single_test_case(
     Stateless execution of a single test case with optional retry.
 
     Args:
-        case: ExecutionSpec（或兼容的旧 dict 形态），``retry_count`` 控制
-              自动重试次数。
+        case: ExecutionSpec，``retry_count`` 控制自动重试次数。
         workspace: Working directory for test execution.
         env: Optional environment variables to inject/override (merged with os.environ).
-        expectation: 期望规格（ExpectationSpec 的原始断言字典）；旧 dict
-                     形态的 ``case`` 缺省回落到 ``case["expected"]``。
+        expectation: 期望规格（ExpectationSpec 的原始断言字典）；由调用方
+                     显式传入，缺省为空（不校验）。
         update_baseline: If True, accept comparison failures as new baselines
                          （accept 步骤在编排层执行，Validator 只读）。
         output_max_chars: Max characters for output in result dict.
@@ -164,7 +150,7 @@ def execute_single_test_case(
     last_result: Optional[TestResultData] = None
     attempt_history: List[Dict[str, Any]] = []
 
-    expectation = _resolve_expectation(case, expectation)
+    expectation = expectation if expectation is not None else {}
 
     for attempt in range(1, max_attempts + 1):
         result = _execute_command_once(

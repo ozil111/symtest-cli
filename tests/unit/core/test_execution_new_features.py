@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 
 from symtest.core.orchestration.single import execute_single_test_case
+from symtest.core.test_case import ExecutionSpec
 from symtest.core.validation.validator import validate_result
 from symtest.core.execution.result import ExecutionResult
 from symtest.core.execution.executor import _trim_output, DEFAULT_OUTPUT_MAX_CHARS
@@ -16,18 +17,15 @@ class TestRetryFeatures:
 
     @pytest.fixture
     def case(self):
-        return {
-            "name": "test_case",
-            "command": "echo",
-            "args": ["hello"],
-            "expected": {"return_code": 0},
-            "description": None,
-            "timeout": None,
-            "resources": None,
-            "retry_count": 2,
-        }
+        return ExecutionSpec(
+            name="test_case", command="echo", args=["hello"], retry_count=2,
+        )
 
-    def test_retry_flaky_flag(self, case):
+    @pytest.fixture
+    def expectation(self):
+        return {"return_code": 0}
+
+    def test_retry_flaky_flag(self, case, expectation):
         """When a case passes after retry, flaky=True."""
         with patch("subprocess.Popen") as mock_popen:
             # First attempt fails (return_code=1), second succeeds (return_code=0)
@@ -43,44 +41,44 @@ class TestRetryFeatures:
                     pid=2,
                 ),
             ]
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "passed"
             assert result["flaky"] is True
             assert result["attempts"] == 2
 
-    def test_no_retry_not_flaky(self, case):
+    def test_no_retry_not_flaky(self, case, expectation):
         """Single attempt passing is not flaky."""
-        case["retry_count"] = 0
+        case.retry_count = 0
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(
                 communicate=MagicMock(return_value=("", "")),
                 returncode=0,
                 pid=1,
             )
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "passed"
             assert result["flaky"] is False
             assert result["attempts"] == 1
 
-    def test_retry_all_fail_not_flaky(self, case):
+    def test_retry_all_fail_not_flaky(self, case, expectation):
         """All attempts fail → not flaky."""
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.side_effect = [
                 MagicMock(communicate=MagicMock(return_value=("", "")), returncode=1, pid=i)
                 for i in range(1, 4)
             ]
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
             assert result["flaky"] is False
             assert result["attempts"] == 3
 
-    def test_attempt_history_structure(self, case):
+    def test_attempt_history_structure(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.side_effect = [
                 MagicMock(communicate=MagicMock(return_value=("fail1", "")), returncode=1, pid=1),
                 MagicMock(communicate=MagicMock(return_value=("success", "")), returncode=0, pid=2),
             ]
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
 
             history = result["attempt_history"]
             assert len(history) == 2
@@ -89,14 +87,14 @@ class TestRetryFeatures:
             assert history[1]["attempt"] == 2
             assert history[1]["status"] == "passed"
 
-    def test_attempts_count_matches_history(self, case):
+    def test_attempts_count_matches_history(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.side_effect = [
                 MagicMock(communicate=MagicMock(return_value=("", "")), returncode=1, pid=1),
                 MagicMock(communicate=MagicMock(return_value=("", "")), returncode=1, pid=2),
                 MagicMock(communicate=MagicMock(return_value=("", "")), returncode=0, pid=3),
             ]
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["attempts"] == 3
             assert len(result["attempt_history"]) == 3
 
@@ -139,25 +137,20 @@ class TestAssertionResults:
 
     @pytest.fixture
     def case(self):
-        return {
-            "name": "test_case",
-            "command": "echo",
-            "args": ["hello"],
-            "expected": {"return_code": 0, "output_contains": ["hello", "world"]},
-            "description": None,
-            "timeout": None,
-            "resources": None,
-            "retry_count": 0,
-        }
+        return ExecutionSpec(name="test_case", command="echo", args=["hello"])
 
-    def test_success_populates_assertion_results(self, case):
+    @pytest.fixture
+    def expectation(self):
+        return {"return_code": 0, "output_contains": ["hello", "world"]}
+
+    def test_success_populates_assertion_results(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(
                 communicate=MagicMock(return_value=("hello world\n", "")),
                 returncode=0,
                 pid=1,
             )
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "passed"
             ar = result["assertion_results"]
             assert len(ar) == 3  # return_code + 2x output_contains
@@ -165,14 +158,14 @@ class TestAssertionResults:
             assert ar[0]["assertion"] == "return_code"
             assert [e["assertion"] for e in ar[1:]] == ["output_contains"] * 2
 
-    def test_failure_marks_individual_assertions(self, case):
+    def test_failure_marks_individual_assertions(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(
                 communicate=MagicMock(return_value=("hello\n", "")),
                 returncode=0,
                 pid=1,
             )
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
             ar = result["assertion_results"]
             # return_code passed, 'hello' found, 'world' missing
@@ -199,16 +192,11 @@ class TestNextActionHint:
 
     @pytest.fixture
     def case(self):
-        return {
-            "name": "hint_case",
-            "command": "echo",
-            "args": ["x"],
-            "expected": {"return_code": 0},
-            "description": None,
-            "timeout": None,
-            "resources": None,
-            "retry_count": 0,
-        }
+        return ExecutionSpec(name="hint_case", command="echo", args=["x"])
+
+    @pytest.fixture
+    def expectation(self):
+        return {"return_code": 0}
 
     def test_hint_mapping(self):
         assert build_next_action_hint(None) is None
@@ -221,29 +209,29 @@ class TestNextActionHint:
         assert build_next_action_hint("execution_error")["action"] == "investigate"
         assert build_next_action_hint("something_else")["action"] == "investigate"
 
-    def test_assertion_failure_attaches_hint(self, case):
+    def test_assertion_failure_attaches_hint(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(
                 communicate=MagicMock(return_value=("", "")),
                 returncode=3,
                 pid=1,
             )
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
             hint = result["next_action_hint"]
             assert hint["action"] == "update_expected"
             assert hint["command"] is None  # filled by the runner layer
             assert hint["reason"]
 
-    def test_execution_error_attaches_hint(self, case):
+    def test_execution_error_attaches_hint(self, case, expectation):
         with patch("subprocess.Popen", side_effect=FileNotFoundError("no such cmd")):
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
             assert result["failure_kind"] == "execution_error"
             assert result["next_action_hint"]["action"] == "investigate"
 
-    def test_timeout_attaches_hint(self, case):
-        case["timeout"] = 1
+    def test_timeout_attaches_hint(self, case, expectation):
+        case.timeout = 1
         mock_proc = MagicMock()
         mock_proc.communicate.side_effect = [
             subprocess.TimeoutExpired(cmd="echo", timeout=1),
@@ -252,21 +240,21 @@ class TestNextActionHint:
         mock_proc.pid = 99999
         mock_proc.kill = MagicMock()
         with patch("subprocess.Popen", return_value=mock_proc):
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "timeout"
             assert result["next_action_hint"]["action"] == "increase_timeout"
             # PID 99999 is harmless even if killpg() is called;
             # mock_proc.kill is also safe. Assertions above verify
             # the result format remains correct.
 
-    def test_passed_case_has_no_hint(self, case):
+    def test_passed_case_has_no_hint(self, case, expectation):
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(
                 communicate=MagicMock(return_value=("", "")),
                 returncode=0,
                 pid=1,
             )
-            result = execute_single_test_case(case)
+            result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "passed"
             assert result["next_action_hint"] is None
 

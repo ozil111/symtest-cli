@@ -30,11 +30,11 @@ class TestDependsOn(unittest.TestCase):
         """无依赖时行为与原来一致"""
         config_file = self._write_config([
             {
-                "name": "A", "command": "echo", "args": ["A"],
+                "name": "A", "execution": {"command": "echo", "args": ["A"]},
                 "expected": {"return_code": 0, "output_contains": ["A"]},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
             },
         ])
@@ -48,13 +48,13 @@ class TestDependsOn(unittest.TestCase):
         """顺序 runner: A → B (B depends_on A)"""
         config_file = self._write_config([
             {
-                "name": "A", "command": "echo", "args": ["hello"],
+                "name": "A", "execution": {"command": "echo", "args": ["hello"]},
                 "expected": {"return_code": 0, "output_contains": ["hello"]},
             },
             {
-                "name": "B", "command": "echo", "args": ["world"],
+                "name": "B", "execution": {"command": "echo", "args": ["world"]},
                 "expected": {"return_code": 0, "output_contains": ["world"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = JSONRunner(config_file, self.temp_dir)
@@ -66,13 +66,13 @@ class TestDependsOn(unittest.TestCase):
         """并行 runner: A → B (B depends_on A)"""
         config_file = self._write_config([
             {
-                "name": "A", "command": "echo", "args": ["hello"],
+                "name": "A", "execution": {"command": "echo", "args": ["hello"]},
                 "expected": {"return_code": 0, "output_contains": ["hello"]},
             },
             {
-                "name": "B", "command": "echo", "args": ["world"],
+                "name": "B", "execution": {"command": "echo", "args": ["world"]},
                 "expected": {"return_code": 0, "output_contains": ["world"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=2, execution_mode="thread")
@@ -84,17 +84,17 @@ class TestDependsOn(unittest.TestCase):
         """A, B 并行 → C depends_on [A, B]"""
         config_file = self._write_config([
             {
-                "name": "A", "command": "echo", "args": ["A"],
+                "name": "A", "execution": {"command": "echo", "args": ["A"]},
                 "expected": {"return_code": 0, "output_contains": ["A"]},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
             },
             {
-                "name": "C", "command": "echo", "args": ["C"],
+                "name": "C", "execution": {"command": "echo", "args": ["C"]},
                 "expected": {"return_code": 0, "output_contains": ["C"]},
-                "depends_on": ["A", "B"],
+                "scheduling": {"depends_on": ["A", "B"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=4, execution_mode="thread")
@@ -107,14 +107,16 @@ class TestDependsOn(unittest.TestCase):
         config_file = self._write_config([
             {
                 "name": "A",
-                "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=2, execution_mode="thread")
@@ -132,19 +134,21 @@ class TestDependsOn(unittest.TestCase):
         config_file = self._write_config([
             {
                 "name": "A",
-                "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
             {
-                "name": "C", "command": "echo", "args": ["C"],
+                "name": "C", "execution": {"command": "echo", "args": ["C"]},
                 "expected": {"return_code": 0, "output_contains": ["C"]},
-                "depends_on": ["B"],
+                "scheduling": {"depends_on": ["B"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=2, execution_mode="thread")
@@ -161,16 +165,18 @@ class TestDependsOn(unittest.TestCase):
         config_file = self._write_config([
             {
                 "name": "A",
-                "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
                 "expected_failure": True,
                 "xfail_reason": "known issue",
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=2, execution_mode="thread")
@@ -187,13 +193,13 @@ class TestDependsOn(unittest.TestCase):
         """进程模式下 DAG 调度也能正常工作"""
         config_file = self._write_config([
             {
-                "name": "A", "command": "echo", "args": ["A"],
+                "name": "A", "execution": {"command": "echo", "args": ["A"]},
                 "expected": {"return_code": 0, "output_contains": ["A"]},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = ParallelJSONRunner(config_file, self.temp_dir, max_workers=2, execution_mode="process")
@@ -206,14 +212,16 @@ class TestDependsOn(unittest.TestCase):
         config_file = self._write_config([
             {
                 "name": "A",
-                "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
-                "args": [],
+                "execution": {
+                    "command": f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                    "args": [],
+                },
                 "expected": {"return_code": 0},
             },
             {
-                "name": "B", "command": "echo", "args": ["B"],
+                "name": "B", "execution": {"command": "echo", "args": ["B"]},
                 "expected": {"return_code": 0, "output_contains": ["B"]},
-                "depends_on": ["A"],
+                "scheduling": {"depends_on": ["A"]},
             },
         ])
         runner = JSONRunner(config_file, self.temp_dir)

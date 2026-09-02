@@ -7,8 +7,10 @@
   "test_cases": [
     {
       "name": "main_inline_case",
-      "command": "python",
-      "args": ["./main_script.py"],
+      "execution": {
+        "command": "python",
+        "args": ["./main_script.py"]
+      },
       "expected": {
         "return_code": 0
       },

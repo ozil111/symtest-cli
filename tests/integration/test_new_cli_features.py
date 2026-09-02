@@ -62,21 +62,22 @@ class TestUpdateBaselineWorkflow:
                 "import pathlib\n"
                 "pathlib.Path('result.csv').write_text('new,data,100\\n')\n"
             )
-            case = {
-                "name": "ub_case",
-                "command": sys.executable,
-                "args": ["-c", gen],
-                "expected": {
-                    "return_code": 0,
-                    "compare_files": [
-                        {"actual": "result.csv", "baseline": "baseline.csv",
-                         "type": "csv"},
-                    ],
-                },
+            from symtest.core.test_case import ExecutionSpec
+            spec = ExecutionSpec(
+                name="ub_case", command=sys.executable, args=["-c", gen],
+            )
+            expectation = {
+                "return_code": 0,
+                "compare_files": [
+                    {"actual": "result.csv", "baseline": "baseline.csv",
+                     "type": "csv"},
+                ],
             }
 
             from symtest.core.orchestration.single import execute_single_test_case
-            result = execute_single_test_case(case, workspace=d, update_baseline=True)
+            result = execute_single_test_case(
+                spec, workspace=d, expectation=expectation, update_baseline=True,
+            )
 
             assert result["status"] == "passed"
             # Verify baseline was overwritten
@@ -95,8 +96,7 @@ class TestValidateJsonOutput:
                 "test_cases": [
                     {
                         "name": "valid_case",
-                        "command": "echo",
-                        "args": ["hello"],
+                        "execution": {"command": "echo", "args": ["hello"]},
                         "expected": {"return_code": 0},
                     }
                 ]

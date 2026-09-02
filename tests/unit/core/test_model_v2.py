@@ -218,14 +218,15 @@ class TestSerialization:
         )
         assert tc.to_dict() == {
             "name": "t",
-            "command": "echo",
-            "args": ["ok"],
-            "expected": {"return_code": 0},
-            "timeout": None,
-            "resources": None,
             "tags": ["x"],
-            "retry_count": 0,
-            "env": {"A": "1"},
+            "expected": {"return_code": 0},
+            "execution": {
+                "command": "echo",
+                "args": ["ok"],
+                "timeout": None,
+                "retry_count": 0,
+                "env": {"A": "1"},
+            },
         }
 
     def test_to_dict_sequence_mode_keeps_steps(self):
@@ -235,10 +236,48 @@ class TestSerialization:
                 TestCaseStep(command="a", args=["1"], expected={}, timeout=5.0),
             ],
         )
-        assert tc.to_dict()["steps"] == [
+        assert tc.to_dict()["execution"]["steps"] == [
             {"command": "a", "args": ["1"], "expected": {},
              "timeout": 5.0, "retry_count": 0},
         ]
+
+    def test_to_dict_sequence_mode_omits_command_args(self):
+        """steps 模式下 execution 省略 command/args（二选一）。"""
+        tc = TestCase(name="seq", steps=[TestCaseStep(command="a", args=[], expected={})])
+        execution = tc.to_dict()["execution"]
+        assert "command" not in execution
+        assert "args" not in execution
+
+    def test_to_dict_scheduling_and_metadata(self):
+        tc = TestCase(
+            name="t",
+            description="d",
+            command="echo",
+            depends_on=["a"],
+            resources={"cpu_cores": 2},
+            expected_failure=True,
+            xfail_reason="known bug",
+            xfail_quiet=True,
+        )
+        assert tc.to_dict() == {
+            "name": "t",
+            "description": "d",
+            "tags": [],
+            "expected": {},
+            "expected_failure": True,
+            "xfail_reason": "known bug",
+            "xfail_quiet": True,
+            "execution": {
+                "command": "echo",
+                "args": [],
+                "timeout": None,
+                "retry_count": 0,
+            },
+            "scheduling": {
+                "depends_on": ["a"],
+                "resources": {"cpu_cores": 2},
+            },
+        }
 
     def test_to_execution_dict_bridge_removed(self):
         """1.4 已删除 to_execution_dict 桥接：由 ExecutionSpec 直供编排层。"""

@@ -11,6 +11,7 @@ import pytest
 from symtest.core.execution.result import ExecutionResult
 from symtest.core.orchestration.accept import apply_baseline_accept
 from symtest.core.orchestration.single import execute_single_test_case
+from symtest.core.test_case import ExecutionSpec
 from symtest.core.validation.validator import validate_result
 from symtest.reporting.diagnosis import build_next_action_hint
 
@@ -109,17 +110,14 @@ class TestApplyBaselineAccept:
 
 class TestExecuteSingleWithBaselineAccept:
     def _case(self, name, command, args):
-        return {
-            "name": name,
-            "command": command,
-            "args": args,
-            "expected": {
-                "return_code": 0,
-                "compare_files": [
-                    {"actual": "actual.txt", "baseline": "baseline.txt", "type": "text"},
-                ],
-            },
+        spec = ExecutionSpec(name=name, command=command, args=args)
+        expectation = {
+            "return_code": 0,
+            "compare_files": [
+                {"actual": "actual.txt", "baseline": "baseline.txt", "type": "text"},
+            ],
         }
+        return spec, expectation
 
     def test_update_baseline_flips_verdict_to_passed(self):
         import sys
@@ -130,7 +128,9 @@ class TestExecuteSingleWithBaselineAccept:
                 "pathlib.Path('actual.txt').write_text('new')\n"
             )
             case = self._case("ub", sys.executable, ["-c", gen])
-            result = execute_single_test_case(case, workspace=d, update_baseline=True)
+            result = execute_single_test_case(
+                case[0], workspace=d, expectation=case[1], update_baseline=True,
+            )
 
             assert result["status"] == "passed"
             assert result["message"] == ""
@@ -156,7 +156,9 @@ class TestExecuteSingleWithBaselineAccept:
                 "pathlib.Path('actual.txt').write_text('new')\n"
             )
             case = self._case("ub", sys.executable, ["-c", gen])
-            result = execute_single_test_case(case, workspace=d)
+            result = execute_single_test_case(
+                case[0], workspace=d, expectation=case[1],
+            )
 
             assert result["status"] == "failed"
             assert result["failure_kind"] == "file_compare"
@@ -169,9 +171,11 @@ class TestExecuteSingleWithBaselineAccept:
         with tempfile.TemporaryDirectory() as d:
             _write(d, "baseline.txt", "old\n")
             # 命令成功但缺少 compare_files 的 actual 文件 → 比较器错误
-            case = self._case("ub", sys.executable, ["-c", "pass"])
-            case["expected"]["compare_files"][0]["actual"] = "missing.txt"
-            result = execute_single_test_case(case, workspace=d, update_baseline=True)
+            spec, expectation = self._case("ub", sys.executable, ["-c", "pass"])
+            expectation["compare_files"][0]["actual"] = "missing.txt"
+            result = execute_single_test_case(
+                spec, workspace=d, expectation=expectation, update_baseline=True,
+            )
 
             assert result["status"] == "failed"
             assert result["next_action_hint"]["action"] == "investigate"

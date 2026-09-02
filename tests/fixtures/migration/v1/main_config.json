@@ -1,0 +1,24 @@
+{
+  "setup": {
+    "environment_variables": {
+      "PYTHONPATH": "./src"
+    }
+  },
+  "test_cases": [
+    {
+      "name": "main_inline_case",
+      "command": "python",
+      "args": ["./main_script.py"],
+      "expected": {
+        "return_code": 0
+      },
+      "tags": ["inline"]
+    },
+    {
+      "import": "sub_text_tests.json"
+    },
+    {
+      "import": "sub_json_tests.yaml"
+    }
+  ]
+}

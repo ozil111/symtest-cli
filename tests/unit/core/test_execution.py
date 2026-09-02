@@ -14,16 +14,15 @@ from unittest.mock import patch
 import pytest
 
 from symtest.core.orchestration.single import execute_single_test_case
+from symtest.core.test_case import ExecutionSpec
 
 
 def _run(command: str, args, expected=None, workspace=None):
-    case = {
-        "name": "undecodable-output",
-        "command": command,
-        "args": list(args),
-        "expected": expected or {"return_code": 0},
-    }
-    return execute_single_test_case(case, workspace=workspace)
+    spec = ExecutionSpec(name="undecodable-output", command=command, args=list(args))
+    return execute_single_test_case(
+        spec, workspace=workspace,
+        expectation=expected or {"return_code": 0},
+    )
 
 
 def test_undecodable_output_bytes_do_not_crash(tmp_path):
@@ -97,15 +96,12 @@ class TestRetryCount:
     """Tests for the ``retry_count`` feature in ``execute_single_test_case``."""
 
     def _case(self, retry_count=None):
-        case = {
-            "name": "retry-test",
-            "command": "echo",
-            "args": ["ok"],
-            "expected": {"return_code": 0},
-        }
-        if retry_count is not None:
-            case["retry_count"] = retry_count
-        return case
+        return ExecutionSpec(
+            name="retry-test",
+            command="echo",
+            args=["ok"],
+            retry_count=retry_count or 0,
+        )
 
     # -- default behavior (no retry) -----------------------------------------
 

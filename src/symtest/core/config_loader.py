@@ -97,9 +97,11 @@ def parse_test_cases(
     *,
     strict: bool = True,
 ) -> List[TestCase]:
-    """Parse ``config['test_cases']`` into a list of ``TestCase`` objects.
+    """Parse ``config['test_cases']`` (Schema v2) into ``TestCase`` objects.
 
-    Supports both single-command mode and sequence (``steps``) mode.
+    v2 分层形态：``case["execution"]``（command 简写 或 steps 完整形）、
+    ``case["expected"]``、``case["scheduling"]``。单命令简写被归一为
+    单元素 steps 列表（单 step 时 case 级 expected == step 级 expected）。
 
     When *workspace* and *path_resolver* are provided (Runner mode),
     command/args paths are resolved.
@@ -114,18 +116,24 @@ def parse_test_cases(
     resolve = workspace is not None and path_resolver is not None
 
     for case in config.get("test_cases", []):
+        execution = case.get("execution") or {}
+        scheduling = case.get("scheduling") or {}
+        case_expected: Dict[str, Any] = case.get("expected", {})
+
         # Normalize both modes to a single ``steps`` list.  A single-command
-        # case is represented as a single-element list; a sequence case uses
-        # its ``steps`` directly.  This makes the single command a special
-        # case of a sequence at the data-model level while keeping the flat
-        # config format backward-compatible.
-        is_sequence = "steps" in case
+        # shorthand becomes a single-element list; a sequence case uses its
+        # ``execution.steps`` directly.
+        is_sequence = "steps" in execution
         if is_sequence:
-            step_configs: List[Dict[str, Any]] = list(case.get("steps", []))
-            case_expected: Dict[str, Any] = case.get("expected", {})
+            step_configs: List[Dict[str, Any]] = list(execution.get("steps", []))
         else:
-            step_configs = [case]
-            case_expected = {}
+            step_configs = [{
+                "command": execution.get("command", ""),
+                "args": execution.get("args", []),
+                "expected": case_expected,
+                "timeout": execution.get("timeout"),
+                "retry_count": execution.get("retry_count", 0),
+            }]
 
         steps: List[TestCaseStep] = []
         for step in step_configs:
@@ -157,19 +165,20 @@ def parse_test_cases(
                 steps=steps,
                 expected=case_expected,
                 description=case.get("description", ""),
-                resources=case.get("resources"),
+                resources=scheduling.get("resources"),
                 tags=case.get("tags", []),
                 expected_failure=case.get("expected_failure", False),
                 xfail_reason=case.get("xfail_reason", ""),
                 xfail_quiet=case.get("xfail_quiet", False),
-                depends_on=case.get("depends_on", []),
-                env=_parse_env(case.get("env")),
+                depends_on=scheduling.get("depends_on", []),
+                env=_parse_env(execution.get("env")),
             ))
         else:
-            # ── Single-command mode: flat fields are forwarded to steps[0] ──
+            # ── Single-command mode: execution shorthand fields → steps[0] ──
             if strict:
-                required_fields = ["name", "command", "args", "expected"]
-                if not all(field in case for field in required_fields):
+                missing = [f for f in ("name", "execution", "expected") if f not in case]
+                missing += [f for f in ("command", "args") if f not in execution]
+                if missing:
                     raise ValueError(
                         f"Test case {case.get('name', 'unnamed')} "
                         f"is missing required fields"
@@ -182,14 +191,14 @@ def parse_test_cases(
                 expected=steps[0].expected,
                 description=case.get("description", ""),
                 timeout=steps[0].timeout,
-                resources=case.get("resources"),
+                resources=scheduling.get("resources"),
                 tags=case.get("tags", []),
                 retry_count=steps[0].retry_count,
                 expected_failure=case.get("expected_failure", False),
                 xfail_reason=case.get("xfail_reason", ""),
                 xfail_quiet=case.get("xfail_quiet", False),
-                depends_on=case.get("depends_on", []),
-                env=_parse_env(case.get("env")),
+                depends_on=scheduling.get("depends_on", []),
+                env=_parse_env(execution.get("env")),
             ))
 
     return cases

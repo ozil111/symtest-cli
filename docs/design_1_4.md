@@ -255,8 +255,8 @@ src/symtest/
 | 0 | 本设计文档评审定稿 | ✅ 已完成（2026-08-27）：宪法合入 design.md / design_en.md §10 |
 | 1 | TestCase v2 数据模型 + ExecutionResult/ValidationResult/TestResult 类型 | ✅ 已完成（2026-08-31）：test_model_v2.py 22 用例；全量回归绿 |
 | 2 | execution/validation 解耦（hint 搬家、sequence 搬家、accept 步骤、retry 上移） | ✅ 已完成（2026-08-31）：executor 无 assertions/validation import（guard 测试强制）；全量回归绿（862 passed） |
-| 3 | Schema v2 + parser + 三处同步（config_schema / parse_test_cases / config_io.validate_config）+ runner 适配（sequential/parallel/DAG/resume/steps 仅改取值路径） | 现有 suite 全过 |
-| 4 | `symtest migrate` + 迁移等价性测试 + AI Skill | 见下节不变量 |
+| 3 | Schema v2 + parser + 三处同步（config_schema / parse_test_cases / config_io.validate_config）+ runner 适配（sequential/parallel/DAG/resume/steps 仅改取值路径） | ✅ 已完成（2026-09-02）：v2 分层 DSL 切换 + Phase 2 dict shim 全部移除（含 process 模式改用 `case.to_dict()`，顺带修复 env 不跨进程）；fixtures/测试语料/user_manual 同步 v2，v1 原件留存于 tests/fixtures/migration/v1/ 供 Phase 4 等价性测试；全量回归绿 |
+| 4 | `symtest migrate` + 迁移等价性测试 + AI Skill | ✅ 已完成（2026-09-02）：`symtest migrate` 子命令（config/migrate.py 纯函数 + commands/migrate.py，幂等、保留 import/setup）；A==B 等价性不变量测试（tests/unit/test_migrate.py，语料 = tests/fixtures/migration/v1/* 含 examples/skill 模板拷贝）；AI Skill 双轨——examples/skill 更新至 v2，迁移复查独立成新 skill examples/skill-migration；全量回归绿 |
 
 ### 迁移设计（Phase 4）
 

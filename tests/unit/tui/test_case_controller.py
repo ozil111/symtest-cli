@@ -62,9 +62,9 @@ class TestControllerLoad:
     def test_load_single_cmd_cases(self, mock_load):
         mock_load.return_value = {
             "test_cases": [
-                {"name": "tc1", "command": "echo", "args": ["hi"],
+                {"name": "tc1", "execution": {"command": "echo", "args": ["hi"]},
                  "expected": {"return_code": 0}, "tags": ["smoke"]},
-                {"name": "tc2", "command": "ls", "args": ["-la"],
+                {"name": "tc2", "execution": {"command": "ls", "args": ["-la"]},
                  "expected": {}, "tags": []},
             ]
         }
@@ -84,10 +84,12 @@ class TestControllerLoad:
         mock_load.return_value = {
             "test_cases": [
                 {"name": "multi_step",
-                 "steps": [
-                     {"command": "echo", "args": ["1"], "expected": {}},
-                     {"command": "echo", "args": ["2"], "expected": {}},
-                 ],
+                 "execution": {
+                     "steps": [
+                         {"command": "echo", "args": ["1"], "expected": {}},
+                         {"command": "echo", "args": ["2"], "expected": {}},
+                     ],
+                 },
                  "tags": ["seq"]},
             ]
         }
@@ -102,7 +104,7 @@ class TestControllerLoad:
     def test_load_preserves_setup(self, mock_load):
         mock_load.return_value = {
             "setup": {"workspace": "/tmp"},
-            "test_cases": [{"name": "tc1", "command": "echo", "args": [],
+            "test_cases": [{"name": "tc1", "execution": {"command": "echo", "args": []},
                             "expected": {}}],
         }
         ctrl = CaseController()
@@ -124,7 +126,7 @@ class TestControllerSave:
     def test_save_writes_cases(self, mock_save, mock_load):
         mock_load.return_value = {
             "test_cases": [
-                {"name": "tc1", "command": "echo", "args": [],
+                {"name": "tc1", "execution": {"command": "echo", "args": []},
                  "expected": {}, "tags": []},
             ]
         }
@@ -377,7 +379,7 @@ class TestParseFromDict:
 
     def test_single_cmd_case(self):
         result = parse_test_cases({"test_cases": [
-            {"name": "simple", "command": "echo", "args": ["hello"],
+            {"name": "simple", "execution": {"command": "echo", "args": ["hello"]},
              "expected": {"return_code": 0}, "tags": ["demo"]},
         ]}, strict=False)
         assert len(result) == 1
@@ -390,10 +392,12 @@ class TestParseFromDict:
     def test_sequence_case(self):
         result = parse_test_cases({"test_cases": [
             {"name": "seq",
-             "steps": [
-                 {"command": "step1", "args": ["a"], "expected": {}},
-                 {"command": "step2", "args": ["b"], "expected": {"return_code": 1}},
-             ]},
+             "execution": {
+                 "steps": [
+                     {"command": "step1", "args": ["a"], "expected": {}},
+                     {"command": "step2", "args": ["b"], "expected": {"return_code": 1}},
+                 ],
+             }},
         ]}, strict=False)
         assert len(result) == 1
         tc = result[0]
@@ -420,8 +424,10 @@ class TestParseFromDict:
     def test_step_timeout(self):
         result = parse_test_cases({"test_cases": [
             {"name": "with_timeout",
-             "steps": [{"command": "sleep", "args": ["10"], "expected": {},
-                        "timeout": 30.0}]},
+             "execution": {
+                 "steps": [{"command": "sleep", "args": ["10"], "expected": {},
+                            "timeout": 30.0}],
+             }},
         ]}, strict=False)
         tc = result[0]
         assert tc.steps[0].timeout == 30.0

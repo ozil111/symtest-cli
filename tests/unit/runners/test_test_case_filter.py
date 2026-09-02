@@ -15,9 +15,9 @@ def _make_multi_case_json(temp_dir: Path) -> Path:
     """Create a JSON config with 3 test cases: alpha, beta, gamma."""
     config = {
         "test_cases": [
-            {"name": "alpha", "command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-            {"name": "beta", "command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-            {"name": "gamma", "command": "echo", "args": ["c"], "expected": {"return_code": 0}},
+            {"name": "alpha", "execution": {"command": "echo", "args": ["a"]}, "expected": {"return_code": 0}},
+            {"name": "beta", "execution": {"command": "echo", "args": ["b"]}, "expected": {"return_code": 0}},
+            {"name": "gamma", "execution": {"command": "echo", "args": ["c"]}, "expected": {"return_code": 0}},
         ]
     }
     path = temp_dir / "cases.json"
@@ -34,9 +34,9 @@ def _make_multi_case_yaml(temp_dir: Path) -> Path:
 
     config = {
         "test_cases": [
-            {"name": "alpha", "command": "echo", "args": ["a"], "expected": {"return_code": 0}},
-            {"name": "beta", "command": "echo", "args": ["b"], "expected": {"return_code": 0}},
-            {"name": "gamma", "command": "echo", "args": ["c"], "expected": {"return_code": 0}},
+            {"name": "alpha", "execution": {"command": "echo", "args": ["a"]}, "expected": {"return_code": 0}},
+            {"name": "beta", "execution": {"command": "echo", "args": ["b"]}, "expected": {"return_code": 0}},
+            {"name": "gamma", "execution": {"command": "echo", "args": ["c"]}, "expected": {"return_code": 0}},
         ]
     }
     path = temp_dir / "cases.yaml"

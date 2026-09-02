@@ -1,0 +1,7 @@
+{
+  "test_cases": [
+    {
+      "import": "circular_config_a.json"
+    }
+  ]
+}

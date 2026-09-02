@@ -55,9 +55,7 @@ def _trim_output(output: str, max_chars: int = DEFAULT_OUTPUT_MAX_CHARS) -> str:
 
 
 def _spec_get(spec: Any, key: str, default: Any = None) -> Any:
-    """统一读取 ExecutionSpec 属性或旧 dict 形态的键（Phase 3 移除 dict 支持）。"""
-    if isinstance(spec, Mapping):
-        return spec.get(key, default)
+    """统一读取 ExecutionSpec 属性（1.4：仅支持 ExecutionSpec，dict 支持已移除）。"""
     return getattr(spec, key, default)
 
 
@@ -70,8 +68,8 @@ def execute_command(
 ) -> ExecutionResult:
     """Execute a single command once (no retry, no validation).
 
-    :param spec: ExecutionSpec（或兼容的 Mapping），读取 name/command/args/
-                 timeout/env；不读取任何判定语义。
+    :param spec: ExecutionSpec，读取 name/command/args/timeout/env；
+                 不读取任何判定语义。
     :param workspace: Working directory for the subprocess.
     :param env: Optional environment variables to inject/override (merged with
                 os.environ; case-level ``env`` in *spec* takes the highest

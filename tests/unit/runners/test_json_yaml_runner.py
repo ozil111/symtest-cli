@@ -15,8 +15,7 @@ class TestJSONRunner(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "simple",
-                    "command": "echo",
-                    "args": ["ok"],
+                    "execution": {"command": "echo", "args": ["ok"]},
                     "expected": {"return_code": 0},
                 }
             ]
@@ -55,8 +54,7 @@ class TestYAMLRunner(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "simple",
-                    "command": "echo",
-                    "args": ["ok"],
+                    "execution": {"command": "echo", "args": ["ok"]},
                     "expected": {"return_code": 0},
                 }
             ]
@@ -92,8 +90,10 @@ class TestPlaceholderSubstitution(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "placeholder-test",
-                    "command": "{solver}",
-                    "args": ["--input", "{flag}"],
+                    "execution": {
+                        "command": "{solver}",
+                        "args": ["--input", "{flag}"],
+                    },
                     "expected": {"return_code": 0},
                 }
             ]

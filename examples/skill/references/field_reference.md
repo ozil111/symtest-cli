@@ -1,4 +1,8 @@
-# Test Case Field Reference
+# Test Case Field Reference (Schema v2, 1.4+)
+
+Config DSL is layered: **execution** (what runs), **expected** (how results
+are judged), **scheduling** (when / with what resources). Top level keeps
+metadata only.
 
 ## Top-level Config Structure
 
@@ -9,44 +13,42 @@
 
 ## Test Case Fields
 
-### Core
+### Metadata (top level)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | Yes | Test case name (unique identifier) |
-| `command` | string | Yes* | Command to execute (*not needed if `extends` or `steps`) |
-| `args` | array | No | Command arguments list |
 | `description` | string | No | Test case description |
-| `timeout` | int/null | No | Timeout in seconds (default 3600, null = unlimited) |
-| `retry_count` | int | No | Auto-retry count on failure (default 0) |
 | `tags` | array | No | Tags for filtering (e.g., `["smoke", "fast"]`) |
+| `expected_failure` | bool | No | Mark as expected-to-fail (xfail) |
+| `xfail_reason` | string | No | Reason text shown in report |
+| `xfail_quiet` | bool | No | Suppress command output in xfailed report |
+| `abstract` | bool | No | If true, this is a template (not executed) |
+| `extends` | string | No | Name of base case to inherit from |
+| `variables` | object | No | Case-level placeholder variables for `{key}` substitution |
 
-### Inheritance
+### execution (what runs)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `execution.command` | string | Yes* | Command to execute (*not needed if `extends` or `execution.steps`) |
+| `execution.args` | array | No | Command arguments list |
+| `execution.timeout` | int/null | No | Timeout in seconds (default 3600, null = unlimited) |
+| `execution.retry_count` | int | No | Auto-retry count on failure (default 0) |
+| `execution.env` | object | No | Case-level environment variables injected into the subprocess (all steps in sequence mode) |
+| `execution.steps` | array | — | Sequence mode: ordered steps (see below). Mutually exclusive with `execution.command` |
+
+### scheduling (when / with what resources)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `abstract` | bool | If true, this is a template (not executed) |
-| `extends` | string | Name of base case to inherit from |
-| `variables` | object | Case-level placeholder variables for `{key}` substitution |
+| `scheduling.depends_on` | array | Case names that must pass first; failed deps skip this case (cascade) |
+| `scheduling.resources.cpu_cores` | int | CPU cores needed (default 1) |
+| `scheduling.resources.estimated_time` | int | Estimated duration in seconds (for LPT scheduling) |
+| `scheduling.resources.min_memory_mb` | int | Estimated memory in MB (logging only) |
+| `scheduling.resources.priority` | int | Priority 0-10 (informational) |
 
-### xfail (Expected Failure)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `expected_failure` | bool | Mark as expected-to-fail |
-| `xfail_reason` | string | Reason text shown in report |
-| `xfail_quiet` | bool | Suppress command output in xfailed report |
-
-### Resources
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `resources.cpu_cores` | int | CPU cores needed (default 1) |
-| `resources.estimated_time` | int | Estimated duration in seconds (for LPT scheduling) |
-| `resources.min_memory_mb` | int | Estimated memory in MB (logging only) |
-| `resources.priority` | int | Priority 0-10 (informational) |
-
-### expected (Assertions)
+### expected (how results are judged — top level)
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -72,7 +74,7 @@
 | `encoding` | string | No | Text encoding (default utf-8) |
 | `error_analysis` | bool | No | Enable full error statistics (csv/h5) |
 
-### steps (Sequence Mode)
+### execution.steps (Sequence Mode)
 
 Each step has: `command`, `args`, `expected`, `timeout`, `retry_count`.
 Case-level `expected` runs only if all steps pass.

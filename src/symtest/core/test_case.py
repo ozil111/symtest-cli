@@ -1,4 +1,4 @@
-"""TestCase v2 分层数据模型（1.4 Core Model Refactoring, Phase 1）。
+"""TestCase v2 分层数据模型（1.4 Core Model Refactoring）。
 
 架构宪法（docs/design.md §10）：
 - TestCase 是声明，不执行任何事情 —— 只有数据与访问器，没有 run/validate。
@@ -6,13 +6,13 @@
   ``scheduling``（何时/以何资源执行）；``name/description/tags/xfail_*``
   等保留为顶层 metadata，避免 DSL 啰嗦。
 
-兼容性说明（Phase 3 Schema v2 落地前的过渡形态）：
-- 构造函数保留 v1 平铺关键字参数（``command/args/expected/timeout/steps/
-  retry_count/env/depends_on/resources``），内部归一存入子 Spec；
+形态说明：
+- ``to_dict()`` 输出 v2 分层配置形态（execution/expected/scheduling），
+  可直接写入配置文件（TUI 保存路径即消费方）；
+- 构造函数保留平铺关键字参数作为 legacy 语义归一入口（TUI 编辑路径、
+  迁移等价性测试的 legacy 侧复用它）；
 - ``case.command`` / ``case.expected`` / ``case.env`` ... 等属性直通访问器
-  映射到子 Spec，使现有 ``case.xxx`` 访问点零改动；
-- ``to_execution_dict()`` 是 runner→executor 的旧桥接，将在 Phase 2
-  调用点改净后删除。
+  映射到子 Spec，使现有 ``case.xxx`` 访问点零改动。
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -51,9 +51,9 @@ class ExecutionSpec:
 class ExpectationSpec:
     """验证语义：如何判断结果（原则 3：Validator 消费的本规格）。
 
-    Phase 1 保留原始断言字典（``return_code`` / ``output_contains`` /
-    ``output_matches`` / ``compare_files``）；Phase 3 Schema v2 将把
-    字典结构化为具名字段。
+    断言保持原始字典形态（``return_code`` / ``output_contains`` /
+    ``output_matches`` / ``compare_files`` ...），与 v2 DSL 的
+    ``expected`` 块一一对应；结构化字段化留待后续版本。
     """
     __test__ = False
     assertions: Dict[str, Any] = field(default_factory=dict)
@@ -238,26 +238,21 @@ class TestCase:
     # ── 序列化 ───────────────────────────────────────────────────────────
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert test case to dictionary format."""
-        result = {
-            "name": self.name,
-            "command": self.command,
-            "args": self.args,
-            "expected": self.expected,
+        """Serialize to the v2 layered config form.
+
+        顶层为 metadata（name/tags/description/xfail_*），执行语义进入
+        ``execution``、验证语义进入 ``expected``、调度语义进入
+        ``scheduling``（为空时整体省略）。steps 模式下 execution 只含
+        ``steps``（+ case 级 retry_count/timeout/env），省略 command/args。
+        """
+        execution: Dict[str, Any] = {
             "timeout": self.timeout,
-            "resources": self.resources,
-            "tags": self.tags,
             "retry_count": self.retry_count,
         }
         if self.env:
-            result["env"] = self.env
-        if self.expected_failure:
-            result["expected_failure"] = self.expected_failure
-            result["xfail_reason"] = self.xfail_reason
-            if self.xfail_quiet:
-                result["xfail_quiet"] = self.xfail_quiet
+            execution["env"] = dict(self.env)
         if self.steps is not None:
-            result["steps"] = [
+            execution["steps"] = [
                 {
                     "command": s.command,
                     "args": s.args,
@@ -267,4 +262,29 @@ class TestCase:
                 }
                 for s in self.steps
             ]
+        else:
+            execution["command"] = self.command
+            execution["args"] = self.args
+
+        result: Dict[str, Any] = {
+            "name": self.name,
+            "tags": self.tags,
+            "expected": self.expected,
+            "execution": execution,
+        }
+        if self.description:
+            result["description"] = self.description
+        if self.expected_failure:
+            result["expected_failure"] = self.expected_failure
+            result["xfail_reason"] = self.xfail_reason
+            if self.xfail_quiet:
+                result["xfail_quiet"] = self.xfail_quiet
+
+        scheduling: Dict[str, Any] = {}
+        if self.depends_on:
+            scheduling["depends_on"] = list(self.depends_on)
+        if self.resources is not None:
+            scheduling["resources"] = self.resources
+        if scheduling:
+            result["scheduling"] = scheduling
         return result

@@ -190,8 +190,10 @@ class TestRunnerIntegration(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "Test env var",
-                    "command": "python",
-                    "args": ["-c", "import os; print(os.environ.get('TEST_ENV', 'NOT_SET'))"],
+                    "execution": {
+                        "command": "python",
+                        "args": ["-c", "import os; print(os.environ.get('TEST_ENV', 'NOT_SET'))"],
+                    },
                     "expected": {"return_code": 0, "output_contains": ["test_value"]},
                 }
             ],
@@ -235,8 +237,7 @@ class TestRunnerIntegration(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "Test YAML env var",
-                    "command": "echo",
-                    "args": ["test"],
+                    "execution": {"command": "echo", "args": ["test"]},
                     "expected": {"return_code": 0},
                 }
             ],
@@ -258,8 +259,7 @@ class TestRunnerIntegration(unittest.TestCase):
             "test_cases": [
                 {
                     "name": "Test parallel env var",
-                    "command": "echo",
-                    "args": ["test"],
+                    "execution": {"command": "echo", "args": ["test"]},
                     "expected": {"return_code": 0},
                 }
             ],

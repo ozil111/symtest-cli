@@ -17,25 +17,25 @@ def _make_tagged_cases_json(temp_dir: Path) -> Path:
         "test_cases": [
             {
                 "name": "alpha",
-                "command": "echo", "args": ["a"],
+                "execution": {"command": "echo", "args": ["a"]},
                 "tags": ["smoke", "fast"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "beta",
-                "command": "echo", "args": ["b"],
+                "execution": {"command": "echo", "args": ["b"]},
                 "tags": ["smoke"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "gamma",
-                "command": "echo", "args": ["c"],
+                "execution": {"command": "echo", "args": ["c"]},
                 "tags": ["regression", "slow"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "delta",
-                "command": "echo", "args": ["d"],
+                "execution": {"command": "echo", "args": ["d"]},
                 "tags": ["fast", "regression"],
                 "expected": {"return_code": 0},
             },
@@ -57,25 +57,25 @@ def _make_tagged_cases_yaml(temp_dir: Path) -> Path:
         "test_cases": [
             {
                 "name": "alpha",
-                "command": "echo", "args": ["a"],
+                "execution": {"command": "echo", "args": ["a"]},
                 "tags": ["smoke", "fast"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "beta",
-                "command": "echo", "args": ["b"],
+                "execution": {"command": "echo", "args": ["b"]},
                 "tags": ["smoke"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "gamma",
-                "command": "echo", "args": ["c"],
+                "execution": {"command": "echo", "args": ["c"]},
                 "tags": ["regression", "slow"],
                 "expected": {"return_code": 0},
             },
             {
                 "name": "delta",
-                "command": "echo", "args": ["d"],
+                "execution": {"command": "echo", "args": ["d"]},
                 "tags": ["fast", "regression"],
                 "expected": {"return_code": 0},
             },
@@ -190,7 +190,7 @@ class TestJSONRunnerTagFilter_NoTags(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         config = {
             "test_cases": [
-                {"name": "no_tag_case", "command": "echo", "args": ["x"],
+                {"name": "no_tag_case", "execution": {"command": "echo", "args": ["x"]},
                  "expected": {"return_code": 0}},
             ]
         }
