@@ -470,6 +470,8 @@ class H5Comparator(BaseComparator):
                             identical = False
 
         # ── Store error stats ──
+        # Mean / RMS use total numeric cells as the denominator (stats cover
+        # ALL compared cells, matching ones included).
         if self.error_analysis and _ea_total > 0:
             self._error_stats = {
                 "total_numeric_cells": _ea_total,
@@ -478,8 +480,8 @@ class H5Comparator(BaseComparator):
                 "max_abs_error_at": _ea_max_abs_at,
                 "max_rel_error": _ea_max_rel,
                 "max_rel_error_at": _ea_max_rel_at,
-                "mean_abs_error": _ea_sum_abs / _ea_mismatched if _ea_mismatched > 0 else 0.0,
-                "rms_abs_error": (np.sqrt(_ea_sum_sq / _ea_mismatched) if _ea_mismatched > 0 else 0.0),
+                "mean_abs_error": _ea_sum_abs / _ea_total,
+                "rms_abs_error": np.sqrt(_ea_sum_sq / _ea_total),
             }
 
         return identical, differences, False

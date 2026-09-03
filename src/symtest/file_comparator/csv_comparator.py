@@ -102,7 +102,9 @@ class CsvComparator(TextComparator):
         """
         self._error_stats = None  # Reset per comparison
 
-        if content1 == content2:
+        # Fast path only when stats are not requested; with error_analysis we
+        # must still traverse all numeric cells to build the statistics.
+        if content1 == content2 and not self.error_analysis:
             return True, [], False
             
         differences = []

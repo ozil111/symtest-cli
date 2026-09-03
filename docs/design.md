@@ -159,7 +159,7 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 
 - `compare_files` 是一等断言，经 ComparatorFactory 按类型分发（详见 §6）
 - 所有断言可选；未声明的字段不做校验
-- `--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：`total_numeric_cells` / `mismatched_cells` / `max_abs_error` / `max_rel_error` / `mean_abs_error` / `rms_abs_error`
+- `--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：`total_numeric_cells` / `mismatched_cells` / `max_abs_error` / `max_rel_error` / `mean_abs_error` / `rms_abs_error`；幅值统计（max/mean/rms）覆盖全体参与比较的数值单元格（含通过格），mean/rms 以 `total_numeric_cells` 为分母。`--error-analysis-all` 额外对通过用例输出统计，除此之外两者行为一致
 
 ## 5. 运行时状态持久化（`.symtest/`）
 

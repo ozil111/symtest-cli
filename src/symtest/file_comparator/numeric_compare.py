@@ -143,45 +143,48 @@ def compare_numeric(expected, actual, rtol=1e-5, atol=1e-8,
     # Flat indices (within the original array) of kept positions.
     keep_idx = np.flatnonzero(keep)
 
-    if mismatched == 0:
-        return NumericComparisonStats(
-            total=total,
-            mismatched=0,
-            mismatch_mask=np.zeros(expected.size, dtype=bool),
-            max_abs_error=None,
-            max_abs_error_index=None,
-            max_rel_error=None,
-            max_rel_error_index=None,
-            mean_abs_error=0.0,
-            rms_abs_error=0.0,
-            sum_abs_error=0.0,
-            sum_sq_abs_error=0.0,
-        )
+    # ── Error statistics (over ALL kept numeric cells, matching ones included) ──
+    # Non-finite cells (NaN / inf) are excluded from magnitude statistics;
+    # identical NaN / inf pairs contribute zero error by definition.
+    finite = np.isfinite(exp_keep) & np.isfinite(act_keep)
+    stat_idx = keep_idx[finite]
+    stat_abs_err = abs_err[finite]
+    stat_expected = exp_keep[finite]
+    n_stat = int(np.sum(finite))
 
-    # ── Error statistics (over mismatched cells only) ──
-    mism_abs_err = abs_err[mismatch]
-    mism_expected = exp_keep[mismatch]
+    if n_stat > 0:
+        sum_abs = float(np.sum(stat_abs_err))
+        sum_sq = float(np.sum(stat_abs_err ** 2))
 
-    sum_abs = float(np.sum(mism_abs_err))
-    sum_sq = float(np.sum(mism_abs_err ** 2))
+        max_abs_error = float(np.max(stat_abs_err))
+        max_abs_stat_pos = int(np.argmax(stat_abs_err))
+        max_abs_error_index = int(stat_idx[max_abs_stat_pos])
 
-    max_abs_error = float(np.max(mism_abs_err))
-    max_abs_keep_pos = int(np.argmax(mism_abs_err))
-    max_abs_error_index = int(keep_idx[mismatch][max_abs_keep_pos])
+        # Relative error: inf when reference value is zero but error is non-zero;
+        # zero when the reference is zero and the values agree exactly.
+        ref_abs = np.abs(stat_expected)
+        rel_err = np.full(stat_abs_err.shape, np.inf)
+        nonzero = ref_abs > 0
+        with np.errstate(invalid="ignore"):
+            rel_err[nonzero] = stat_abs_err[nonzero] / ref_abs[nonzero]
+        rel_err[~nonzero & (stat_abs_err == 0)] = 0.0
 
-    # Relative error: inf when reference value is zero but error is non-zero (CSV semantics).
-    ref_abs = np.abs(mism_expected)
-    rel_err = np.full(mism_abs_err.shape, np.inf)
-    nonzero = ref_abs > 0
-    with np.errstate(invalid="ignore"):
-        rel_err[nonzero] = mism_abs_err[nonzero] / ref_abs[nonzero]
+        max_rel_error = float(np.max(rel_err))
+        max_rel_stat_pos = int(np.argmax(rel_err))
+        max_rel_error_index = int(stat_idx[max_rel_stat_pos])
 
-    max_rel_error = float(np.max(rel_err))
-    max_rel_keep_pos = int(np.argmax(rel_err))
-    max_rel_error_index = int(keep_idx[mismatch][max_rel_keep_pos])
-
-    mean_abs_error = sum_abs / mismatched if mismatched > 0 else 0.0
-    rms_abs_error = np.sqrt(sum_sq / mismatched) if mismatched > 0 else 0.0
+        mean_abs_error = sum_abs / total
+        rms_abs_error = np.sqrt(sum_sq / total)
+    else:
+        # No finite cells: magnitudes are undefined.
+        sum_abs = 0.0
+        sum_sq = 0.0
+        max_abs_error = None
+        max_abs_error_index = None
+        max_rel_error = None
+        max_rel_error_index = None
+        mean_abs_error = 0.0
+        rms_abs_error = 0.0
 
     # Build full-length mismatch mask (True where values differ beyond tolerance).
     mismatch_mask = np.zeros(expected.size, dtype=bool)
@@ -195,7 +198,7 @@ def compare_numeric(expected, actual, rtol=1e-5, atol=1e-8,
         max_abs_error_index=max_abs_error_index,
         max_rel_error=max_rel_error,
         max_rel_error_index=max_rel_error_index,
-        mean_abs_error=mean_abs_error,
+        mean_abs_error=float(mean_abs_error),
         rms_abs_error=float(rms_abs_error),
         sum_abs_error=sum_abs,
         sum_sq_abs_error=sum_sq,
