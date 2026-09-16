@@ -15,6 +15,17 @@ def _format_flaky_label(detail: dict) -> str:
     return ""
 
 
+def _render_message_lines(prefix: str, message: str, cont_indent: str) -> str:
+    """Render a possibly multi-line message: first line gets ``prefix``,
+    continuation lines are indented with ``cont_indent`` so IDE
+    indentation-based folding stays intact."""
+    lines = str(message).splitlines() or [""]
+    out = f"{prefix}{lines[0]}\n"
+    for line in lines[1:]:
+        out += f"{cont_indent}{line}\n"
+    return out
+
+
 def _render_stats(es: dict, indent: str) -> str:
     """Render an error_stats dict as flat ``key: value`` lines.
 
@@ -118,7 +129,7 @@ class ReportGenerator:
             if detail.get('description'):
                 report += f"   Description: {detail['description']}\n"
             if detail.get('message') and status != 'passed':
-                report += f"   -> {detail['message']}\n"
+                report += _render_message_lines("   -> ", detail['message'], "      ")
 
             # ── Error analysis for PASSED cases (--error-analysis-all) ──
             # Channel results are rendered only from the structured
@@ -232,7 +243,7 @@ class ReportGenerator:
                         status_icon = "✓" if sr.get('status') == 'passed' else "✗"
                         report += f"  {status_icon} Step {sr.get('step')}: {sr.get('status')} ({sr.get('duration', 0):.2f}s)\n"
                         if sr.get('message'):
-                            report += f"     -> {sr['message']}\n"
+                            report += _render_message_lines("     -> ", sr['message'], "        ")
 
                 # 添加 baseline_updated 信息
                 baseline_updated = failed_test.get('baseline_updated', [])
