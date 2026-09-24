@@ -1,5 +1,5 @@
 """
-Test runners for the CLI Testing Framework
+Test runners for SymTest
 """
 
 from .json_runner import JSONRunner

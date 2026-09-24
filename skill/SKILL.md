@@ -1,8 +1,9 @@
 ---
-name: cli-test-framework
+name: symtest
 description: >-
   This skill should be used when writing functional tests for CLI programs,
-  defining acceptance criteria, or using the symtest-cli / symtest framework.
+  defining acceptance criteria, or using the SymTest framework
+  (Python package `symtest-cli`, command `symtest`).
   It covers JSON/YAML test case authoring, multi-step sequence tests,
   numerical golden file comparison (HDF5/CSV/XML), comparator plugin
   development (three-lane architecture: file / data-channel / autonomous),
@@ -13,14 +14,16 @@ description: >-
   symtest.
 ---
 
-# CLI Test Framework (symtest-cli)
+# SymTest (symtest-cli)
 
 ## Overview
 
-CLI Test Framework (`symtest-cli`) is a functional testing framework for
-command-line programs. It uses a single JSON or YAML configuration file to
-describe both the execution workflow and the acceptance criteria. This skill
-provides the knowledge needed to author test configurations and run tests.
+SymTest (`symtest-cli`) is a regression testing framework for numerical and
+scientific command-line workflows, also usable as a general-purpose functional
+testing framework for command-line programs. It uses a single JSON or YAML
+configuration file to describe both the execution workflow and the acceptance
+criteria. This skill provides the knowledge needed to author test
+configurations and run tests.
 
 **Config DSL (Schema v2, 1.4+)**: each test case is layered — execution
 semantics live in `execution` (single-command shorthand or `execution.steps`),

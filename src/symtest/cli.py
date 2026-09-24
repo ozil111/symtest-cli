@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-CLI Test Framework - Command Line Interface
+SymTest - Command Line Interface
 
-This module provides the main command-line interface for the CLI Testing Framework.
+This module provides the main command-line interface for SymTest.
 """
 
 import argparse

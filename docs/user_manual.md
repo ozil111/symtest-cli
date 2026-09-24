@@ -1,4 +1,4 @@
-# CLI Test Framework 使用说明书
+# SymTest 使用说明书
 
 ## 目录
 

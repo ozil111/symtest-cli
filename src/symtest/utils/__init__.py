@@ -1,7 +1,7 @@
-# File: /python-test-framework/python-test-framework/src/utils/__init__.py
+# File: /symtest/src/symtest/utils/__init__.py
 
 """
-Utility functions for the CLI Testing Framework
+Utility functions for SymTest
 """
 
 from .path_resolver import (

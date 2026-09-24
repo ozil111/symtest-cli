@@ -1,4 +1,4 @@
-# CLI Test Framework Design Document
+# SymTest Design Document
 
 > **Maintenance principle (single source of truth)**: this document does not mirror
 > code structure — it no longer maintains directory trees, class signatures,

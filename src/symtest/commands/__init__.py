@@ -1,5 +1,5 @@
 """
-Command-line commands for the CLI Testing Framework
+Command-line commands for SymTest
 """
 
 from . import compare

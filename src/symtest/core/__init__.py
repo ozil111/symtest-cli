@@ -1,5 +1,5 @@
 """
-Core components for the CLI Testing Framework
+Core components for SymTest
 """
 
 from .base_runner import BaseRunner
