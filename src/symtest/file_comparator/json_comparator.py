@@ -22,17 +22,16 @@ class JsonComparator(TextComparator):
              - Detailed difference reporting with path information
     """
     
-    def __init__(self, encoding="utf-8", chunk_size=8192, verbose=False, key_field=None, compare_mode="exact", **kwargs):
+    def __init__(self, encoding="utf-8", chunk_size=8192, key_field=None, compare_mode="exact"):
         """
         @brief Initialize the JSON comparator
         @param encoding str: File encoding
         @param chunk_size int: Chunk size for reading files
-        @param verbose bool: Enable verbose logging
         @param key_field str or list: Field name(s) to use as key for comparing JSON objects in lists
         @param compare_mode str: Comparison mode: 'exact' (default) or 'key-based'
-        @param **kwargs: Additional parameters (ignored)
+        @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
-        super().__init__(encoding=encoding, chunk_size=chunk_size, verbose=verbose, **kwargs)
+        super().__init__(encoding=encoding, chunk_size=chunk_size)
         self.key_field = key_field
         self.compare_mode = compare_mode
 

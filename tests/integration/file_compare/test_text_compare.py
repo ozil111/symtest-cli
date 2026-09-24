@@ -2,8 +2,15 @@ from symtest.file_comparator.factory import ComparatorFactory
 
 
 def compare_text(file1, file2, **kwargs):
+    # Window parameters are invocation-level: routed to compare_files, not
+    # the (strict) comparator constructor.
+    compare_kwargs = {
+        key: kwargs.pop(key)
+        for key in ("start_line", "end_line", "start_column", "end_column")
+        if key in kwargs
+    }
     comparator = ComparatorFactory.create_comparator("text", **kwargs)
-    return comparator.compare_files(file1, file2, **kwargs)
+    return comparator.compare_files(file1, file2, **compare_kwargs)
 
 
 def test_text_identical(tmp_path):

@@ -20,6 +20,9 @@ logger = logging.getLogger("symtest.core.validation.validator")
 # The text report already limits display to 5; this prevents large CSV/H5 diffs
 # from blowing up AI context windows.
 DEFAULT_MAX_DIFFERENCES = 50
+# Per-channel quota for data-lane results: one noisy channel must not crowd
+# out the others in AI-consumed JSON output.
+DEFAULT_MAX_CHANNEL_DIFFERENCES = 10
 
 
 def _trim_compare_failures(
@@ -32,20 +35,42 @@ def _trim_compare_failures(
     output previously carried the full list — which could reach megabytes for
     large CSV/H5 comparisons.  This function caps the retained differences so
     that AI consumers get a representative sample without context-window blowup.
+
+    For data-lane results the embedded ``channels`` entries get their own
+    per-channel difference quota so a single noisy channel cannot crowd out
+    the others.
     """
     if not compare_failures:
         return compare_failures
     trimmed: List[Dict[str, Any]] = []
     for cf in compare_failures:
         diffs = cf.get("differences", [])
+        changed = False
         if len(diffs) > max_diffs:
-            cf_copy = dict(cf)
-            cf_copy["differences"] = diffs[:max_diffs]
-            cf_copy["differences_truncated"] = True
-            cf_copy["differences_total"] = len(diffs)
-            trimmed.append(cf_copy)
-        else:
-            trimmed.append(cf)
+            cf = dict(cf)
+            cf["differences"] = diffs[:max_diffs]
+            cf["differences_truncated"] = True
+            cf["differences_total"] = len(diffs)
+            changed = True
+
+        channels = cf.get("channels")
+        if channels:
+            trimmed_channels = []
+            for ch in channels:
+                ch_diffs = ch.get("differences", [])
+                if len(ch_diffs) > DEFAULT_MAX_CHANNEL_DIFFERENCES:
+                    if not changed:
+                        cf = dict(cf)
+                        changed = True
+                    ch = dict(ch)
+                    ch["differences"] = ch_diffs[:DEFAULT_MAX_CHANNEL_DIFFERENCES]
+                    ch["differences_truncated"] = True
+                    ch["differences_total"] = len(ch_diffs)
+                trimmed_channels.append(ch)
+            if changed:
+                cf["channels"] = trimmed_channels
+
+        trimmed.append(cf)
     return trimmed
 
 
@@ -64,9 +89,22 @@ def _dispatch_file_compare(
     baseline_path = spec.get("baseline", "")
     file_type = spec.get("type", None)
 
+    # "options" is the framework-owned plugin configuration namespace; its
+    # entries are merged into constructor kwargs.  Explicit top-level keys
+    # take precedence (legacy compatibility).
+    options = spec.get("options")
+    if options is not None and not isinstance(options, dict):
+        raise ValidationError(
+            f"'options' must be an object of comparator parameters, "
+            f"got: {type(options).__name__}",
+            failure_kind="file_compare",
+        )
     # All remaining keys are forwarded as comparator kwargs
-    known_keys = {"actual", "baseline", "type"}
-    comparator_kwargs = {k: v for k, v in spec.items() if k not in known_keys}
+    known_keys = {"actual", "baseline", "type", "options"}
+    comparator_kwargs = {
+        **(options or {}),
+        **{k: v for k, v in spec.items() if k not in known_keys},
+    }
 
     try:
         cf_result = assertions.compare_files(
@@ -81,6 +119,7 @@ def _dispatch_file_compare(
             "assertion": "compare_files",
             "passed": True,
             "error_stats": cf_result.get("error_stats"),
+            "channels": cf_result.get("channels", []),
             "compare_failures": [],
             "baseline_updated": [],
             "message": "",

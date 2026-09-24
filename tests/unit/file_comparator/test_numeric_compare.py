@@ -12,8 +12,9 @@ def test_exact_equality():
     assert res.total == 3
     assert res.mismatched == 0
     assert np.all(~res.mismatch_mask)
-    assert res.max_abs_error is None
-    assert res.max_rel_error is None
+    # Stats cover ALL cells: zero errors everywhere.
+    assert res.max_abs_error == pytest.approx(0.0, abs=1e-12)
+    assert res.max_rel_error == pytest.approx(0.0, abs=1e-12)
 
 
 def test_within_rtol():
@@ -171,7 +172,8 @@ def test_collect_stats_false_all_filtered_out():
 def test_no_mismatch_collect_stats_true():
     res = compare_numeric([1.0, 2.0], [1.0, 2.0], collect_stats=True)
     assert res.mismatched == 0
-    assert res.max_abs_error is None
+    # Stats cover ALL cells: zero errors everywhere, denominators = total.
+    assert res.max_abs_error == pytest.approx(0.0, abs=1e-12)
     assert res.mean_abs_error == 0.0
     assert res.rms_abs_error == 0.0
 

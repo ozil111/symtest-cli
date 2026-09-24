@@ -14,7 +14,7 @@ import pytest
 from symtest.core.config_loader import parse_test_cases
 from symtest.core.orchestration.sequence import execute_sequence
 from symtest.core.orchestration.single import execute_single_test_case
-from symtest.core.test_case import ExecutionSpec, TestCaseStep
+from symtest.core.test_case import ExecutionSpec, TestStep
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +178,12 @@ class TestEnvSequence:
 
     def test_env_applied_to_all_steps(self):
         steps = [
-            TestCaseStep(
+            TestStep.from_flat(
                 command=sys.executable,
                 args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
                 expected={"return_code": 0, "output_contains": ["S=1.0"]},
             ),
-            TestCaseStep(
+            TestStep.from_flat(
                 command=sys.executable,
                 args=["-c", "import os;print('S='+os.environ.get('SCALE','?'))"],
                 expected={"return_code": 0, "output_contains": ["S=1.0"]},
@@ -200,43 +200,10 @@ class TestEnvAffectsConfigHash:
         from symtest.core.sequence_state import compute_config_hash
 
         steps = [
-            TestCaseStep(command="echo", args=["a"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["a"], expected={"return_code": 0}),
         ]
         h1 = compute_config_hash(steps, None, {"SCALE": "1.0"})
         h2 = compute_config_hash(steps, None, {"SCALE": "2.0"})
         h3 = compute_config_hash(steps, None, None)
         assert h1 != h2
         assert h1 != h3
-
-
-# ---------------------------------------------------------------------------
-# TUI editor helpers
-# ---------------------------------------------------------------------------
-
-class TestTuiEnvHelpers:
-    """Round-trip of the TUI editor's ``KEY=VALUE`` env helpers."""
-
-    def _helpers(self):
-        from symtest.tui.screens.case_editor import CaseEditorScreen
-
-        return CaseEditorScreen._format_env_text, CaseEditorScreen._parse_env_text
-
-    def test_format_and_parse_roundtrip(self):
-        fmt, parse = self._helpers()
-        env = {"UEL_SYSID_SCALE": "1.0", "OMP_NUM_THREADS": "8"}
-        text = fmt(env)
-        assert parse(text) == env
-
-    def test_format_empty_env(self):
-        fmt, parse = self._helpers()
-        assert fmt({}) == ""
-        assert fmt(None) == ""
-
-    def test_parse_skips_blanks_and_comments(self):
-        _, parse = self._helpers()
-        text = "# comment\n\nA=1\n  B = 2  \ninvalid-line\nC=\n"
-        assert parse(text) == {"A": "1", "B": "2", "C": ""}
-
-    def test_parse_ignores_line_without_equals(self):
-        _, parse = self._helpers()
-        assert parse("no_equals_here\nA=1") == {"A": "1"}

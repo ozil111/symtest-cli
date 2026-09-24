@@ -8,7 +8,7 @@
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
-- [TUI 交互式管理器](#tui-交互式管理器)
+- [跨文件搜索用例](#跨文件搜索用例find)
 - [运行测试](#运行测试)
 - [项目入口脚本](#项目入口脚本)
 - [占位符（变量替换）](#占位符变量替换)
@@ -38,7 +38,7 @@ YAML 支持需安装可选依赖：
 pip install "symtest-cli[yaml]"
 ```
 
-一次安装 YAML 和 TUI 等全部可选功能：
+一次安装 YAML 等全部可选功能：
 
 ```bash
 pip install "symtest-cli[all]"
@@ -48,7 +48,7 @@ HDF5 文件比较依赖 `h5py`（已随框架安装）。如需在无 HDF5 环�
 
 ## 测试用例定义
 
-> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。
+> **Schema v2（1.4）**：配置采用分层 DSL——执行相关字段（`command`、`args`、`timeout`、`retry_count`、`env`、`steps`）位于 `execution` 块，调度相关字段（`depends_on`、`resources`）位于 `scheduling` 块，`expected` 保持在顶层。旧的扁平布局已移除，可使用 `symtest migrate` 迁移。迁移会递归处理整棵 `import` 树：默认为每个文件生成 `<stem>.v2<ext>` 副本并自动重写父文件中的 import 路径；`--in-place` 则原地覆盖所有文件（与 `--output` 互斥）。
 
 ### JSON 格式
 
@@ -195,7 +195,7 @@ test_cases:
             "name": "D",
             "execution": { "command": "python", "args": ["merge.py"] },
             "scheduling": { "depends_on": ["A", "B", "C"] },
-            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
+            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "h5"}]}
         }
     ]
 }
@@ -233,7 +233,7 @@ test_cases:
       return_code: 0
       compare_files:
         - file: output.h5
-          type: hdf5
+          type: h5
 ```
 
 **调度语义**：
@@ -274,6 +274,13 @@ test_cases:
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
 | `expected.compare_files` | 否 | 文件比较断言列表，见下文 |
+
+### execution 二选一（互斥）
+
+`execution` 有两种形态，**二选一**且互斥，同时声明两种形态属于配置错误：
+
+- **单命令形态**：`command` + `args`（`timeout` / `retry_count` / `env` 可选）
+- **序列形态**：`steps`（列表，每个 step 为 `command + args + expected`）；`command` / `args` 不得与 `steps` 并存
 
 ## Case 级环境变量（env）
 
@@ -616,10 +623,6 @@ symtest run config.json --var solver=/path/to/solver
 - `abstract` 用例不计入可执行用例数
 - `extends` 用例跳过必填字段检查（内容来自父类）
 
-### TUI 编辑限制
-
-> **注意**：TUI 目前不支持编辑继承用例。继承后的展开用例在 TUI 中可正常查看和运行，但请直接编辑 JSON/YAML 源文件来进行修改。
-
 ## 配置校验
 
 `validate` 命令在不运行测试的情况下检查配置文件的正确性，适合在 CI 流水线中做配置合法性检查。
@@ -670,127 +673,32 @@ symtest validate test_cases.json --output-format json
   [FAIL] Import target not found: /project/cases/nonexistent.json
 ```
 
-## TUI 交互式管理器
+## 跨文件搜索用例（find）
 
-当大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。TUI（Terminal User Interface）在所有导入配置之上提供统一视图，用于浏览、全局搜索、辅助检查覆盖场景，并可按需编辑或运行用例。它是大型测试集的辅助工具，不是日常执行测试的必需组件。
+大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。`symtest find` 自动展开主配置的全部 `import` 引用，在统一展开后的用例集上执行搜索，是轻量、可脚本化的定位方式。
 
-### 安装
-
-TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
+### 用法
 
 ```bash
-# 安装时附带 TUI 支持
-pip install "symtest-cli[tui]"
+# 默认子串模式（大小写不敏感），同时匹配 name/command/args/tags/description
+symtest find main_config.json "login"
 
-# 或者在已有框架上单独安装 textual
-pip install textual
+# 正则模式
+symtest find main_config.json "log.*in" --mode regex
+
+# 模糊模式（容忍拼写差异与缩写，按相关度排序）
+symtest find main_config.json "lgin" --mode fuzzy
+
+# 与标签过滤叠加（可多次使用，OR 关系）
+symtest find main_config.json "login" --tag smoke
+
+# 输出 JSON（适合 AI/脚本消费）
+symtest find main_config.json "login" --output-format json
 ```
 
-如果未安装 `textual` 就直接执行 `symtest tui`，框架会给出友好的安装提示。
+不提供搜索词时列出全部用例。文本输出列为：序号、名称、命令、标签、超时、模式（`single` 单命令 / `steps` 步骤序列）。
 
-### 启动
-
-```bash
-# 打开 TUI 编辑测试用例
-symtest tui test_cases.json
-
-# YAML 文件同样支持
-symtest tui test_cases.yaml
-
-# 指定工作目录
-symtest tui test_cases.json --workspace /path/to/project
-
-# 打开带 import 的主配置文件（自动展开子文件中的所有用例）
-symtest tui main_config.json
-```
-
-TUI 启动时会自动通过[配置拆分机制](#配置拆分机制)展开 `import` 引用，将所有用例加载到界面中统一管理。
-
-### 界面概览
-
-TUI 启动后显示**用例列表主界面**：
-
-- **顶部状态栏**：当前文件名、用例总数
-- **搜索栏**：`/` 键聚焦搜索框，支持子串/模糊/正则三种模式
-- **用例表格**：六列（序号、名称、命令、标签、超时、模式），支持键盘导航
-- **底部快捷键栏**：显示所有可用操作
-
-### 快捷键
-
-| 快捷键 | 功能 |
-|---|---|
-| `a` | 新增用例 |
-| `e` | 编辑选中的用例 |
-| `d` | 删除选中的用例 |
-| `u` | 复制选中的用例（名称追加 `_copy` 后缀） |
-| `r` | 运行选中的用例，显示执行结果 |
-| `F6` / `Ctrl+S` | 保存修改到文件 |
-| `/` | 聚焦搜索框 |
-| `Esc` | 清除搜索，恢复完整列表 |
-| `Alt+S` | 切换子串搜索模式（大小写不敏感） |
-| `Alt+F` | 切换模糊搜索模式（容忍拼写差异和缩写） |
-| `Alt+R` | 切换正则搜索模式 |
-| `q` / `Ctrl+Q` | 退出 |
-| `↑` / `↓` / `j` / `k` | 上下移动光标 |
-
-搜索时会同时匹配 `name`、`command`、`args`、`tags`、`description` 等字段，匹配结果在表格中高亮显示。
-
-### 编辑用例
-
-选中用例后按 `e` 进入编辑界面。编辑界面根据用例类型有两种模式：
-
-#### 单命令模式
-
-编辑表单包含以下字段：
-
-| 字段 | 说明 |
-|---|---|
-| `Name` | 用例名称（必填） |
-| `Command` | 要执行的命令 |
-| `Args` | 命令参数，每行一个 |
-| `Tags` | 标签列表，每行一个 |
-| `Description` | 用例描述 |
-| `Timeout` | 超时秒数 |
-| Expected | 期望断言的嵌套子表单（见下文） |
-
-#### 步骤序列模式
-
-当用例包含多个有序步骤时，切换到此模式。每个步骤有独立的 `Command`、`Args`、`Expected` 和 `Timeout`，支持添加、删除、编辑和上下移动步骤。
-
-两种模式可通过编辑界面内的快捷键切换，切换时会提示确认以免丢失数据。
-
-### `expected` 字段编辑
-
-`expected` 字段是一个嵌套字典，编辑器提供结构化输入：
-
-| 字段 | 输入方式 |
-|---|---|
-| `return_code` | 数字输入框 |
-| `output_contains` | 多行文本输入，一行一个匹配字符串 |
-| `output_matches` | 正则表达式文本输入 |
-| `compare_files` | 每行一个 JSON 对象，如 `{"actual":"out.txt","baseline":"base.txt","type":"text"}` |
-
-除上述已知字段外，还支持通过 `+ Add` 按钮添加自定义 key=value 对，value 为字符串或 JSON 文本。更多含义见[测试用例定义](#测试用例定义)。
-
-### 运行用例
-
-在列表中选中某条用例，按 `r` 即可实时调用框架执行引擎运行该用例。运行结束后弹出结果面板，显示：
-
-- 通过/失败状态
-- 返回码
-- 耗时
-- 命令输出（stdout/stderr）
-
-结果面板仅展示、不修改配置文件。
-
-### 保存
-
-对用例的任何增删改操作都在**内存中**进行，不会立即写入磁盘。
-
-- 按 `F6` 或 `Ctrl+S` **保存**：将当前全部用例写回原配置文件。
-- 通过 `save_as` 可**另存为**新文件（通过界面菜单操作）。
-
-退出 TUI 时如有未保存的修改，会弹出确认提示。
+退出码沿用 grep 语义：有匹配返回 `0`，无匹配返回 `1`，配置加载失败返回 `2`，可直接用于脚本判断。
 
 ## 运行测试
 
@@ -1788,12 +1696,12 @@ CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内�
 |---|---|
 | `total_numeric_cells` | 参与数值比较的单元格总数 |
 | `mismatched_cells` | 超出容差的单元格数 |
-| `max_abs_error` | 最大绝对误差及其位置 |
-| `max_rel_error` | 最大相对误差及其位置 |
-| `mean_abs_error` | 平均绝对误差 |
-| `rms_abs_error` | 均方根绝对误差（RMSE） |
+| `max_abs_error` | 全体数值单元格中的最大绝对误差及其位置 |
+| `max_rel_error` | 全体数值单元格中的最大相对误差及其位置 |
+| `mean_abs_error` | 全体数值单元格的平均绝对误差（分母为 `total_numeric_cells`） |
+| `rms_abs_error` | 全体数值单元格的均方根绝对误差（RMSE，分母为 `total_numeric_cells`） |
 
-统计是**流式**计算的，不依赖差异截断，覆盖全体数值单元格。默认仅失败的比较输出统计，通过的比较不输出。
+统计是**流式**计算的，不依赖差异截断，幅值统计（max/mean/rms）覆盖**全体**参与比较的数值单元格（含在容差内通过的单元格），可用于观察通过格离容差的余量；非有限值（NaN/inf）单元格不参与幅值统计。两个参数的统计口径完全一致，区别仅在于：默认仅失败的比较输出统计，通过的比较不输出。
 
 如需让**通过**的用例也输出统计信息（例如用于监控容差余量），可改用 `--error-analysis-all`（它会隐含启用 `--error-analysis`）：
 
@@ -1965,11 +1873,31 @@ class MySetup(BaseSetup):
 
 ### 自定义文件比较器
 
-框架支持三种方式扩展比较能力：
+#### 三泳道架构（v2）
 
-#### 方式一：工作区插件目录（推荐）
+比较器插件体系围绕根契约 `ComparatorBase.compare(ctx) -> ComparisonResult` 组织，
+按判定权归属分为三条泳道：
 
-在 workspace 下创建 `comparators/` 目录，放入 `*_comparator.py` 文件（命名与内置比较器一致），框架会在首次使用时自动发现并注册其中的 `*Comparator` 类。
+| 泳道 | 基类 | 适用场景 | verdict 归属 |
+|---|---|---|---|
+| **文件泳道** | `FileComparator` | 比较两个同类文件（text/json/csv/xml/h5/binary 内置即此类） | 插件 |
+| **数据泳道** | `ExtractorComparator` | 从任意上游（文件/求解器输出/跨文件整理）提取数值数据，**复用框架数值核心**做通道化容差判定 | **框架** |
+| **自主泳道** | 直接继承 `ComparatorBase` | 独特判定逻辑（阈值组合、标签解析、渐近分析等） | 插件 |
+
+选型决策：
+
+- 数据本来就是 `(expected, actual)` 数值数组、只需 rtol/atol 判定 → **数据泳道**（可享受通道、per-channel 容差、统一 error_stats 与报告渲染）
+- 需要自定 verdict（比如"主分量紧、EAS 分量松"的组合判定、符号/渐近检查）→ **自主泳道**
+- 只是想让现成脚本快速接入 → 优先考虑内置 `script`（自定判定）或 `script_extract`（框架容差判定），零 Python 插件代码
+
+**路径解析约定**：`actual`/`baseline` 以及插件用 `path_params` 类属性声明的路径参数，
+由框架在**比较器构造之前**统一按 workspace 解析为绝对路径——构造器捕获的状态
+（`self.script`、`self.cwd` 等）持有的已是解析后的绝对路径。插件内部
+**禁止**对 CWD 做 `Path.resolve()`——并行/process 模式下 CWD 不可靠。
+
+#### 插件发现方式（三种泳道通用）
+
+在 workspace 下创建 `comparators/` 目录，放入 `*_comparator.py` 文件，框架会在首次使用时自动发现并注册其中的 `*Comparator` 类。
 
 ```
 your-workspace/
@@ -1984,28 +1912,150 @@ your-workspace/
 symtest run test_config.json --plugin-dir ./extra_plugins
 ```
 
-插件也会通过环境变量 `CLITEST_PLUGIN_DIRS` 自动继承到 process 模式子进程。
+也可通过环境变量 `CLITEST_PLUGIN_DIRS` 声明额外插件目录（框架只读取该变量，从不修改进程环境变量）；process 模式下框架通过进程池 initializer 把插件目录显式传给子进程，无需环境变量中转。
 
-**插件开发注意事项**：
-- 继承 `symtest.file_comparator.BaseComparator`
+**命名约定**：
+- 文件名必须以 `_comparator.py` 结尾（如 `my_analysis_comparator.py`）
 - 类名必须以 `Comparator` 结尾（如 `MyAnalysisComparator`）
-- 注册的 type 名 = 类名去掉 `Comparator` 再小写（如 `myanalysis`）
-- 推荐重写 `compare_files(file1, file2, **kwargs)` 方法而非 `read_content`/`compare_content`（若比较器不使用两文件模型）
-- 通过 `from symtest.file_comparator import ComparisonResult, Difference` 构造结构化结果
-- `extra_kwargs` 自动从 config `compareSpec` 透传
+- 注册的 type 名 = 类名去掉 `Comparator` 再小写（如 `myanalysis`）；也可用类属性 `comparator_type = "my_analysis"` 显式指定
+- 抽象基类（未实现全部抽象方法）自动跳过注册
 
-在配置中直接使用注册的类型名：
+在配置中直接使用注册的类型名。比较器构造参数是**严格**的：`actual`/`baseline`/
+`type` 以外的键会透传给插件构造函数，但插件未声明的参数（如拼写错误
+`pass_threhsold`）会在构造时**大声失败**（错误信息包含比较器类型名与支持的
+参数清单），绝不静默回退到默认值。插件自有配置建议放入 `options` 命名空间
+（其条目并入构造参数，显式顶层键优先），避免向核心 schema 增加插件专属字段：
 
 ```json
 {
   "type": "myanalysis",
   "actual": "optional_for_plugins",
   "baseline": "optional_for_plugins",
-  "param1": "value1"
+  "options": {"param1": "value1", "param2": 42}
 }
 ```
 
-#### 方式二：内置 `script` 类型比较器
+#### 数据泳道：通道提取器插件
+
+适用场景：一个脚本/插件产出多通道数据（如 CSV 的不同列、不同物理量），
+每通道需要独立的容差与误差分析。插件只负责"提取"，判定完全由框架完成。
+
+```python
+# comparators/uel_stress_comparator.py
+import numpy as np
+from symtest.file_comparator import (
+    ExtractorComparator, ChannelData, CompareContext,
+)
+
+class UelStressComparator(ExtractorComparator):
+    path_params = ("uel_csv", "ref_csv")   # 由框架按 workspace 解析
+
+    def __init__(self, uel_csv="", ref_csv="", **kwargs):
+        super().__init__(**kwargs)
+        self.uel_csv = uel_csv
+        self.ref_csv = ref_csv
+
+    def extract(self, ctx: CompareContext):
+        uel = np.loadtxt(self.uel_csv, delimiter=",")
+        ref = np.loadtxt(self.ref_csv, delimiter=",")
+        return {
+            "S11": ChannelData(expected=ref[:, 0], actual=uel[:, 0]),
+            "S33": ChannelData(
+                expected=ref[:, 2], actual=uel[:, 2],
+                extra_stats={"hydrostatic_shift": float(uel[:, 2].mean())},
+            ),
+        }
+```
+
+配置（per-channel 容差按名路由，未声明的通道用 `default_channel`）：
+
+```json
+{
+  "type": "uelstress",
+  "uel_csv": "out/uel.csv",
+  "ref_csv": "out/native.csv",
+  "channels": {
+    "S33": {"atol": 600.0, "data_filter": "abs>1e-12"}
+  },
+  "default_channel": {"rtol": 1e-5, "atol": 1e-8}
+}
+```
+
+**判定与结果语义**：
+- 每通道独立跑 `compare_numeric`（对称容差 `|a-b| <= max(rtol*max(|a|,|b|), atol)`）
+- `identical = 所有通道全过`；一条 compareSpec 仍是一条断言
+- 差异 position 带通道前缀（`channel S33`）；`error_stats` 按通道名嵌套
+- 报告逐通道展示 pass/fail、容差与统计；JSON 输出中通道差异按 per-channel 配额截断
+- 自定义误差指标通过 `ChannelData.extra_stats` 附带，存放在**独立命名空间**
+  （`ChannelResult.extra_stats`），不可能覆盖框架规范指标（`max_abs_error`、
+  `total` 等）；报告逐通道分别渲染两个命名空间
+- verdict 不可由插件干预——需要自定 verdict 请走自主泳道
+
+#### 数据泳道：内置 `script_extract` 类型（零改动脚本接入）
+
+现成分析脚本无需包装成 Python 插件：脚本以子进程执行，向 stdout 打印约定
+JSON，各通道即进入上述框架判定管线。
+
+```json
+{
+  "type": "script_extract",
+  "script": "extract_channels.py",
+  "args": ["--frame", "10"],
+  "cwd": "case/subdir",
+  "channels": {"S33": {"atol": 600.0}},
+  "default_channel": {"rtol": 1e-5, "atol": 1e-8},
+  "timeout": 600
+}
+```
+
+**stdout JSON 协议**：
+
+```json
+{
+  "channels": {
+    "S11": {"expected": [1.0, 2.0], "actual": [1.0, 2.0]},
+    "S33": {"expected": [...], "actual": [...], "extra_stats": {"asymmetry": 2e-13}}
+  }
+}
+```
+
+**错误语义**：非零退出码、超时、畸形 JSON、缺 `channels` 键或通道缺
+`expected`/`actual` 数组 → 一律判为比较 error（绝不静默通过）。
+`actual`/`baseline`（若配置）以 baseline 在前的顺序追加为脚本尾部参数，可缺省。
+
+#### 自主泳道：全权判定插件
+
+适用场景：独特判定逻辑。插件实现 `compare(ctx)` 并直接返回结果。
+
+```python
+# comparators/my_analysis_comparator.py
+from symtest.file_comparator import ComparatorBase, CompareContext, ComparisonResult, Difference
+
+class MyAnalysisComparator(ComparatorBase):
+    path_params = ("script", "case_dir")
+
+    def __init__(self, script="", case_dir=None, pass_threshold=1e-6):
+        super().__init__()   # 参数严格：未声明/拼错的配置键在构造时报错
+        self.script = script      # 构造前已由框架按 workspace 解析
+        self.case_dir = case_dir
+        self.pass_threshold = pass_threshold
+
+    def compare(self, ctx: CompareContext) -> ComparisonResult:
+        result = ComparisonResult(
+            file1=ctx.baseline,   # 无文件输入时保持 None，不伪造空串
+            file2=ctx.actual,
+        )
+        # ... 执行分析、解析指标 ...
+        result.identical = True  # 或 False + differences
+        result.error_stats = {"full_rel": 8e-8}   # 自由 dict，报告通用渲染
+        return result
+```
+
+`ctx` 字段（仅调用级上下文）：`workspace` / `actual` / `baseline`（可空，
+无文件输入时为 `None`）/ `params`（文件泳道窗口参数）/ `error_analysis`。
+比较器配置的唯一权威在构造器捕获的实例状态中——`ctx` 不携带配置副本。
+
+#### 内置 `script` 类型比较器（自主泳道开箱即用）
 
 适用于独立分析脚本快速接入，无需编写比较器类：
 
@@ -2028,8 +2078,8 @@ symtest run test_config.json --plugin-dir ./extra_plugins
 | 参数 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
 | `script` | 是 | — | 脚本路径（相对 workspace 或绝对） |
-| `actual` | 否 | — | 传给脚本的第一个文件参数 |
-| `baseline` | 否 | — | 传给脚本的第二个文件参数 |
+| `actual` | 否 | — | 传给脚本的文件参数（尾部第二位） |
+| `baseline` | 否 | — | 传给脚本的文件参数（尾部第一位） |
 | `cwd` | 否 | — | 脚本工作目录 |
 | `interpreter` | 否 | `sys.executable` | Python 解释器 |
 | `pass_exit_code` | 否 | `0` | 判定为通过的退出码 |
@@ -2045,15 +2095,15 @@ symtest run test_config.json --plugin-dir ./extra_plugins
 
 脚本的 stdout 和 stderr 会完整捕获到 `Comparator Output` 区块中，在报告渲染时限 20 行展示。
 
-#### 方式三：手动注册（编程方式）
+#### 手动注册（编程方式）
 
 ```python
-from symtest.file_comparator import ComparatorFactory
-from symtest.file_comparator.base_comparator import BaseComparator
+from symtest.file_comparator import ComparatorFactory, ComparatorBase, CompareContext
+from symtest.file_comparator.result import ComparisonResult
 
-class FooComparator(BaseComparator):
-    # 实现 read_content / compare_content 等方法
-    pass
+class FooComparator(ComparatorBase):
+    def compare(self, ctx: CompareContext) -> ComparisonResult:
+        ...
 
 ComparatorFactory.register_comparator("foo", FooComparator)
 
@@ -2063,7 +2113,7 @@ comparator = ComparatorFactory.create_comparator("foo")
 
 #### 专用插件示例：hourglass 切线刚度分析
 
-`examples/plugins/hourglass_tangent_comparator.py` 是一个完整的工作区插件示例，展示了如何将专用的 `analyze_*_tangent.py` 分析脚本接入框架：
+`examples/plugins/hourglass_tangent_comparator.py` 是一个完整的自主泳道工作区插件示例，展示了如何将专用的 `analyze_*_tangent.py` 分析脚本接入框架：
 
 ```json
 {
@@ -2078,6 +2128,7 @@ comparator = ComparatorFactory.create_comparator("foo")
 **特点**：
 - 通过 subprocess 调分析脚本（**零改动** analyze 代码），捕获 stdout 后用正则解析 `RESULT:` 行和 `full_rel`/`aa_rel`/`hh_rel`/`asymmetry` 等数值指标
 - 构造结构化 `ComparisonResult`：`identical` 基于 `full_rel < pass_threshold` 判定；`differences` 列出超限指标；`error_stats` 包含全部数值
+- `path_params` 声明 `script`/`case_dir`，路径由框架按 workspace 解析
 - 脚本 stdout 进入 `Comparator Output` 区块
 
 使用方法：将插件文件复制到 workspace 的 `comparators/` 目录下即可自动发现，无需改框架代码。

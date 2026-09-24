@@ -1,7 +1,7 @@
 """TestResult：Execution + Validation + 编排元数据的组合类型（1.4 v2）。
 
 ``to_dict()`` 产出与 1.3 完全一致的 ``TestResultData`` wire format ——
-runner / reporter / TUI / CLI 消费的结果 JSON 结构逐位保持，本类型只是
+runner / reporter / CLI 消费的结果 JSON 结构逐位保持，本类型只是
 编排层内部的结构化表示。
 """
 from dataclasses import dataclass, field

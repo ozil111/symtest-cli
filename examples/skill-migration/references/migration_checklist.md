@@ -69,8 +69,10 @@ will run before their dependencies).
 
 ## 6. Import structures
 
-- `migrate` does NOT follow imports: every imported sub-file must be migrated
-  on its own. List all files reachable via `import` and migrate each.
+- `migrate` follows imports recursively: default mode writes `<stem>.v2<ext>`
+  copies and rewrites import paths; `--in-place` overwrites each file in
+  place. Verify every file reachable via `import` was migrated (the command
+  prints one output path per migrated file).
 - Import-level `tags` injection still works in v2; confirm split files no
   longer rely on v1-only top-level case fields.
 - Circular imports remain an error (validation stage), unchanged.

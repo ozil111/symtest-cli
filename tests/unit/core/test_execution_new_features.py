@@ -9,7 +9,10 @@ from symtest.core.test_case import ExecutionSpec
 from symtest.core.validation.validator import validate_result
 from symtest.core.execution.result import ExecutionResult
 from symtest.core.execution.executor import _trim_output, DEFAULT_OUTPUT_MAX_CHARS
-from symtest.reporting.diagnosis import build_next_action_hint
+from symtest.reporting.diagnosis import (
+    attach_next_action_hint,
+    build_next_action_hint,
+)
 
 
 class TestRetryFeatures:
@@ -218,9 +221,13 @@ class TestNextActionHint:
             )
             result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
-            hint = result["next_action_hint"]
+            # Orchestration only produces failure_kind; the hint is filled by
+            # the reporting attach point (principle 5).
+            assert result["next_action_hint"] is None
+            assert result["failure_kind"] == "return_code"
+            hint = attach_next_action_hint(result)
             assert hint["action"] == "update_expected"
-            assert hint["command"] is None  # filled by the runner layer
+            assert hint["command"] is None  # filled when config_path is given
             assert hint["reason"]
 
     def test_execution_error_attaches_hint(self, case, expectation):
@@ -228,7 +235,8 @@ class TestNextActionHint:
             result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "failed"
             assert result["failure_kind"] == "execution_error"
-            assert result["next_action_hint"]["action"] == "investigate"
+            hint = attach_next_action_hint(result)
+            assert hint["action"] == "investigate"
 
     def test_timeout_attaches_hint(self, case, expectation):
         case.timeout = 1
@@ -242,7 +250,9 @@ class TestNextActionHint:
         with patch("subprocess.Popen", return_value=mock_proc):
             result = execute_single_test_case(case, expectation=expectation)
             assert result["status"] == "timeout"
-            assert result["next_action_hint"]["action"] == "increase_timeout"
+            assert result["failure_kind"] == "timeout"
+            hint = attach_next_action_hint(result)
+            assert hint["action"] == "increase_timeout"
             # PID 99999 is harmless even if killpg() is called;
             # mock_proc.kill is also safe. Assertions above verify
             # the result format remains correct.
@@ -259,8 +269,8 @@ class TestNextActionHint:
             assert result["next_action_hint"] is None
 
 
-class TestRunnerHintCommandFilling:
-    """Runners fill the concrete symtest command into next_action_hint."""
+class TestAttachHintCommandFilling:
+    """The reporting attach point fills the concrete symtest command."""
 
     def _make_failed_result(self, action):
         return {
@@ -270,38 +280,32 @@ class TestRunnerHintCommandFilling:
         }
 
     def test_update_baseline_command(self):
-        from symtest.runners.json_runner import JSONRunner
-
-        runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_baseline")
-        runner._fill_hint_command(result, "case_a")
+        attach_next_action_hint(result, config_path="cfg.json")
         cmd = result["next_action_hint"]["command"]
-        assert cmd == (
-            f'symtest run "{runner.config_path}" --update-baseline -t "case_a"'
-        )
+        assert cmd == 'symtest run "cfg.json" --update-baseline -t "case_a"'
 
     def test_rerun_command_for_other_actions(self):
-        from symtest.runners.json_runner import JSONRunner
-
-        runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_expected")
-        runner._fill_hint_command(result, "case_a")
+        attach_next_action_hint(result, config_path="cfg.json")
         cmd = result["next_action_hint"]["command"]
-        assert cmd == f'symtest run "{runner.config_path}" -t "case_a"'
+        assert cmd == 'symtest run "cfg.json" -t "case_a"'
 
     def test_existing_command_not_overwritten(self):
-        from symtest.runners.json_runner import JSONRunner
-
-        runner = JSONRunner(config_file="cfg.json")
         result = self._make_failed_result("update_baseline")
         result["next_action_hint"]["command"] = "custom"
-        runner._fill_hint_command(result, "case_a")
+        attach_next_action_hint(result, config_path="cfg.json")
         assert result["next_action_hint"]["command"] == "custom"
 
     def test_no_hint_is_noop(self):
-        from symtest.runners.json_runner import JSONRunner
-
-        runner = JSONRunner(config_file="cfg.json")
         result = {"name": "ok", "status": "passed", "next_action_hint": None}
-        runner._fill_hint_command(result, "ok")  # should not raise
+        attach_next_action_hint(result, config_path="cfg.json")  # should not raise
         assert result["next_action_hint"] is None
+
+    def test_builds_hint_from_failure_kind(self):
+        """Orchestration only sets failure_kind; the attach point builds the hint."""
+        result = {"name": "case_b", "status": "failed", "failure_kind": "file_compare"}
+        attach_next_action_hint(result, config_path="cfg.json")
+        hint = result["next_action_hint"]
+        assert hint["action"] == "update_baseline"
+        assert hint["command"] == 'symtest run "cfg.json" --update-baseline -t "case_b"'

@@ -1,12 +1,12 @@
-from .base_comparator import BaseComparator
+from .file_comparator_base import FileComparator
 import h5py
 import numpy as np
 import logging
 import re
 from .numeric_compare import compare_numeric, parse_data_filter
 
-class H5Comparator(BaseComparator):
-    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, **kwargs):
+class H5Comparator(FileComparator):
+    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, encoding="utf-8", verbose=False):
         """
         Initialize H5 comparator
         :param tables: List of table names to compare. If None, compare all tables
@@ -19,8 +19,11 @@ class H5Comparator(BaseComparator):
         :param expand_path: If True, expand group paths to compare all sub-items. Defaults to True.
         :param data_filter: String filter expression for data comparison (e.g., '>1e-6', 'abs>1e-9')
         :param error_analysis: Enable streaming error statistics over ALL numeric cells
+        :param encoding: Text encoding for attribute values
+        :param verbose: Debug logging of this comparator's own logger
+        @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
-        super().__init__(**kwargs)
+        super().__init__(encoding=encoding, verbose=verbose)
         self.tables = tables
         self.table_regex = table_regex
         self.structure_only = structure_only
@@ -33,8 +36,9 @@ class H5Comparator(BaseComparator):
         self.error_analysis = error_analysis
         self._error_stats = None
         
-        # Set debug level if verbose is enabled
-        if kwargs.get('verbose', False) or debug:
+        # Set debug level if debug mode is enabled (verbose is handled by
+        # the file-lane base constructor / factory).
+        if debug:
             self.logger.setLevel(logging.DEBUG)
             
         self.logger.debug(f"Initialized H5Comparator with structure_only={structure_only}, show_content_diff={show_content_diff}, rtol={rtol}, atol={atol}, expand_path={expand_path}, data_filter={data_filter}")
@@ -470,6 +474,8 @@ class H5Comparator(BaseComparator):
                             identical = False
 
         # ── Store error stats ──
+        # Mean / RMS use total numeric cells as the denominator (stats cover
+        # ALL compared cells, matching ones included).
         if self.error_analysis and _ea_total > 0:
             self._error_stats = {
                 "total_numeric_cells": _ea_total,
@@ -478,8 +484,8 @@ class H5Comparator(BaseComparator):
                 "max_abs_error_at": _ea_max_abs_at,
                 "max_rel_error": _ea_max_rel,
                 "max_rel_error_at": _ea_max_rel_at,
-                "mean_abs_error": _ea_sum_abs / _ea_mismatched if _ea_mismatched > 0 else 0.0,
-                "rms_abs_error": (np.sqrt(_ea_sum_sq / _ea_mismatched) if _ea_mismatched > 0 else 0.0),
+                "mean_abs_error": _ea_sum_abs / _ea_total,
+                "rms_abs_error": np.sqrt(_ea_sum_sq / _ea_total),
             }
 
         return identical, differences, False

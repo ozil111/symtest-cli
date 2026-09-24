@@ -60,12 +60,72 @@ class Difference:
             "diff_type": self.diff_type
         }
 
+class ChannelResult:
+    """
+    @brief Per-channel numeric comparison sub-result (data lane)
+    @details Produced by :class:`~symtest.file_comparator.extractor_comparator.ExtractorComparator`
+             for every channel returned by ``extract()``.  One ``ComparisonResult``
+             aggregates all channels; ``identical`` is True only when every
+             channel passed its own tolerance.
+    """
+
+    def __init__(self, name, passed, rtol=1e-5, atol=1e-8, stats=None,
+                 extra_stats=None, differences=None):
+        """
+        @param name str: Channel name (as returned by the extractor)
+        @param passed bool: Whether this channel passed its tolerance
+        @param rtol float: Relative tolerance applied to this channel
+        @param atol float: Absolute tolerance applied to this channel
+        @param stats dict|None: Framework-owned canonical statistics
+               (compare_numeric summary).  Never overridable by plugins.
+        @param extra_stats dict|None: Plugin-owned metrics in a SEPARATE
+               namespace — plugins cannot overwrite canonical stats.
+        @param differences list: Difference objects (positions carry the
+               channel name as prefix)
+        """
+        self.name = name
+        self.passed = passed
+        self.rtol = rtol
+        self.atol = atol
+        self.stats = stats
+        self.extra_stats = extra_stats
+        self.differences = differences or []
+
+    def __str__(self):
+        verdict = "PASS" if self.passed else "FAIL"
+        line = f"channel '{self.name}': {verdict} (rtol={self.rtol:g}, atol={self.atol:g})"
+        if self.stats:
+            mism = self.stats.get("mismatched")
+            total = self.stats.get("total")
+            if mism is not None and total is not None:
+                line += f", {mismatched_str(mism, total)}"
+        return line
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "passed": self.passed,
+            "rtol": self.rtol,
+            "atol": self.atol,
+            "stats": self.stats,
+            "extra_stats": self.extra_stats,
+            "differences": [d.to_dict() for d in self.differences],
+        }
+
+
+def mismatched_str(mismatched, total):
+    """Tiny formatter shared by ChannelResult string rendering."""
+    return f"{mismatched}/{total} values mismatched"
+
+
 class ComparisonResult:
     """
     @brief Represents the result of a file comparison
     @details This class encapsulates all information about a file comparison,
              including file paths, comparison range, differences found,
              and additional metadata like file sizes and similarity index.
+             Data-lane comparators additionally populate ``channels`` with
+             per-channel sub-results.
     """
     
     def __init__(self, file1=None, file2=None, start_line=0, end_line=None, 
@@ -94,6 +154,7 @@ class ComparisonResult:
         self.truncated = False  # Whether differences were truncated due to max_diffs limit
         self.error_stats = None  # Optional error statistics from streaming numerical analysis
         self.command_output = None  # Optional subprocess stdout captured by script/custom comparators
+        self.channels = []  # Optional list[ChannelResult] for data-lane (channel) comparisons
     
     def __str__(self):
         """
@@ -114,6 +175,10 @@ class ComparisonResult:
                 lines.append("... more differences not shown")
             if self.similarity is not None:
                 lines.append(f"Similarity Index: {self.similarity:.2f}")
+            if self.channels:
+                lines.append("Channels:")
+                for ch in self.channels:
+                    lines.append(f"  - {ch}")
         return "\n".join(lines)
     
     def _get_range_str(self):
@@ -161,6 +226,7 @@ class ComparisonResult:
             "truncated": self.truncated,
             "error_stats": self.error_stats,
             "command_output": self.command_output,
+            "channels": [ch.to_dict() for ch in self.channels],
         }
     
     def to_html(self):

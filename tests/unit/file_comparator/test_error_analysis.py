@@ -1,4 +1,5 @@
 """Unit tests for error_analysis streaming statistics in CSV/H5 comparators."""
+import math
 import os
 import tempfile
 
@@ -43,13 +44,34 @@ class TestCsvErrorAnalysis:
         assert stats["mean_abs_error"] >= 0.0
 
     def test_error_analysis_all_matching(self):
-        """When all numeric cells match, stats show zero mismatches."""
+        """When all numeric cells match, stats cover all cells with zero errors."""
         cmp = CsvComparator(error_analysis=True)
         content1 = [["1.0", "2.0"], ["3.0", "4.0"]]
         content2 = [["1.0", "2.0"], ["3.0", "4.0"]]
         identical, diffs, truncated = cmp.compare_content(content1, content2)
         assert identical
-        assert cmp._error_stats is None  # no stats when identical (compare_content returns early)
+        assert cmp._error_stats is not None
+        stats = cmp._error_stats
+        assert stats["total_numeric_cells"] == 4
+        assert stats["mismatched_cells"] == 0
+        assert stats["max_abs_error"] == pytest.approx(0.0, abs=1e-12)
+        assert stats["mean_abs_error"] == pytest.approx(0.0, abs=1e-12)
+        assert stats["rms_abs_error"] == pytest.approx(0.0, abs=1e-12)
+
+    def test_error_analysis_stats_over_all_cells(self):
+        """Magnitude stats cover ALL cells; mean/rms divide by total, not mismatches."""
+        cmp = CsvComparator(error_analysis=True)
+        # Cell 1 matches exactly (0.0 error), cell 2 differs by 3.0.
+        content1 = [["1.0", "2.0"]]
+        content2 = [["1.0", "5.0"]]
+        identical, diffs, truncated = cmp.compare_content(content1, content2)
+        stats = cmp._error_stats
+        assert stats["total_numeric_cells"] == 2
+        assert stats["mismatched_cells"] == 1
+        assert stats["max_abs_error"] == pytest.approx(3.0, abs=1e-9)
+        # Old semantics: mean over mismatched only = 3.0; now over all cells = 1.5.
+        assert stats["mean_abs_error"] == pytest.approx(1.5, abs=1e-9)
+        assert stats["rms_abs_error"] == pytest.approx(3.0 / math.sqrt(2), abs=1e-9)
 
     def test_error_analysis_tracks_max_abs_error(self):
         """Verify max_abs_error tracks the largest absolute difference."""

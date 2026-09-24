@@ -635,17 +635,16 @@ class TestMainDispatch:
             cli.main()
         assert exc.value.code == 1
 
-    def test_main_tui(self, monkeypatch):
-        called = []
+    def test_main_find_match(self, monkeypatch):
+        def fake_find(args):
+            return 0
 
-        def fake_tui(args):
-            called.append("tui")
+        monkeypatch.setattr(cli, "run_find", fake_find)
+        monkeypatch.setattr("sys.argv", ["symtest", "find", "cases.json", "login"])
 
-        monkeypatch.setattr(cli, "run_tui", fake_tui)
-        monkeypatch.setattr("sys.argv", ["symtest", "tui", "cases.json"])
-
-        cli.main()
-        assert "tui" in called
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 0
 
     def test_main_validate_success(self, monkeypatch):
         def fake_validate(args):
@@ -790,14 +789,27 @@ class TestCreateParser:
         assert args.config_file == "config.json"
         assert args.workspace == "/ws"
 
-    def test_tui_accepts_baseline_confirmation(self):
+    def test_find_subcommand(self):
         parser = cli.create_parser()
         args = parser.parse_args([
-            "tui", "config.json", "--update-baseline", "--yes",
+            "find", "main.json", "login",
+            "--mode", "regex", "--tag", "smoke",
+            "--workspace", "/ws", "--output-format", "json",
         ])
-        assert args.command == "tui"
-        assert args.update_baseline is True
-        assert args.yes is True
+        assert args.command == "find"
+        assert args.config_file == "main.json"
+        assert args.pattern == "login"
+        assert args.mode == "regex"
+        assert args.tag == ["smoke"]
+        assert args.workspace == "/ws"
+        assert args.output_format == "json"
+
+    def test_find_pattern_optional(self):
+        """Empty pattern lists all cases (substring matches everything)."""
+        parser = cli.create_parser()
+        args = parser.parse_args(["find", "main.json"])
+        assert args.command == "find"
+        assert args.pattern == ""
 
     def test_compare_subcommand(self):
         parser = cli.create_parser()

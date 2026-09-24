@@ -51,10 +51,16 @@ class BaseRunner(ABC):
         self.resume = resume
 
         # --- workspace plugin directories ---
-        resolved_plugin_dirs: List[str] = list(plugin_dirs) if plugin_dirs else []
+        # Resolve every dir against the parent CWD here, so process workers
+        # receive absolute paths via the pool initializer and never have to
+        # resolve anything against their own CWD.
+        resolved_plugin_dirs: List[str] = (
+            [str(Path(d).resolve()) for d in plugin_dirs] if plugin_dirs else []
+        )
         default_plugin_dir = self.workspace / "comparators"
         if default_plugin_dir.is_dir() and str(default_plugin_dir.resolve()) not in resolved_plugin_dirs:
             resolved_plugin_dirs.append(str(default_plugin_dir.resolve()))
+        self.plugin_dirs = resolved_plugin_dirs
         ComparatorFactory.set_plugin_dirs(resolved_plugin_dirs)
         self.results: Dict[str, Any] = {
             "total": 0,
@@ -176,7 +182,6 @@ class BaseRunner(ABC):
                             "description": case.description or None,
                             "tags": case.tags or [],
                         }
-                        self._fill_hint_command(skip_result, case.name)
                         self.results["details"].append(skip_result)
                         logger.warning("⊘ Test %d skipped: %s", i, case.name)
                         logger.warning("  Reason: %s", skip_result["message"])
@@ -191,7 +196,6 @@ class BaseRunner(ABC):
                 result["expected"] = case.expected if case.expected else None
                 result["description"] = case.description or None
                 result["tags"] = case.tags or []
-                self._fill_hint_command(result, case.name)
 
                 self.results["details"].append(result)
                 duration = result.get("duration", 0)
@@ -297,23 +301,6 @@ class BaseRunner(ABC):
                 result.append(c)
 
         return result
-
-    def _fill_hint_command(self, result: Dict[str, Any], case_name: str) -> None:
-        """Fill in the concrete CLI command inside ``next_action_hint``.
-
-        The execution layer attaches the hint with ``command=None`` because it
-        does not know the config file path; the runner does.
-        """
-        hint = result.get("next_action_hint")
-        if not hint or hint.get("command"):
-            return
-        config = str(self.config_path)
-        if hint.get("action") == "update_baseline":
-            hint["command"] = (
-                f'symtest run "{config}" --update-baseline -t "{case_name}"'
-            )
-        else:
-            hint["command"] = f'symtest run "{config}" -t "{case_name}"'
 
     def _apply_xfail_status(self, result: Dict[str, Any], case: "TestCase") -> None:
         """Apply xfail (expected failure) status mapping to a test result.

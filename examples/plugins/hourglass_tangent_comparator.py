@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-专用 hourglass 切线刚度比较器（workspace 插件范例）。
+专用 hourglass 切线刚度比较器（workspace 插件范例，自主泳道）。
 
 通过 subprocess 调用 ``analyze_*_tangent.py`` 分析脚本，捕获其 stdout，
 用正则解析 RESULT 判定 + 数值指标（full_rel / aa_rel / hh_rel 等），
 构造框架标准的 ComparisonResult，享受 diffs / error_stats / 报告渲染全套设施。
 
+**泳道定位**：本插件拥有自己的判定逻辑（阈值 + RESULT 标签），属于
+**自主泳道**（直接继承 ``ComparatorBase``，实现 ``compare(ctx)``）。
+若只需要框架标准容差判定（rtol/atol），请改用数据泳道（继承
+``ExtractorComparator``）或内置 ``script_extract`` 类型。
+
 **零改动 analyze 脚本**：subprocess 调用时 ``sys.argv[0]`` 天然指向脚本路径，
 ``run_hg_analysis`` 内部的 case_dir 推断正确。
+
+**路径解析**：``path_params`` 声明 ``script`` / ``case_dir`` 为路径参数，
+框架在调用 ``compare()`` 前统一按 workspace 解析相对路径——插件内部
+不得自行对 CWD 做 ``Path.resolve()``。
 
 使用方式：
     1. 将本文件复制到你的 workspace 的 ``comparators/`` 目录下。
@@ -22,7 +31,7 @@
          "timeout": 600
        }
 
-    3. script 路径相对于 workspace 解析；case_dir 为 subprocess 的工作目录。
+    3. script / case_dir 路径相对于 workspace 解析（框架负责）。
 
 判定逻辑：
     - 退出码 2 → error (文件缺失/解析失败)
@@ -33,21 +42,20 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # When loaded as a workspace plugin, the framework package is importable
 # because the worker process inherits the same Python environment.
 # Use a guarded import for documentation/testing outside a full runtime.
 try:
-    from symtest.file_comparator.base_comparator import BaseComparator
+    from symtest.file_comparator.base_comparator import ComparatorBase, CompareContext
     from symtest.file_comparator.result import ComparisonResult, Difference
 except ImportError:  # pragma: no cover
-    BaseComparator = object  # type: ignore
+    ComparatorBase = object  # type: ignore
+    CompareContext = None  # type: ignore
     ComparisonResult = None  # type: ignore
     Difference = None  # type: ignore
 
@@ -127,21 +135,25 @@ def _parse_stdout(stdout: str) -> Dict[str, Any]:
     return data
 
 
-class HourglassTangentComparator(BaseComparator):  # type: ignore
+class HourglassTangentComparator(ComparatorBase):  # type: ignore
     """Work against an ``analyze_*_tangent.py`` script and report structured results.
 
-    Constructor parameters (forwarded from the config ``compareSpec``):
+    Autonomous-lane plugin: implements ``compare(ctx)`` directly and owns its
+    verdict.  Constructor parameters are forwarded from the config
+    ``compareSpec``; ``script`` / ``case_dir`` are workspace-resolved by the
+    framework (declared in ``path_params``).
 
     :param script:       Path to the ``analyze_*_tangent.py`` script (required).
     :param case_dir:     Working directory for the subprocess (script resolves
                          its own ``case_dir`` from ``sys.argv[0]``, but the
                          process cwd must contain the case files).
     :param pass_threshold: If ``full_rel < pass_threshold``, treat as PASS
-                           (default ``1e-6``).
+                         (default ``1e-6``).
     :param interpreter:  Python interpreter (default ``sys.executable``).
     :param timeout:      Subprocess timeout in seconds (default 600).
-    :param encoding:     File encoding (unused, kept for interface consistency).
     """
+
+    path_params = ("script", "case_dir")
 
     def __init__(
         self,
@@ -150,45 +162,25 @@ class HourglassTangentComparator(BaseComparator):  # type: ignore
         pass_threshold: float = 1e-6,
         interpreter: Optional[str] = None,
         timeout: int = 600,
-        encoding: str = "utf-8",
-        **kwargs,
     ):
-        super().__init__(encoding=encoding, **kwargs)
-        self.script = script
-        self.case_dir = case_dir
+        super().__init__()
+        self.script = script      # workspace-resolved by the framework (path_params)
+        self.case_dir = case_dir  # workspace-resolved by the framework (path_params)
         self.pass_threshold = pass_threshold
         self.interpreter = interpreter or sys.executable
         self.timeout = timeout
 
     # ------------------------------------------------------------------
-    # Abstract method stubs (not used)
-    # ------------------------------------------------------------------
-    def read_content(self, file_path, **kwargs):
-        return None
-
-    def compare_content(self, content1, content2):
-        return True, [], False
-
-    # ------------------------------------------------------------------
     # Core comparison
     # ------------------------------------------------------------------
-    def compare_files(  # type: ignore[override]
-        self,
-        file1=None,
-        file2=None,
-        **kwargs,
-    ):
+    def compare(self, ctx: CompareContext) -> ComparisonResult:  # type: ignore[override]
         """Execute the hourglass analysis script and parse results."""
         result = ComparisonResult(
-            file1=file1 or "",
-            file2=file2 or "",
+            file1=ctx.baseline,
+            file2=ctx.actual,
         )
 
         try:
-            cwd = self.case_dir
-            if cwd and not Path(cwd).is_absolute():
-                cwd = str(Path(cwd).resolve())
-
             cmd = [self.interpreter, self.script]
 
             self.logger.info("Executing hourglass analysis: %s", " ".join(cmd))
@@ -197,7 +189,7 @@ class HourglassTangentComparator(BaseComparator):  # type: ignore
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                cwd=cwd,
+                cwd=self.case_dir,
             )
 
             stdout = proc.stdout or ""

@@ -4,15 +4,16 @@ from unittest.mock import patch
 import pytest
 
 from symtest.core.orchestration.sequence import execute_sequence
-from symtest.core.test_case import TestCaseStep
+from symtest.core.test_case import TestStep
 from symtest.core.validation.assertions import ValidationError
 from symtest.core.validation.result import ValidationResult
+from symtest.reporting.diagnosis import attach_next_action_hint
 
 
 def _steps(*specs):
-    """Build TestCaseStep objects from (command, args, expected) tuples."""
+    """Build TestStep objects from (command, args, expected) tuples."""
     return [
-        TestCaseStep(command=cmd, args=args, expected=expected)
+        TestStep.from_flat(command=cmd, args=args, expected=expected)
         for cmd, args, expected in specs
     ]
 
@@ -124,16 +125,13 @@ class TestSequenceOutputSliming:
 
 
 class TestSequenceStructuredDiagnostics:
-    """Sequence results propagate assertion_results / next_action_hint."""
+    """Sequence results propagate assertion_results; hint 由装配层按 failure_kind 填充."""
 
-    def test_failed_step_propagates_hint_and_assertions(self):
+    def test_failed_step_propagates_assertions_and_failure_kind(self):
         failed = _failed_result("s2")
         failed["assertion_results"] = [
             {"assertion": "return_code", "passed": False, "message": "rc mismatch"}
         ]
-        failed["next_action_hint"] = {
-            "action": "update_expected", "command": None, "reason": "r",
-        }
         steps = _steps(
             ("e1", ["a"], {"return_code": 0}),
             ("e2", ["b"], {"return_code": 0}),
@@ -145,7 +143,10 @@ class TestSequenceStructuredDiagnostics:
             result = execute_sequence("case", steps)
             assert result["status"] == "failed"
             assert result["assertion_results"] == failed["assertion_results"]
-            assert result["next_action_hint"] == failed["next_action_hint"]
+            # Orchestration 只产 failure_kind；hint 由 reporting 装配点填充
+            assert result["failure_kind"] == "return_code"
+            assert result["next_action_hint"] is None
+            assert attach_next_action_hint(result)["action"] == "update_expected"
 
     def test_case_level_failure_builds_hint(self):
         steps = _steps(("echo", ["x"], {"return_code": 0}))
@@ -171,7 +172,9 @@ class TestSequenceStructuredDiagnostics:
             assert result["assertion_results"] == [
                 {"assertion": "compare_files", "passed": False}
             ]
-            assert result["next_action_hint"]["action"] == "update_baseline"
+            assert result["failure_kind"] == "file_compare"
+            assert result["next_action_hint"] is None
+            assert attach_next_action_hint(result)["action"] == "update_baseline"
 
     def test_passed_sequence_uses_case_level_assertion_results(self):
         steps = _steps(("echo", ["x"], {"return_code": 0}))

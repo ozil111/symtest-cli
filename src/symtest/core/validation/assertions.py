@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ...file_comparator.factory import ComparatorFactory
+from ...file_comparator.base_comparator import CompareContext
 
 logger = logging.getLogger("symtest.core.validation.assertions")
 
@@ -61,6 +62,9 @@ def _build_diff_summary(result: Any) -> Dict[str, Any]:
     - ``total_differences``
     - ``max_rel_error`` / ``max_abs_error`` (for cells that are numeric)
     - ``max_rel_error_at`` / ``max_abs_error_at`` (position string)
+
+    Data-lane results additionally carry per-channel ``channels``; each
+    channel contributes a ``passed`` flag and its own error stats.
     """
     differences = getattr(result, "differences", []) or []
     summary: Dict[str, Any] = {
@@ -87,6 +91,19 @@ def _build_diff_summary(result: Any) -> Dict[str, Any]:
                 summary["max_rel_error_at"] = pos
         except (ValueError, TypeError):
             pass
+
+    channels = getattr(result, "channels", None)
+    if channels:
+        summary["channels"] = {
+            ch.name: {
+                "passed": bool(ch.passed),
+                "rtol": ch.rtol,
+                "atol": ch.atol,
+                "max_abs_error": (ch.stats or {}).get("max_abs_error"),
+                "max_rel_error": (ch.stats or {}).get("max_rel_error"),
+            }
+            for ch in channels
+        }
     return summary
 
 
@@ -156,8 +173,10 @@ class Assertions:
         if baseline_path and workspace and not os.path.isabs(baseline_path):
             baseline_path = os.path.join(workspace, baseline_path)
 
-        # Auto-detect file type from extension
-        if not file_type:
+        # Auto-detect file type from extension (covers omitted type AND an
+        # explicit "auto" — never let "auto" degrade to a silent guess inside
+        # the factory when the file paths are available right here).
+        if not file_type or file_type == "auto":
             if not actual_path:
                 raise ValidationError(
                     "File type cannot be auto-detected: 'actual' path is empty. "
@@ -184,6 +203,19 @@ class Assertions:
         if "end_column" in method_params and method_params["end_column"] is not None:
             method_params["end_column"] = max(0, int(method_params["end_column"]) - 1)
 
+        # Plugin configuration namespace: "options" is framework-owned
+        # structure; its entries are merged into constructor kwargs.
+        # Explicit top-level keys take precedence (legacy compatibility).
+        options = comparator_kwargs.pop("options", None)
+        if options is not None:
+            if not isinstance(options, dict):
+                raise ValidationError(
+                    f"'options' must be an object of comparator parameters, "
+                    f"got: {type(options).__name__}",
+                    failure_kind="file_compare",
+                )
+            comparator_kwargs = {**options, **comparator_kwargs}
+
         # Collect tolerances for reporting (before they're consumed by factory)
         reported_kwargs = {
             k: v for k, v in comparator_kwargs.items()
@@ -191,13 +223,27 @@ class Assertions:
         }
 
         try:
+            # Lifecycle: the factory resolves path_params-declared parameters
+            # against the workspace BEFORE construction, so constructor-captured
+            # state (self.script, self.cwd, ...) already holds absolute paths.
             comparator = ComparatorFactory.create_comparator(
                 file_type,
-                verbose=True,  # always include diff details in the assertion message
+                workspace=workspace,
                 error_analysis=error_analysis,
                 **comparator_kwargs,
             )
-            result = comparator.compare_files(baseline_path, actual_path, **method_params)
+
+            ctx = CompareContext(
+                workspace=workspace,
+                actual=actual_path or None,
+                baseline=baseline_path or None,
+                # Invocation-level parameters only (file-lane window ranges).
+                # Comparator configuration lives solely in comparator state —
+                # one authoritative source per configuration value.
+                params=method_params,
+                error_analysis=error_analysis,
+            )
+            result = comparator.compare(ctx)
 
             # Build structured response
             diff_summary = _build_diff_summary(result)
@@ -215,6 +261,10 @@ class Assertions:
                 ),
                 "error_stats": result.error_stats,
                 "command_output": result.command_output,
+                "channels": (
+                    [ch.to_dict() for ch in result.channels]
+                    if result.channels else []
+                ),
             }
 
             if result.error:

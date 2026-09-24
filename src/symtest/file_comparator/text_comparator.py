@@ -10,10 +10,10 @@
 
 import difflib
 import re
-from .base_comparator import BaseComparator
+from .file_comparator_base import FileComparator
 from .result import Difference
 
-class TextComparator(BaseComparator):
+class TextComparator(FileComparator):
     """
     @brief Comparator for text files with line-by-line comparison
     @details This class implements text file comparison using Python's difflib

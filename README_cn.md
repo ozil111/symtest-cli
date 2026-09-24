@@ -25,7 +25,7 @@ CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程�
 - **验证结果**：支持返回码、输出文本、正则表达式，以及 text、JSON、CSV、XML、
   HDF5、二进制和自定义脚本文件比较。
 - **管理大型测试集**：通过 `import` 拆分配置、通过 `extends` 复用模板、按名称或
-  标签筛选，并可在可选 TUI 中跨文件查看用例。
+  标签筛选，并可用 `symtest find` 跨文件定位用例。
 - **迭代与集成**：支持并行执行、`--last-failed`、步骤级 `--resume`、耗时历史、
   结构化报告和 JUnit XML。
 
@@ -39,11 +39,10 @@ CLI Test Framework 使用一份 JSON 或 YAML 配置，同时描述执行流程�
 pip install symtest-cli
 ```
 
-YAML 和 TUI 均为可选能力：
+YAML 为可选能力：
 
 ```bash
 pip install "symtest-cli[yaml]"
-pip install "symtest-cli[tui]"
 pip install "symtest-cli[all]"
 ```
 
@@ -143,7 +142,7 @@ symtest run solver_tests.json -t long_case --resume
 
 `--resume` 明确信任两次运行之间的工作区产物未被修改。
 
-## 大型测试集与可选 TUI
+## 大型测试集与跨文件搜索
 
 大型测试集可以拆分为多个子配置：
 
@@ -156,11 +155,11 @@ symtest run solver_tests.json -t long_case --resume
 }
 ```
 
-可选 TUI 能在所有导入文件之上提供统一的可搜索视图，主要用于大型项目中定位用例和
-辅助检查场景覆盖情况，并不是日常执行测试的必要组件。
+`symtest find` 会自动展开全部 `import` 引用，在统一展开后的用例集上执行搜索
+（子串 / 模糊 / 正则三种模式），便于大型项目中定位用例和检查场景覆盖：
 
 ```bash
-symtest tui main_config.json
+symtest find main_config.json "login"
 ```
 
 ## 并行执行与资源
@@ -232,7 +231,7 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 - [中文使用说明](docs/user_manual.md)
 - [中文设计文档](docs/design.md)
 - [插件示例](examples/plugins/README.md)
-- [AI Skill 模板](examples/skill/) — 可将框架知识导入 AI 编程助手，
+- [官方 AI Skill](skill/) — 可将框架知识导入 AI 编程助手（推荐的入门方式），
   让 AI 直接使用框架编写测试用例、验收标准和 TDD 工作流
 
 ## 开发

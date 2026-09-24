@@ -3,30 +3,27 @@
 
 """
 @file script_comparator.py
-@brief Built-in script comparator – delegates comparison to an external script
+@brief Built-in script comparator – autonomous lane, delegates verdict to an external script
 @author Xiaotong Wang
 @date 2025
 """
 
-import logging
 import re
 import subprocess
 import sys
-from pathlib import Path
 from typing import List, Optional
 
-from .base_comparator import BaseComparator
+from .base_comparator import ComparatorBase, CompareContext
 from .result import ComparisonResult, Difference
 
-logger = logging.getLogger("symtest.file_comparator.script")
 
-
-class ScriptComparator(BaseComparator):
-    """Run an external script as a comparison step.
+class ScriptComparator(ComparatorBase):
+    """Run an external script as a comparison step (autonomous lane).
 
     The script is invoked as a subprocess.  By default exit code 0 signals
     *pass*.  Optionally, ``pass_pattern`` / ``fail_pattern`` regexes can be
-    used to refine the verdict from ``stdout``.
+    used to refine the verdict from ``stdout``.  The plugin owns the verdict —
+    for framework-owned numeric tolerance use the ``script_extract`` type.
 
     Configuration example::
 
@@ -34,6 +31,8 @@ class ScriptComparator(BaseComparator):
          "actual": "...", "baseline": "...", "cwd": ".", "pass_pattern": "PASS",
          "fail_pattern": "(MISMATCH|FAILED)"}
     """
+
+    path_params = ("script", "cwd")
 
     def __init__(
         self,
@@ -45,13 +44,11 @@ class ScriptComparator(BaseComparator):
         pass_pattern: Optional[str] = None,
         fail_pattern: Optional[str] = None,
         timeout: int = 3600,
-        encoding: str = "utf-8",
-        **kwargs,
     ):
-        super().__init__(encoding=encoding, **kwargs)
-        self.script = script
-        self.cwd = cwd
-        self.args = args or []
+        super().__init__()
+        self.script = script      # workspace-resolved by the framework (path_params)
+        self.cwd = cwd            # workspace-resolved by the framework (path_params)
+        self.args = list(args) if args else []
         self.interpreter = interpreter or sys.executable
         self.pass_exit_code = pass_exit_code
         self.pass_pattern = re.compile(pass_pattern) if pass_pattern else None
@@ -59,39 +56,23 @@ class ScriptComparator(BaseComparator):
         self.timeout = timeout
 
     # ------------------------------------------------------------------
-    # Abstract method stubs (not used by this comparator)
-    # ------------------------------------------------------------------
-    def read_content(self, file_path, **kwargs):
-        return None
-
-    def compare_content(self, content1, content2):
-        return True, [], False
-
-    # ------------------------------------------------------------------
     # Core comparison
     # ------------------------------------------------------------------
-    def compare_files(  # type: ignore[override]
-        self,
-        file1=None,
-        file2=None,
-        **kwargs,
-    ):
+    def compare(self, ctx: CompareContext) -> ComparisonResult:  # type: ignore[override]
         """Execute the external script and evaluate its output."""
         result = ComparisonResult(
-            file1=str(file1) if file1 else "",
-            file2=str(file2) if file2 else "",
+            file1=ctx.baseline,
+            file2=ctx.actual,
         )
 
         try:
             cmd = [self.interpreter, self.script, *self.args]
-            if file1:
-                cmd.append(str(file1))
-            if file2:
-                cmd.append(str(file2))
-
-            cwd = self.cwd
-            if cwd and not Path(cwd).is_absolute():
-                cwd = str(Path(cwd).resolve())
+            # Trailing file slots, baseline first (historical convention:
+            # compare_files(file1=baseline, file2=actual) → argv[-2:]).
+            if ctx.baseline:
+                cmd.append(str(ctx.baseline))
+            if ctx.actual:
+                cmd.append(str(ctx.actual))
 
             self.logger.info("Executing script: %s", " ".join(cmd))
             proc = subprocess.run(
@@ -99,7 +80,7 @@ class ScriptComparator(BaseComparator):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                cwd=cwd,
+                cwd=self.cwd,
             )
 
             stdout = proc.stdout or ""

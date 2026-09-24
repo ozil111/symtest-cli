@@ -1,5 +1,6 @@
+numpy>=1.26.0
+h5py>=3.11.0,<4.0.0
+PyYAML
 pytest
 pytest-asyncio
 pytest-cov
-PyYAML
-textual>=0.40.0

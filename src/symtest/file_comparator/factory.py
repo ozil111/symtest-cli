@@ -3,13 +3,27 @@
 
 """
 @file factory.py
-@brief Factory class for creating file comparators based on file type
+@brief Factory class for creating comparators based on type
 @author Xiaotong Wang
 @date 2025
+
+Comparator construction lifecycle (single, shared by every discovery path)::
+
+    resolve type name → comparator class
+        → resolve plugin path params against workspace   (BEFORE construction)
+        → instantiate with strict, validated parameters
+        → configure framework-owned logging (verbose)
+        → comparator.compare(ctx)
+
+Path resolution happens *before* the constructor runs so that constructor-
+captured state (``self.script``, ``self.cwd``, ``self.case_dir``, ...) already
+holds workspace-resolved absolute paths.  Plugins must never resolve paths
+against the process CWD.
 """
 
 import importlib
 import importlib.util
+import inspect
 import os
 import pkgutil
 import logging
@@ -18,60 +32,208 @@ from pathlib import Path
 logger = logging.getLogger("symtest.file_comparator.factory")
 
 _ENV_VAR = "CLITEST_PLUGIN_DIRS"
+_COMPARATOR_SUFFIX = "Comparator"
+
+
+def _type_name_from_class(class_name: str) -> str:
+    """Convention-based fallback: strip ONLY a trailing ``Comparator`` suffix.
+
+    ``FooComparator -> foo``; ``ScriptExtractComparator -> scriptextract``
+    (use an explicit ``comparator_type`` class attribute for names containing
+    underscores, e.g. ``"script_extract"``).
+    """
+    if class_name.endswith(_COMPARATOR_SUFFIX):
+        return class_name[:-len(_COMPARATOR_SUFFIX)].lower()
+    return class_name.lower()
+
 
 class ComparatorFactory:
     """
-    @brief Factory class for creating file comparators
-    @details This class manages the creation and registration of different types of file comparators.
-             It provides a centralized way to create appropriate comparators based on file type
-             and automatically discovers and registers comparator classes via plugin scanning.
+    @brief Factory class for creating comparators
+    @details Manages creation and registration of comparator classes, with
+             automatic plugin discovery.  All discovery paths (built-in module
+             scan and workspace plugin directories) share the same
+             registration rules via :meth:`_register_comparator_class`.
     """
     _comparators = {}
     _initialized = False
     _plugin_dirs = []
 
+    # ------------------------------------------------------------------
+    # Registration (single entry point for every discovery path)
+    # ------------------------------------------------------------------
     @staticmethod
     def register_comparator(file_type, comparator_class):
         """
-        @brief Register a new comparator class for a specific file type
-        @param file_type str: Type of file the comparator handles
+        @brief Register a comparator class for a specific type name
+        @param file_type str: Type name the comparator handles
         @param comparator_class class: Comparator class to register
         """
         ComparatorFactory._comparators[file_type.lower()] = comparator_class
 
     @staticmethod
-    def create_comparator(file_type, **kwargs):
+    def _register_comparator_class(attr, module_name):
+        """Shared registration rules for ALL discovery paths.
+
+        A class is registered only when it:
+        - is a concrete (non-abstract) class defined in ``module_name``;
+        - its name ends with ``Comparator``.
+
+        Type-name priority: explicit ``comparator_type`` class attribute
+        (validated, lowercased) > suffix-stripped class-name convention.
+
+        :returns: the registered type name, or ``None`` when skipped.
         """
-        @brief Create a comparator instance for the specified file type
-        @param file_type str: Type of file to compare
-        @param **kwargs: Additional arguments to pass to the comparator
-        @return BaseComparator: An instance of the appropriate comparator class
-        @details Creates and returns a comparator instance based on the file type.
-                 If no specific comparator is found, falls back to TextComparator
-                 for text files or BinaryComparator for other types.
+        if not (isinstance(attr, type)
+                and attr.__module__ == module_name
+                and attr.__name__.endswith(_COMPARATOR_SUFFIX)):
+            return None
+        if inspect.isabstract(attr):
+            # Abstract bases (ComparatorBase / FileComparator /
+            # ExtractorComparator) are contracts, not instantiable types.
+            return None
+
+        explicit = getattr(attr, "comparator_type", None)
+        if explicit is not None:
+            if not isinstance(explicit, str) or not explicit.strip():
+                logger.warning(
+                    "Ignoring invalid comparator_type %r on %s (must be a "
+                    "non-empty string); falling back to class-name convention",
+                    explicit, attr.__name__,
+                )
+                type_name = _type_name_from_class(attr.__name__)
+            else:
+                type_name = explicit.strip().lower()
+        else:
+            type_name = _type_name_from_class(attr.__name__)
+
+        ComparatorFactory.register_comparator(type_name, attr)
+        return type_name
+
+    # ------------------------------------------------------------------
+    # Construction lifecycle
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_comparator_class(file_type):
+        """
+        @brief Return the comparator class for a type name (no instantiation).
+        @details 'auto'/'text' resolve to TextComparator ('auto' is normally
+                 resolved from the file extension by the assertion/CLI layer
+                 before reaching the factory).  Unknown types fail LOUDLY with
+                 the list of available types — a typo in the compareSpec
+                 ``type`` field must never silently degrade to another
+                 comparator (that would produce wrong "passing" results).
         """
         if not ComparatorFactory._initialized:
             ComparatorFactory._load_comparators()
 
         comparator_class = ComparatorFactory._comparators.get(file_type.lower())
-        if not comparator_class:
-            if file_type.lower() in ['auto', 'text']:
+        if comparator_class is None:
+            if file_type.lower() in ("auto", "text"):
                 from .text_comparator import TextComparator
-                return TextComparator(**kwargs)
-            else:
-                from .binary_comparator import BinaryComparator
-                return BinaryComparator(**kwargs)
-
-        return comparator_class(**kwargs)
+                return TextComparator
+            raise ValueError(
+                f"Unknown comparator type '{file_type}'. "
+                f"Available types: {ComparatorFactory.get_available_comparators()}. "
+                f"Unknown types fail loudly — check the compareSpec 'type' for typos."
+            )
+        return comparator_class
 
     @staticmethod
+    def resolve_plugin_params(comparator_class, params, workspace=None):
+        """Resolve plugin-declared path parameters against the workspace.
+
+        Must run BEFORE ``comparator_class(**params)`` so constructor-captured
+        state already holds absolute paths.  Only parameters listed in the
+        class's ``path_params`` attribute are touched; ``actual``/``baseline``
+        are resolved separately by the assertion layer.
+        """
+        resolved = dict(params or {})
+        if workspace:
+            for name in getattr(comparator_class, "path_params", ()) or ():
+                value = resolved.get(name)
+                if isinstance(value, str) and value and not os.path.isabs(value):
+                    # normpath keeps separators consistent with the platform
+                    resolved[name] = os.path.normpath(os.path.join(workspace, value))
+        return resolved
+
+    @staticmethod
+    def _accepts_param(cls, name):
+        """Whether ``cls.__init__`` accepts ``name`` (or **kwargs)."""
+        try:
+            sig = inspect.signature(cls.__init__)
+        except (TypeError, ValueError):
+            return False
+        for param in sig.parameters.values():
+            if param.name == "self":
+                continue
+            if param.name == name or param.kind is inspect.Parameter.VAR_KEYWORD:
+                return True
+        return False
+
+    @staticmethod
+    def create_comparator(file_type, workspace=None, verbose=False,
+                          error_analysis=False, **kwargs):
+        """
+        @brief Create a comparator instance (resolve → instantiate lifecycle).
+        @param file_type str: Comparator type name ('auto' detects by extension
+               at the assertion layer; here it falls back like legacy code).
+        @param workspace str|None: Workspace root; ``path_params``-declared
+               parameters are resolved against it BEFORE construction.
+        @param verbose bool: Framework-owned logging knob; configures the
+               comparator's logger level, never stored as comparator config.
+        @param error_analysis bool: Forwarded to the constructor only when the
+               comparator declares the parameter (numeric comparators).
+        @param **kwargs: Comparator configuration.  Unknown parameters fail
+               loudly with a TypeError identifying the comparator type —
+               configuration typos must never fall back to defaults.
+        """
+        comparator_class = ComparatorFactory.get_comparator_class(file_type)
+
+        params = ComparatorFactory.resolve_plugin_params(
+            comparator_class, kwargs, workspace,
+        )
+        # Framework-injected knobs are not comparator configuration.
+        params.pop("verbose", None)
+        params.pop("error_analysis", None)
+        if error_analysis and ComparatorFactory._accepts_param(
+                comparator_class, "error_analysis"):
+            params["error_analysis"] = True
+
+        try:
+            comparator = comparator_class(**params)
+        except TypeError as exc:
+            supported = sorted(
+                p for p in inspect.signature(comparator_class.__init__).parameters
+                if p != "self"
+            )
+            raise TypeError(
+                f"Invalid configuration for comparator type '{file_type}' "
+                f"({comparator_class.__name__}): {exc}. "
+                f"Supported parameters: {supported}. "
+                f"Unknown parameters fail loudly — check the compareSpec for typos."
+            ) from exc
+
+        if verbose:
+            comparator.logger.setLevel(logging.DEBUG)
+        return comparator
+
+    # ------------------------------------------------------------------
+    # Plugin discovery
+    # ------------------------------------------------------------------
+    @staticmethod
     def set_plugin_dirs(dirs):
-        """Persist workspace-level plugin directories and expose them via env var.
+        """Register workspace-level plugin directories.
 
         Thread-pool runners share ``_plugin_dirs`` in-process.  Process-pool
-        runners (``spawn``) pick up the plugin paths from ``CLITEST_PLUGIN_DIRS``
-        so that the lazy ``_load_comparators()`` in each worker discovers the
-        same workspace plugins.
+        runners (``spawn``) receive the same list explicitly via the pool
+        ``initializer`` (see ``parallel_runner``) — the framework NEVER
+        mutates ``os.environ``.
+
+        ``CLITEST_PLUGIN_DIRS`` remains a user-facing *input*: when set by
+        the user in the environment, ``_load_comparators()`` reads it as an
+        extra discovery source.  The framework only reads it, never writes
+        or deletes it.
 
         :param dirs: Iterable of absolute or relative directory paths.
         """
@@ -84,7 +246,6 @@ class ComparatorFactory:
                 deduped.append(resolved)
                 seen.add(resolved)
         ComparatorFactory._plugin_dirs = deduped
-        os.environ[_ENV_VAR] = os.pathsep.join(deduped)
         if ComparatorFactory._initialized:
             ComparatorFactory._load_from_dirs(deduped)
 
@@ -92,23 +253,25 @@ class ComparatorFactory:
     def _load_comparators():
         """
         @brief Load and register all available comparators
-        @details Automatically discovers and registers comparator classes from the package.
-                 This includes both built-in comparators and any additional comparators
-                 that follow the naming convention '*_comparator.py'.
+        @details Automatically discovers comparator classes from the package
+                 and from workspace plugin directories.  Both paths share the
+                 registration rules in :meth:`_register_comparator_class`.
         """
         package_dir = Path(__file__).parent
         for module_info in pkgutil.iter_modules([str(package_dir)]):
             if module_info.name.endswith('_comparator') and module_info.name != 'base_comparator':
                 try:
                     module = importlib.import_module(f".{module_info.name}", package=__package__)
-
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
-                        if (isinstance(attr, type) and
-                            attr.__module__ == module.__name__ and
-                            attr_name.endswith('Comparator')):
-                            type_name = attr_name.lower().replace('comparator', '')
-                            ComparatorFactory.register_comparator(type_name, attr)
+                        type_name = ComparatorFactory._register_comparator_class(
+                            attr, module.__name__,
+                        )
+                        if type_name:
+                            logger.debug(
+                                "Registered built-in comparator '%s' -> %s",
+                                type_name, attr_name,
+                            )
                 except ImportError as e:
                     logger.warning("Failed to import comparator module %s: %s", module_info.name, e)
 
@@ -156,11 +319,10 @@ class ComparatorFactory:
 
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
-                        if (isinstance(attr, type)
-                                and attr.__module__ == module.__name__
-                                and attr_name.endswith("Comparator")):
-                            type_name = attr_name.lower().replace("comparator", "")
-                            ComparatorFactory.register_comparator(type_name, attr)
+                        type_name = ComparatorFactory._register_comparator_class(
+                            attr, module.__name__,
+                        )
+                        if type_name:
                             logger.info(
                                 "Registered workspace plugin '%s' -> %s from %s",
                                 type_name, attr_name, py_file,
@@ -182,10 +344,11 @@ class ComparatorFactory:
 
     @staticmethod
     def reset():
-        """Reset all internal state (for testing)."""
+        """Reset all internal state (for testing).
+
+        Never touches ``os.environ`` — ``CLITEST_PLUGIN_DIRS`` belongs to
+        the user's environment, not to framework state.
+        """
         ComparatorFactory._comparators = {}
         ComparatorFactory._initialized = False
         ComparatorFactory._plugin_dirs = []
-        if _ENV_VAR in os.environ:
-            del os.environ[_ENV_VAR]
-

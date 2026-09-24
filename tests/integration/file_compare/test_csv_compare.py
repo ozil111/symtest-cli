@@ -2,12 +2,12 @@ from symtest.file_comparator.factory import ComparatorFactory
 
 
 def compare_csv(file1, file2, **kwargs):
-    comparator = ComparatorFactory.create_comparator("csv", **kwargs)
     compare_kwargs = {
-        key: kwargs[key]
+        key: kwargs.pop(key)
         for key in ("start_line", "end_line", "start_column", "end_column")
         if key in kwargs
     }
+    comparator = ComparatorFactory.create_comparator("csv", **kwargs)
     return comparator.compare_files(file1, file2, **compare_kwargs)
 
 

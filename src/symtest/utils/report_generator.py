@@ -15,6 +15,73 @@ def _format_flaky_label(detail: dict) -> str:
     return ""
 
 
+def _render_message_lines(prefix: str, message: str, cont_indent: str) -> str:
+    """Render a possibly multi-line message: first line gets ``prefix``,
+    continuation lines are indented with ``cont_indent`` so IDE
+    indentation-based folding stays intact."""
+    lines = str(message).splitlines() or [""]
+    out = f"{prefix}{lines[0]}\n"
+    for line in lines[1:]:
+        out += f"{cont_indent}{line}\n"
+    return out
+
+
+def _render_stats(es: dict, indent: str) -> str:
+    """Render an error_stats dict as flat ``key: value`` lines.
+
+    Used for autonomous/file-lane comparators.  Channel results are NEVER
+    inferred from dictionary shape — they are rendered exclusively from the
+    structured ``channels`` list (see :func:`_render_channels`).
+    """
+    out = ""
+    for key, val in es.items():
+        if isinstance(val, float):
+            out += f"{indent}{key}: {val:.6g}\n"
+        else:
+            out += f"{indent}{key}: {val}\n"
+    return out
+
+
+def _render_channels(channels: list, indent: str) -> str:
+    """Render a channels sub-result list (from serialized ChannelResult dicts).
+
+    ``channels`` is the ONLY authoritative structured channel source; each
+    entry renders its framework-owned canonical ``stats`` and its
+    plugin-owned ``extra_stats`` in separate blocks.
+    """
+    out = ""
+    for ch in channels:
+        verdict = "PASS" if ch.get("passed") else "FAIL"
+        out += (
+            f"{indent}channel '{ch.get('name')}': {verdict} "
+            f"(rtol={ch.get('rtol', 0):g}, atol={ch.get('atol', 0):g})\n"
+        )
+        stats = ch.get("stats")
+        if stats:
+            for key, val in stats.items():
+                if isinstance(val, float):
+                    out += f"{indent}  {key}: {val:.6g}\n"
+                else:
+                    out += f"{indent}  {key}: {val}\n"
+        extra = ch.get("extra_stats")
+        if extra:
+            out += f"{indent}  extra_stats:\n"
+            for key, val in extra.items():
+                if isinstance(val, float):
+                    out += f"{indent}    {key}: {val:.6g}\n"
+                else:
+                    out += f"{indent}    {key}: {val}\n"
+        diffs = ch.get("differences", [])
+        for d in diffs[:3]:
+            out += (
+                f"{indent}  {d.get('position')}: "
+                f"expected={d.get('expected')}, actual={d.get('actual')}\n"
+            )
+        if len(diffs) > 3:
+            out += f"{indent}  ... and {len(diffs) - 3} more\n"
+    return out
+
+
 class ReportGenerator:
     def __init__(self, results: dict, file_path: str):
         self.results = results
@@ -62,19 +129,22 @@ class ReportGenerator:
             if detail.get('description'):
                 report += f"   Description: {detail['description']}\n"
             if detail.get('message') and status != 'passed':
-                report += f"   -> {detail['message']}\n"
+                report += _render_message_lines("   -> ", detail['message'], "      ")
 
             # ── Error analysis for PASSED cases (--error-analysis-all) ──
+            # Channel results are rendered only from the structured
+            # ``channels`` list; error_stats is the flat fallback.
             if status == 'passed' and self.results.get('error_analysis_all'):
                 for ar in detail.get('assertion_results', []):
-                    es = ar.get('error_stats')
-                    if es:
-                        report += "   error_stats:\n"
-                        for key, val in es.items():
-                            if isinstance(val, float):
-                                report += f"     {key}: {val:.6g}\n"
-                            else:
-                                report += f"     {key}: {val}\n"
+                    channels = ar.get('channels')
+                    if channels:
+                        report += "   channels:\n"
+                        report += _render_channels(channels, indent="     ")
+                    else:
+                        es = ar.get('error_stats')
+                        if es:
+                            report += "   error_stats:\n"
+                            report += _render_stats(es, indent="     ")
 
         # 添加失败案例的详细输出信息（含 xfailed、xpassed、timeout 等非通过状态）
         failed_tests = [detail for detail in self.results['details'] if detail['status'] != 'passed']
@@ -130,15 +200,19 @@ class ReportGenerator:
                                 report += f"    max_rel_error: {ds['max_rel_error']:.6g} at {ds.get('max_rel_error_at')}\n"
                             if ds.get('max_abs_error') is not None:
                                 report += f"    max_abs_error: {ds['max_abs_error']:.6g} at {ds.get('max_abs_error_at')}\n"
-                        # ── Error analysis (full-dataset streaming stats) ──
-                        es = cf.get('error_stats')
-                        if es:
-                            report += "    error_stats:\n"
-                            for key, val in es.items():
-                                if isinstance(val, float):
-                                    report += f"      {key}: {val:.6g}\n"
-                                else:
-                                    report += f"      {key}: {val}\n"
+                        # ── Channel sub-results (data-lane comparators) —
+                        #    authoritative structured source; when present,
+                        #    flat error_stats is not rendered separately.
+                        channels = cf.get('channels')
+                        if channels:
+                            report += "    channels:\n"
+                            report += _render_channels(channels, indent="      ")
+                        else:
+                            # Error analysis (full-dataset streaming stats)
+                            es = cf.get('error_stats')
+                            if es:
+                                report += "    error_stats:\n"
+                                report += _render_stats(es, indent="      ")
                         diffs = cf.get('differences', [])
                         if diffs:
                             report += "    sample differences:\n"
@@ -169,7 +243,7 @@ class ReportGenerator:
                         status_icon = "✓" if sr.get('status') == 'passed' else "✗"
                         report += f"  {status_icon} Step {sr.get('step')}: {sr.get('status')} ({sr.get('duration', 0):.2f}s)\n"
                         if sr.get('message'):
-                            report += f"     -> {sr['message']}\n"
+                            report += _render_message_lines("     -> ", sr['message'], "        ")
 
                 # 添加 baseline_updated 信息
                 baseline_updated = failed_test.get('baseline_updated', [])

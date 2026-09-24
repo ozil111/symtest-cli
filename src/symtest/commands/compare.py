@@ -14,6 +14,7 @@ import argparse
 import logging
 from pathlib import Path
 from ..file_comparator.factory import ComparatorFactory
+from ..file_comparator.base_comparator import CompareContext
 from ..file_comparator.result import ComparisonResult
 
 logger = logging.getLogger("symtest.commands.compare")
@@ -144,15 +145,25 @@ def run_comparison(args, logger=None):
         file_type = detect_file_type(file1_path)
         logger.info(f"Auto-detected file type: {file_type}")
 
-    # Prepare comparator kwargs
+    # Prepare comparator kwargs — strictly scoped per type.  Comparators
+    # declare explicit constructor parameters, so universal knobs
+    # (encoding / chunk_size / num_threads) are only sent to types that
+    # actually accept them.  'verbose' is a framework-owned logging knob
+    # consumed by the factory.
     comparator_kwargs = {
-        "encoding": args.encoding,
-        "chunk_size": args.chunk_size,
         "verbose": args.verbose or args.debug,
-        "num_threads": args.num_threads
     }
-    
+
+    if file_type in ("text", "json", "csv", "xml", "h5"):
+        comparator_kwargs["encoding"] = args.encoding
+    if file_type in ("text", "json", "binary"):
+        comparator_kwargs["chunk_size"] = args.chunk_size
+
     # Add file type specific arguments
+    if file_type == "binary":
+        comparator_kwargs["num_threads"] = args.num_threads
+        comparator_kwargs["similarity"] = args.similarity
+
     if file_type == "json":
         comparator_kwargs["compare_mode"] = args.json_compare_mode
         if args.json_key_field:
@@ -180,20 +191,21 @@ def run_comparison(args, logger=None):
         if args.h5_data_filter:
             comparator_kwargs["data_filter"] = args.h5_data_filter
         comparator_kwargs["expand_path"] = args.h5_expand_path
-    
-    if file_type == "binary":
-        comparator_kwargs["similarity"] = args.similarity
 
     # Create comparator and perform comparison
     comparator = ComparatorFactory.create_comparator(file_type, **comparator_kwargs)
-    result = comparator.compare_files(
-        file1_path,
-        file2_path,
-        start_line,
-        end_line,
-        start_column,
-        end_column
+    # CLI semantics: file1 = first file (baseline slot), file2 = second (actual slot)
+    ctx = CompareContext(
+        actual=str(file2_path),
+        baseline=str(file1_path),
+        params={
+            "start_line": start_line,
+            "end_line": end_line,
+            "start_column": start_column,
+            "end_column": end_column,
+        },
     )
+    result = comparator.compare(ctx)
 
     # Output result
     output = format_result(result, args.output_format)

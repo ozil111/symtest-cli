@@ -13,7 +13,10 @@ from symtest.core.orchestration.accept import apply_baseline_accept
 from symtest.core.orchestration.single import execute_single_test_case
 from symtest.core.test_case import ExecutionSpec
 from symtest.core.validation.validator import validate_result
-from symtest.reporting.diagnosis import build_next_action_hint
+from symtest.reporting.diagnosis import (
+    attach_next_action_hint,
+    build_next_action_hint,
+)
 
 
 def _exec(output="", return_code=0, name="t"):
@@ -162,7 +165,9 @@ class TestExecuteSingleWithBaselineAccept:
 
             assert result["status"] == "failed"
             assert result["failure_kind"] == "file_compare"
-            assert result["next_action_hint"]["action"] == "update_baseline"
+            # Orchestration 只产 failure_kind；hint 由 reporting 装配点填充
+            assert result["next_action_hint"] is None
+            assert attach_next_action_hint(result)["action"] == "update_baseline"
             with open(os.path.join(d, "baseline.txt")) as f:
                 assert f.read() == "old\n"
 
@@ -178,6 +183,9 @@ class TestExecuteSingleWithBaselineAccept:
             )
 
             assert result["status"] == "failed"
-            assert result["next_action_hint"]["action"] == "investigate"
+            assert result["next_action_hint"] is None
+            assert attach_next_action_hint(
+                result, update_baseline=True,
+            )["action"] == "investigate"
             with open(os.path.join(d, "baseline.txt")) as f:
                 assert f.read() == "old\n"

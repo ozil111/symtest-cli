@@ -1,8 +1,8 @@
 """Phase 1 unit tests for the TestCase v2 layered model.
 
-Covers: 分层构造（metadata + Execution/Expectation/Scheduling Spec）、
-平铺关键字参数归一、属性直通访问器、单命令归一为单元素 steps、
-Spec 边界（execution 不携带 expected）、to_dict / to_execution_dict 形态。
+Covers: 平铺关键字参数构造（唯一构造路径）、子 Spec 归一、属性直通访问器、
+单命令归一为单元素 steps、Spec 边界（execution 不携带 expected）、
+to_dict / to_execution_dict 形态。
 """
 import copy
 
@@ -13,7 +13,7 @@ from symtest.core.test_case import (
     ExpectationSpec,
     SchedulingSpec,
     TestCase,
-    TestCaseStep,
+    TestStep,
 )
 
 
@@ -64,17 +64,16 @@ class TestLayeredConstruction:
         assert tc.scheduling.depends_on == []
         assert tc.scheduling.resources is None
 
-    def test_explicit_specs_take_precedence(self):
-        """显式传入子 Spec 时平铺参数被忽略。"""
+    def test_spec_kwargs_rejected(self):
+        """构造路径唯一：子 Spec 不是构造参数，显式传入直接 TypeError。"""
         spec = ExecutionSpec(command="explicit")
-        tc = TestCase(name="t", command="ignored", execution=spec)
-        assert tc.execution is spec
-        assert tc.command == "explicit"
+        with pytest.raises(TypeError):
+            TestCase(name="t", execution=spec)
 
     def test_sequence_mode(self):
         steps = [
-            TestCaseStep(command="a", args=[], expected={"return_code": 0}),
-            TestCaseStep(command="b", args=[], expected={}),
+            TestStep.from_flat(command="a", args=[], expected={"return_code": 0}),
+            TestStep.from_flat(command="b", args=[], expected={}),
         ]
         tc = TestCase(name="seq", steps=steps)
         assert tc.execution.steps is steps
@@ -115,7 +114,7 @@ class TestPassthroughAccessors:
         tc.timeout = 5
         tc.retry_count = 3
         tc.env = {"A": "B"}
-        tc.steps = [TestCaseStep(command="s", args=[], expected={})]
+        tc.steps = [TestStep.from_flat(command="s", args=[], expected={})]
         assert tc.execution.command == "ls"
         assert tc.execution.args == ["-l"]
         assert tc.execution.timeout == 5
@@ -180,7 +179,7 @@ class TestUnifiedSteps:
         assert TestCase(name="t", command="echo").is_single_command is True
 
     def test_sequence_all_steps_returns_steps_list(self):
-        steps = [TestCaseStep(command="s", args=[], expected={})]
+        steps = [TestStep.from_flat(command="s", args=[], expected={})]
         tc = TestCase(name="t", steps=steps)
         assert tc.all_steps == steps
 
@@ -197,7 +196,7 @@ class TestSpecBoundaries:
 
     def test_step_carries_its_own_expected(self):
         """steps 是"执行+判定"原子对，step 级 expected 属于 step。"""
-        step = TestCaseStep(command="a", args=[], expected={"return_code": 0})
+        step = TestStep.from_flat(command="a", args=[], expected={"return_code": 0})
         spec = ExecutionSpec(steps=[step])
         assert spec.steps[0].expected == {"return_code": 0}
 
@@ -233,7 +232,7 @@ class TestSerialization:
         tc = TestCase(
             name="seq",
             steps=[
-                TestCaseStep(command="a", args=["1"], expected={}, timeout=5.0),
+                TestStep.from_flat(command="a", args=["1"], expected={}, timeout=5.0),
             ],
         )
         assert tc.to_dict()["execution"]["steps"] == [
@@ -243,7 +242,7 @@ class TestSerialization:
 
     def test_to_dict_sequence_mode_omits_command_args(self):
         """steps 模式下 execution 省略 command/args（二选一）。"""
-        tc = TestCase(name="seq", steps=[TestCaseStep(command="a", args=[], expected={})])
+        tc = TestCase(name="seq", steps=[TestStep.from_flat(command="a", args=[], expected={})])
         execution = tc.to_dict()["execution"]
         assert "command" not in execution
         assert "args" not in execution
@@ -285,10 +284,10 @@ class TestSerialization:
         assert not hasattr(tc, "to_execution_dict")
 
     def test_deepcopy_works(self):
-        """TUI duplicate_case 依赖 deepcopy。"""
+        """TestCase 支持深拷贝（调用方复制用例的通用前提）。"""
         tc = TestCase(
             name="t",
-            steps=[TestCaseStep(command="a", args=[], expected={})],
+            steps=[TestStep.from_flat(command="a", args=[], expected={})],
         )
         clone = copy.deepcopy(tc)
         clone.name = "clone"

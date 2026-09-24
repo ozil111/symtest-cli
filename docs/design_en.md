@@ -13,8 +13,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  CLI Entry Layer    symtest run / tui / validate / schema /  │
-│                     compare-files (+ TUI interface)          │
+│  CLI Entry Layer    symtest run / find / validate / schema / │
+│                     compare-files                             │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -37,7 +37,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The framework is divided into four layers: **CLI Entry Layer** (including TUI),
+The framework is divided into four layers: **CLI Entry Layer**,
 **Runner / Comparator Business Layer**, **Config Pipeline Layer**, and
 **Core Foundation Layer**.
 
@@ -57,14 +57,13 @@ Responsibilities by package (file-level details and public APIs live in source):
 | `runners/` | Thin wrapper runners: Config/JSON/YAML × sequential/parallel |
 | `file_comparator/` | Comparator family + factory + workspace plugin discovery (see §6) |
 | `utils/` | Path resolution, report generation, JUnit XML output |
-| `tui/` | Interactive Textual case management (see §7) |
 
 ### 2.1 Entry Points
 
 | Command | Mapping |
 |---|---|
 | `symtest run` | `symtest.cli:run_tests` |
-| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest find` | `symtest.commands.find:run_find` |
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
@@ -164,10 +163,6 @@ stdout / stderr / returncode / duration) → assertions (return_code / contains 
 matches / compare_files) → retries on failure up to `retry_count` → kills the
 whole process group on timeout → structured result with `next_action_hint`.
 
-Today these behaviors are aggregated in one place; 1.4 rearranges them into
-Executor / Validator / Orchestration per the §10 Constitution (migration details
-in docs/design_1_4.md).
-
 ### 4.6 Assertions and File Comparison Integration
 
 - `compare_files` is a first-class assertion dispatched via ComparatorFactory (see §6)
@@ -208,17 +203,21 @@ guarantees they are unmodified.
 - Default exit code 0 → pass; optional `pass_pattern` / `fail_pattern` regexes refine the verdict on stdout
 - Timeout configurable
 
-## 7. TUI Subsystem
+## 7. Case Search Command (find)
 
-Textual-based terminal UI: App + Controller (load / create / update / delete /
-run_single / save actions) + list/edit screens + table wrapper, multi-mode
-search bar (name / command / tag), expected editor, steps editor.
+Replaces the search capability of the retired TUI: `symtest find` goes through
+exactly the same loading path as the runners (`load_config` auto-expands
+imports + resolves inheritance; `parse_test_cases` is the single system-wide
+parser), then matches cases in three modes (substring / fuzzy / regex, across
+name / command / args / tags / description) with optional tag filtering and
+JSON output (for AI / scripts). Exit codes follow grep semantics: 0 = match,
+1 = no match, 2 = error.
 
-Key bindings: `q` / Ctrl+Q quit, `r` refresh, `e` edit, `f` run single, `/`
-search, `a` add, `d` delete, `s` save.
-
-TUI and runners share the same parser; relaxed display shapes are handled on the
-TUI side itself (§10 Principle 6).
+The TUI's other responsibility (graphical case authoring/editing for people
+unfamiliar with writing configs) is now covered by the official skill
+(`skill/` at the repository root): AI coding assistants author/modify
+JSON/YAML configs directly from skill knowledge, with lower learning cost and
+no interactive UI maintenance burden.
 
 ## 8. Extension Points
 
@@ -229,7 +228,6 @@ TUI side itself (§10 Principle 6).
 | Custom assertions | Extend `Assertions` | Specific business validation logic |
 | New comparator | `BaseComparator` | Support new file formats; place in `comparators/` for auto-discovery |
 | New Runner | `ParallelRunner` / `BaseRunner` | Custom parallel scheduling strategies |
-| TUI extensions | `CaseController` / Widgets | Extend the terminal management interface |
 
 ## 9. Design Decisions
 
@@ -254,7 +252,7 @@ TUI side itself (§10 Principle 6).
 | DAG dependency scheduling | Kahn topology + ready queue; submits dependents immediately once deps are satisfied; cascade-skips downstream on dep failure; zero-overhead fast path when no deps declared |
 | --update-baseline | Automatically overwrites baseline files with actual output on comparison failure; ideal for batch baseline updates |
 | next_action_hint structured suggestions | Failed results include actionable suggestions (update_baseline / update_expected / increase_timeout / investigate), convenient for AI consumption |
-| TUI based on Textual | Leverages a mature terminal UI framework for interactive case management |
+| TUI removed; replaced by official skill + `symtest find` | Both TUI responsibilities have lighter replacements: case authoring/editing is done by AI assistants via the official skill; cross-file search is covered by the `find` command reusing the same parsing pipeline; removes the heavy textual dependency and interactive-UI maintenance burden |
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Centralized logging | All diagnostic messages go through Python's `logging` module; CLI entry activates console output; library users enable as needed |
 
@@ -266,8 +264,7 @@ TUI side itself (§10 Principle 6).
 > project's core architectural contract with supreme authority over all future
 > features — resolve ownership against this constitution before writing any code.
 > Amending it requires explicitly naming the clause being relaxed/waived and the
-> rationale in the change description. Pre-ratification evolution history lives in
-> the development-phase document docs/design_1_4.md.
+> rationale in the change description.
 
 ### 10.1 Data Flow Spine
 
@@ -351,11 +348,11 @@ to result consumers (diagnosis) and must not exist in the execution layer.
 
 #### Principle 6 — The core model does not depend on presentation
 
-`core` must never import: `cli` / `tui` / `reporter` / AI-specific adapters.
+`core` must never import: `cli` / `reporter` / AI-specific adapters.
 
-One parser for the whole system: TUI and runners use the same parser; a "TUI
-mode back door" (e.g., relaxed validation when workspace=None) is forbidden;
-relaxed shapes are handled on the TUI side itself.
+One parser for the whole system: no relaxed-parsing back door is allowed
+(e.g., relaxed validation when workspace=None); relaxed shapes are normalized
+by the caller before invoking the parser.
 
 ### 10.3 Module Dependency Direction
 
@@ -370,7 +367,7 @@ Forbidden:
 - `execution` and `validation` must not import each other;
 - the `executor` must not import `assertions` / validation-side modules;
 - the `validator` must not launch the process under test (see Principle 3);
-- `core` must not import `cli` / `tui` / `reporter`.
+- `core` must not import `cli` / `reporter`.
 
 ### 10.4 Ownership Quick Reference
 
@@ -394,21 +391,7 @@ architecture guard tests enforced by CI:
 
 - Assert the import graph: e.g., imports of `execution/executor.py` must not
   contain `assertions` / `validation`; `core/**` must not import `cli` /
-  `tui` / `reporter`;
+  `reporter`;
 - Guard tests are part of the regular regression suite
   (`python tests\run_all.py`); violations fail the build;
 - Conflict resolution order: guard tests > this text > personal preference.
-
-### 10.6 Current Gap to This Constitution
-
-Known deviations of the current implementation from this constitution as of
-ratification (1.4 Phase 0). Each item converges during the corresponding 1.4
-phase (migration details in docs/design_1_4.md):
-
-| Current state | Violated | Convergence |
-|---|---|---|
-| `execution.py::validate_result` lives in the execution layer | Principle 2 | Phase 2: move to `validation/validator.py` |
-| `next_action_hint` built in the execution layer | Principle 5 | Phase 2: move to `reporting/diagnosis.py` |
-| Retry loop inside the executor | Principles 2 / 4 | Phase 2: lift to orchestration |
-| update_baseline writes files inside validation | Principle 3 | Phase 2: runner-side independent accept step |
-| `parse_test_cases` TUI-mode back door | Principle 6 | Phase 2: remove; single parser |

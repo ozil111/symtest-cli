@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from .logging_config import setup_console_logging
+from .reporting.diagnosis import attach_next_action_hints
 from .runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
 from .utils.report_generator import ReportGenerator
 from .utils.junit_xml_writer import write_junit_xml
@@ -77,7 +78,7 @@ Examples:
   symtest run test_cases.json
   symtest run test_cases.json --parallel --workers 4
   symtest run test_cases.yaml --workspace /path/to/project
-  symtest tui test_cases.json
+  symtest find main_config.json "login"
   symtest validate main_config.json
   symtest migrate old.json --output new.json
   symtest compare file1.json file2.json
@@ -140,32 +141,33 @@ Examples:
                                 '(can be used multiple times). '
                                 'The workspace/comparators/ directory is always auto-detected.')
 
-    # ---- TUI command ----
-    tui_parser = subparsers.add_parser(
-        'tui', help='Launch interactive TUI for managing test cases'
+    # ---- Find command ----
+    find_parser = subparsers.add_parser(
+        'find', help='Search test cases across all imported configurations '
+                     '(auto-expands import references)'
     )
-    tui_parser.add_argument(
+    find_parser.add_argument(
         'config_file', help='Path to the test configuration file (JSON or YAML)'
     )
-    tui_parser.add_argument(
+    find_parser.add_argument(
+        'pattern', nargs='?', default='',
+        help='Search pattern (empty pattern lists all cases)'
+    )
+    find_parser.add_argument(
+        '--mode', choices=['substring', 'fuzzy', 'regex'], default='substring',
+        help='Search mode (default: substring, case-insensitive)'
+    )
+    find_parser.add_argument(
+        '--tag', action='append', default=None,
+        help='Only show cases with matching tag (exact match, can be used '
+             'multiple times)'
+    )
+    find_parser.add_argument(
         '--workspace', '-w', help='Working directory'
     )
-    tui_parser.add_argument(
-        '--update-baseline', action='store_true',
-        help='On comparison failure, overwrite baseline files with actual output'
-    )
-    tui_parser.add_argument(
-        '--yes', '-y', action='store_true',
-        help='Confirm baseline updates without prompting'
-    )
-    tui_parser.add_argument(
-        '--history-dir',
-        help='Directory for .symtest runtime history (enables regression detection per case)'
-    )
-    tui_parser.add_argument(
-        '--update-history', action='store_true',
-        help='Clear .symtest runtime history for run-involved cases before '
-             'recording this run (requires --history-dir)'
+    find_parser.add_argument(
+        '--output-format', choices=['text', 'json'], default='text',
+        help='Output format (default: text)'
     )
 
     # ---- Validate command ----
@@ -206,6 +208,12 @@ Examples:
     migrate_parser.add_argument(
         '--output', '-o',
         help='Output path (default: <stem>.v2<ext>, e.g. old.json -> old.v2.json)',
+    )
+    migrate_parser.add_argument(
+        '--in-place', action='store_true',
+        help='Migrate the config and every file it imports recursively, '
+             'overwriting each file in place (originals are not kept; '
+             'mutually exclusive with --output)',
     )
 
     # ---- Compare command ----
@@ -396,6 +404,15 @@ def run_tests(args):
         # Output results using ReportGenerator and honor --output-format
         if hasattr(runner, 'results'):
             results = runner.results
+
+            # ── Reporting 装配点（原则 5）：next_action_hint 在报告输出前
+            # 按 failure_kind 填充，orchestration 只产出失败结论 ──
+            attach_next_action_hints(
+                results,
+                update_baseline=bool(getattr(args, 'update_baseline', False)),
+                config_path=str(config_file),
+            )
+
             output_format = getattr(args, 'output_format', 'text')
 
             if output_format == 'json':
@@ -470,21 +487,11 @@ def run_compare(args):
     return bool(exit_code == 0)
 
 
-def run_tui(args):
-    """Launch the TUI manager."""
-    from .tui.app import run_tui as _run_tui
+def run_find(args):
+    """Search test cases across imported configurations."""
+    from .commands.find import run_find as _run_find
 
-    if not _confirm_baseline_update(args):
-        return False
-
-    update_baseline = getattr(args, 'update_baseline', False)
-    history_dir = getattr(args, 'history_dir', None)
-    update_history = getattr(args, 'update_history', False)
-    _run_tui(args.config_file, args.workspace,
-             update_baseline=update_baseline,
-             history_dir=history_dir,
-             update_history=update_history)
-    return True
+    return _run_find(args)
 
 
 def run_validate(args):
@@ -547,6 +554,19 @@ def run_migrate(args) -> bool:
     return _run_migrate(args)
 
 
+def _to_exit_code(result) -> int:
+    """Single exit-code conversion point for all sub-command handlers.
+
+    Handlers return either a bool (``False`` = failure → 1) or an int exit
+    code directly (commands with richer semantics, e.g. ``find``:
+    0 = match, 1 = no match, 2 = error). No branch in ``main`` should
+    convert codes itself.
+    """
+    if isinstance(result, bool):
+        return 0 if result else 1
+    return int(result)
+
+
 def main():
     """Main entry point for the CLI"""
     parser = create_parser()
@@ -559,27 +579,22 @@ def main():
     setup_console_logging(level=level)
 
     if args.command == 'run':
-        success = run_tests(args)
         # 0 = all passed, 1 = test failures, 2 = config/framework errors
-        sys.exit(0 if success else 1)
-    elif args.command == 'tui':
-        success = run_tui(args)
-        if success is False:
-            sys.exit(1)
+        sys.exit(_to_exit_code(run_tests(args)))
+    elif args.command == 'find':
+        # grep-style exit codes: 0 = match, 1 = no match, 2 = error
+        sys.exit(_to_exit_code(run_find(args)))
     elif args.command == 'validate':
-        success = run_validate(args)
         # 0 = valid, 1 = validation errors found
-        sys.exit(0 if success else 1)
+        sys.exit(_to_exit_code(run_validate(args)))
     elif args.command == 'schema':
         run_schema()
         sys.exit(0)
     elif args.command == 'migrate':
-        success = run_migrate(args)
         # 0 = migrated, 1 = input/format errors
-        sys.exit(0 if success else 1)
+        sys.exit(_to_exit_code(run_migrate(args)))
     elif args.command == 'compare':
-        success = run_compare(args)
-        sys.exit(0 if success else 1)
+        sys.exit(_to_exit_code(run_compare(args)))
     else:
         parser.print_help()
         sys.exit(1)

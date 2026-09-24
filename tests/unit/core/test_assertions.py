@@ -5,7 +5,9 @@ import tempfile
 
 import pytest
 
-from symtest.core.validation.assertions import Assertions, _detect_file_type
+from symtest.core.validation.assertions import (
+    Assertions, ValidationError, _detect_file_type,
+)
 from symtest.core.validation.assertions import Assertions as AS  # alias for dispatch tests
 from symtest.core.validation.validator import validate_result, _dispatch_file_compare
 from symtest.core.execution.result import ExecutionResult
@@ -134,12 +136,24 @@ def test_compare_files_does_not_override_absolute_paths():
 # ---------------------------------------------------------------------------
 
 def test_compare_files_passes_kwargs_to_comparator():
-    """rtol/atol are forwarded to the H5 comparator (should not error)."""
+    """rtol/atol are forwarded to comparators that declare them (csv)."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _write_two(d, "a.csv", "b.csv", "same\n")
+        # rtol / atol are declared by the csv comparator
+        result = Assertions.compare_files(a, b, file_type="csv", rtol=1e-5, atol=1e-8)
+        assert result["identical"]
+
+
+def test_compare_files_unknown_kwargs_fail_loudly():
+    """Strict configuration: a misspelled/unknown parameter must fail loudly
+    identifying the comparator type, never silently fall back to defaults."""
     with tempfile.TemporaryDirectory() as d:
         a, b = _write_two(d, "a.txt", "b.txt", "same\n")
-        # rtol / atol are H5-specific; TextComparator ignores unknown kwargs
-        result = Assertions.compare_files(a, b, file_type="text", rtol=1e-5, atol=1e-8)
-        assert result["identical"]
+        with pytest.raises(ValidationError) as exc_info:
+            Assertions.compare_files(a, b, file_type="text", rtol=1e-5)
+        message = str(exc_info.value)
+        assert "TextComparator" in message
+        assert "rtol" in message
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +186,7 @@ def test_validate_result_compare_files_passes():
                 "assertion": "compare_files",
                 "passed": True,
                 "error_stats": None,
+                "channels": [],
                 "compare_failures": [],
                 "baseline_updated": [],
                 "message": "",

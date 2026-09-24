@@ -10,8 +10,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  CLI 入口层    symtest run / tui / validate / schema /       │
-│                compare-files（+ TUI 交互界面）                │
+│  CLI 入口层    symtest run / find / validate / schema /      │
+│                compare-files                                  │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -32,7 +32,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-框架分为四层：**CLI 入口层**（含 TUI）、**Runner / Comparator 业务层**、**Config 管线层**、**Core 基础层**。
+框架分为四层：**CLI 入口层**、**Runner / Comparator 业务层**、**Config 管线层**、**Core 基础层**。
 
 层与层不是自由组合：跨层数据流与依赖方向受 §10「核心架构宪法」约束，
 新增 feature 请先对照宪法确定归属。
@@ -49,14 +49,13 @@
 | `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
 | `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
 | `utils/` | 路径解析、报告生成、JUnit XML 输出 |
-| `tui/` | Textual 交互式用例管理（详见 §7） |
 
 ### 2.1 入口点
 
 | 命令 | 映射 |
 |---|---|
 | `symtest run` | `symtest.cli:run_tests` |
-| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest find` | `symtest.commands.find:run_find` |
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
@@ -155,14 +154,11 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 → 超时 kill 整个进程组
 → 返回附带 `next_action_hint` 的结构化结果。
 
-当前实现的上述行为仍聚合在一处；1.4 将按 §10 宪法重排为
-Executor / Validator / Orchestration 三段（迁移明细见 docs/design_1_4.md）。
-
 ### 4.6 断言与文件比较集成
 
 - `compare_files` 是一等断言，经 ComparatorFactory 按类型分发（详见 §6）
 - 所有断言可选；未声明的字段不做校验
-- `--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：`total_numeric_cells` / `mismatched_cells` / `max_abs_error` / `max_rel_error` / `mean_abs_error` / `rms_abs_error`
+- `--error-analysis` 为 CSV/H5 数值比较提供流式误差统计：`total_numeric_cells` / `mismatched_cells` / `max_abs_error` / `max_rel_error` / `mean_abs_error` / `rms_abs_error`；幅值统计（max/mean/rms）覆盖全体参与比较的数值单元格（含通过格），mean/rms 以 `total_numeric_cells` 为分母。`--error-analysis-all` 额外对通过用例输出统计，除此之外两者行为一致
 
 ## 5. 运行时状态持久化（`.symtest/`）
 
@@ -178,33 +174,68 @@ Executor / Validator / Orchestration 三段（迁移明细见 docs/design_1_4.md
 
 ## 6. 文件比较子系统
 
-### 6.1 比较器分层
+### 6.1 三泳道比较器架构
 
-- 文本系比较器共享 difflib 行级基底，json / csv / xml 为其结构化特化（键对齐 / 列结构 / DOM 对齐）
-- h5 面向科学数据集；binary 流式分块 + LCS 相似度；script 委托外部脚本
-- 统一返回 ComparisonResult（identical / differences / error / script command_output），支持 text / json / html 渲染；支持行列窗口范围参数截取后比较
+所有比较器共享根契约 `ComparatorBase.compare(ctx) -> ComparisonResult`：
+框架构建 `CompareContext`（workspace / actual / baseline / params / error_analysis）；
+`actual`/`baseline` 以及插件 `path_params` 声明的构造参数在**比较器构造之前**
+按 workspace 统一解析，插件不得自行对 CWD resolve。配置单一事实源：
+比较器配置只存在于构造器捕获的实例状态，`ctx` 仅承载调用级上下文。
+三条泳道职责互斥：
 
-### 6.2 工厂与插件发现
+| 泳道 | 基类 | 契约 | verdict 归属 | 内置实例 |
+|---|---|---|---|---|
+| 文件泳道 | `FileComparator` | `read_content` + `compare_content`（两文件模型，行列窗口、line N 偏移、chunk_size、similarity 均属本泳道） | 插件 | text / json / csv / xml / h5 / binary |
+| 数据泳道 | `ExtractorComparator` | `extract(ctx) -> {channel: ChannelData}`；框架逐通道跑 `compare_numeric`，per-channel 容差（`channels` / `default_channel`），聚合 `ChannelResult` | **框架**（容差语义对 AI 消费端可预期） | script_extract、extractor 插件 |
+| 自主泳道 | 直接继承根 | `compare(ctx)` 全权判定 | 插件 | script、hourglass 式分析插件 |
 
-- `file_type` 取值：`text` / `json` / `csv` / `xml` / `h5` / `binary` / `script`；工厂按类型分发，支持动态注册与全局 reset（测试用）
-- 插件发现四处来源：内置 `*_comparator.py` 自动发现、`workspace/comparators/` 自动扫描、`--plugin-dir` CLI 参数、`CLITEST_PLUGIN_DIRS` 环境变量（供进程模式 worker 使用）
-- 命名约定：`*_comparator.py` + `*Comparator` 类名
+- 文本系共享 difflib 行级基底，json / csv / xml 为其结构化特化；h5 面向科学数据集；binary 流式分块 + LCS 相似度
+- 统一返回 `ComparisonResult`（identical / differences / error / error_stats / command_output / channels），支持 text / json / html 渲染
+- 数据泳道插件可通过 `ChannelData.extra_stats` 附带自定义误差指标，存放在独立命名空间（`ChannelResult.extra_stats`），不可覆盖框架规范指标；但 verdict 仍由框架容差持有——需要自定 verdict 的走自主泳道
 
-### 6.3 script 比较协议（对外契约）
+### 6.2 通道协议（数据泳道）
 
-- 子进程方式执行 `<interpreter> <script> <actual> <baseline>`
+- 通道判定：`identical = all(channels.passed)`；差异 position 带通道前缀（`channel S33`）；`error_stats` 按通道名嵌套
+- 内置 `script_extract` 类型：子进程执行用户脚本（零改动接入），脚本 stdout 输出约定 JSON：
+
+```json
+{"channels": {"S11": {"expected": [...], "actual": [...], "extra_stats": {...}}}}
+```
+
+  非零退出、超时、畸形 JSON 一律判为比较 error（绝不静默通过）；`actual`/`baseline` 按惯例以 baseline 在前的顺序追加为尾部 argv 槽位（可缺省）
+- 结果粒度：一条 compareSpec = 一条断言；`ComparisonResult.channels` 携带通道级子结果，报告逐通道展示 pass/fail + stats；JSON 输出中通道 differences 按 per-channel 配额截断
+
+### 6.3 工厂与插件发现
+
+- `file_type` 取值：`text` / `json` / `csv` / `xml` / `h5` / `binary` / `script` / `script_extract`；工厂按类型分发，支持动态注册与全局 reset（测试用）
+- 插件发现四处来源：内置 `*_comparator.py` 自动发现、`workspace/comparators/` 自动扫描、`--plugin-dir` CLI 参数、`CLITEST_PLUGIN_DIRS` 环境变量（用户声明的输入；框架只读，进程模式 worker 经进程池 initializer 显式接收插件目录，框架从不修改 `os.environ`）
+- 命名约定：`*_comparator.py` + `*Comparator` 类名；可用类属性 `comparator_type` 显式指定类型名（如 `script_extract`）；抽象基类自动跳过注册
+- 配置传递与严格校验：`actual`/`baseline`/`type`/`options` 之外的键转发给比较器构造函数（kwargs）；构造器参数是**严格**的——未声明的键（拼写错误）在构造时大声失败并给出支持参数清单。`options` 是框架持有的插件配置命名空间（并入构造参数，显式顶层键优先），核心 schema 不为单个插件增加专属字段；`channels`/`default_channel` 属数据泳道框架结构
+
+### 6.4 script 比较协议（自主泳道对外契约）
+
+- 子进程方式执行 `<interpreter> <script> <baseline> <actual>`（文件槽位可缺省）
 - 默认 exit code 0 → 通过；可选 `pass_pattern` / `fail_pattern` 正则匹配 stdout 细化判定
 - 超时可配
 
-## 7. TUI 子系统
+### 6.5 插件公共 API
 
-基于 Textual 的终端交互界面：App + Controller（load / create / update /
-delete / run_single / save 业务动作）+ 列表 / 编辑两屏 + 表格封装、多模式搜索条
-（名称 / 命令 / 标签）、expected 编辑器、steps 编辑器。
+`symtest.file_comparator` 包导出：`ComparatorBase` / `CompareContext` /
+`FileComparator` / `ExtractorComparator` / `ChannelData` / `ChannelResult` /
+`compare_numeric` / `NumericComparisonStats` / `parse_data_filter`。
+数据泳道插件只需依赖 `ExtractorComparator` + `ChannelData`，数值判定全部复用框架核心。
 
-快捷键：`q` / Ctrl+Q 退出、`r` 刷新、`e` 编辑、`f` 单跑、`/` 搜索、`a` 新增、`d` 删除、`s` 保存。
+## 7. 用例搜索命令（find）
 
-TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处理（§10 原则 6）。
+替代已移除的 TUI 搜索能力：`symtest find` 走与 runner 完全相同的加载路径
+（`load_config` 自动展开 import + 继承解析，`parse_test_cases` 全系统唯一
+解析器），在展开后的用例集上按三种模式匹配（子串 / 模糊 / 正则，字段覆盖
+name / command / args / tags / description），支持叠加标签过滤与 JSON 输出
+（供 AI / 脚本消费）。退出码沿用 grep 语义：有匹配 0、无匹配 1、错误 2。
+
+原 TUI 的另一职责（给不习惯写配置的同事提供图形化定义/修改用例）由官方
+skill（仓库根 `skill/`）承担：AI 编程助手按 skill 知识直接生成/修改
+JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 
 ## 8. 扩展点
 
@@ -213,9 +244,8 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 | 新配置格式 | `BaseRunner` | 支持新的测试定义格式（如 XML、TOML） |
 | 自定义 Setup | `BaseSetup` | 数据库初始化、服务启停等 |
 | 自定义断言 | 扩展 `Assertions` | 特定业务校验逻辑 |
-| 新比较器 | `BaseComparator` | 支持新的文件格式比较，放入 `comparators/` 目录自动发现 |
+| 新比较器 | `FileComparator` / `ExtractorComparator` / `ComparatorBase` | 按泳道选择基类（文件格式 / 数据提取+通道 / 全权分析），放入 `comparators/` 目录自动发现 |
 | 新 Runner | `ParallelRunner` / `BaseRunner` | 自定义并行调度策略 |
-| TUI 扩展 | `CaseController` / Widgets | 扩展终端管理界面 |
 
 ## 9. 设计决策
 
@@ -241,7 +271,7 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 | DAG 依赖调度 | 基于 Kahn 拓扑 + 就绪队列，依赖满足后立即提交；依赖失败级联 skip 下游；无依赖时走 fast path 零开销 |
 | --update-baseline | 比较失败时自动将实际输出覆盖 baseline，适合批量更新基准 |
 | next_action_hint 结构化建议 | 失败结果附带下一步操作建议（update_baseline / update_expected / increase_timeout / investigate），便于 AI 消费 |
-| TUI 基于 Textual | 利用成熟的终端 UI 框架，提供交互式用例管理 |
+| 移除 TUI，由官方 skill + `symtest find` 替代 | TUI 的两大职责均有更轻替代：定义/修改用例由 AI 编程助手按官方 skill 完成，跨文件搜索由复用同一解析管线的 `find` 命令覆盖；移除后砍掉 textual 重依赖与交互界面维护负担 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
 
@@ -252,7 +282,6 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 > **地位与效力**：本节自 Symtest 1.4 Phase 0 评审定稿，是本项目的核心架构契约，
 > 对所有后续 feature 具有最高约束力——任何功能需求先对照本宪法确定归属，再写代码。
 > 修订宪法必须在变更说明中显式指出所放宽/违反的条款及理由。
-> 定稿前的演进推导见开发阶段文档 docs/design_1_4.md。
 
 ### 10.1 数据流主线
 
@@ -330,10 +359,10 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 
 #### 原则 6 — 核心模型不依赖表现层
 
-`core` 绝对不能 import：`cli` / `tui` / `reporter` / AI-specific adapter。
+`core` 绝对不能 import：`cli` / `reporter` / AI-specific adapter。
 
-解析器全系统唯一：TUI 与 runner 使用同一 parser，不允许存在 "TUI mode 后门"
-（如 workspace=None 时放宽校验）；宽松形态由 TUI 侧自行处理。
+解析器全系统唯一：不允许存在宽松解析后门（如 workspace=None 时放宽校验）；
+宽松形态由调用方先 normalize 再调用。
 
 ### 10.3 模块依赖方向
 
@@ -348,7 +377,7 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 - `execution` 与 `validation` 互不 import；
 - `executor` 不得 import `assertions` / validation 侧模块；
 - `validator` 不得启动被测进程（见原则 3）；
-- `core` 不得 import `cli` / `tui` / `reporter`。
+- `core` 不得 import `cli` / `reporter`。
 
 ### 10.4 违宪归属速查
 
@@ -369,20 +398,7 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 宪法不是纯文档约定，配套 architecture guard 测试并由 CI 强制：
 
 - 断言 import 图：如 `execution/executor.py` 的 import 不得出现
-  `assertions` / `validation`；`core/**` 不得 import `cli` / `tui` /
+  `assertions` / `validation`；`core/**` 不得 import `cli` /
   `reporter`；
 - guard 测试纳入常规回归套件（`python tests\run_all.py`），违规即失败；
 - 冲突裁决次序：guard 测试 > 本节文字 > 个人偏好。
-
-### 10.6 现状差距与收敛路径
-
-定稿时刻（1.4 Phase 0）现行实现与本宪法的已知偏差如下，将在 1.4 对应 Phase 内
-逐项收敛（迁移明细见 docs/design_1_4.md）：
-
-| 现状 | 违反 | 收敛 |
-|---|---|---|
-| `execution.py::validate_result` 住在执行层 | 原则 2 | Phase 2 迁入 `validation/validator.py` |
-| `next_action_hint` 在 execution 层构造 | 原则 5 | Phase 2 迁入 `reporting/diagnosis.py` |
-| retry 循环在 executor 内部 | 原则 2 / 4 | Phase 2 上移编排层 |
-| Validator 侧 update_baseline 写文件 | 原则 3 | Phase 2 改为 runner 独立 accept 步骤 |
-| `parse_test_cases` TUI mode 后门 | 原则 6 | Phase 2 拆除，单一解析器 |

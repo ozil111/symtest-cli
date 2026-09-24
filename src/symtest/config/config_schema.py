@@ -95,33 +95,67 @@ CONFIG_SCHEMA: Dict[str, Any] = {
             "description": (
                 "One file comparison rule. actual/baseline are required for built-in "
                 "file-type comparators (text/csv/json/xml/h5/binary). "
-                "They are optional for script or custom (plugin) comparator types. "
-                "Keys other than those listed below are forwarded to the comparator "
-                "as kwargs (e.g. rtol, atol, encoding, tables, data_filter, "
-                "pass_threshold, pass_pattern)."
+                "They are optional for script, script_extract, or custom (plugin) "
+                "comparator types. "
+                "Other keys are forwarded to the comparator constructor as kwargs "
+                "(e.g. rtol, atol, encoding, tables, data_filter, pass_threshold, "
+                "pass_pattern) and are STRICT: a parameter the comparator does not "
+                "declare fails construction loudly. Use 'options' for plugin-owned "
+                "configuration. Framework resolves actual/baseline and plugin "
+                "path_params-declared paths against the workspace before the "
+                "comparator is constructed."
             ),
             "properties": {
                 "actual": {
                     "type": "string",
-                    "description": "File produced by the test command. Optional when type is 'script' or a workspace plugin.",
+                    "description": "File produced by the test command. Optional when type is 'script', 'script_extract', or a workspace plugin.",
                 },
                 "baseline": {
                     "type": "string",
-                    "description": "Golden/reference file. Optional when type is 'script' or a workspace plugin.",
+                    "description": "Golden/reference file. Optional when type is 'script', 'script_extract', or a workspace plugin.",
                 },
                 "type": {
                     "type": "string",
                     "description": (
-                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary, script. "
+                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary, "
+                        "script, script_extract. "
                         "Custom (workspace plugin) comparator types are also allowed. "
                         "Omit to auto-detect from the actual file extension."
+                    ),
+                },
+                "options": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": (
+                        "Plugin-owned configuration namespace. Entries are merged "
+                        "into the comparator constructor kwargs (explicit top-level "
+                        "keys take precedence). Preferred over adding plugin-specific "
+                        "top-level keys; unknown parameters fail loudly at "
+                        "construction, so typos are reported instead of silently "
+                        "falling back to defaults."
+                    ),
+                },
+                "channels": {
+                    "type": "object",
+                    "description": (
+                        "Per-channel tolerance overrides for data-lane comparators "
+                        "(script_extract / extractor plugins). Maps channel name to "
+                        "{'rtol':…, 'atol':…, 'data_filter':…}. Channels not listed "
+                        "use default_channel."
+                    ),
+                },
+                "default_channel": {
+                    "type": "object",
+                    "description": (
+                        "Default tolerance spec {'rtol':…, 'atol':…, 'data_filter':…} "
+                        "applied to channels not listed in 'channels'."
                     ),
                 },
                 "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
                 "end_line": {"type": "integer", "minimum": 1, "description": "Only compare up to this line (1-based)."},
                 "start_column": {"type": "integer", "minimum": 1, "description": "Only compare from this column (1-based)."},
                 "end_column": {"type": "integer", "minimum": 1, "description": "Only compare up to this column (1-based)."},
-                "script": {"type": "string", "description": "Path to the analysis script (script / custom comparator types)."},
+                "script": {"type": "string", "description": "Path to the analysis script (script / script_extract / custom comparator types)."},
                 "case_dir": {"type": "string", "description": "Working directory for the analysis script."},
                 "cwd": {"type": "string", "description": "Working directory for script execution (alias for case_dir)."},
                 "pass_threshold": {"type": "number", "description": "Numeric threshold below which the comparison is considered a pass."},
@@ -164,11 +198,24 @@ CONFIG_SCHEMA: Dict[str, Any] = {
         },
         "executionSpec": {
             "type": "object",
-            "additionalProperties": False,
             "description": (
                 "Execution semantics (v2): single-command shorthand "
                 "(command/args/timeout/retry_count/env) OR the full steps form "
-                "(steps[]) — 二选一. Case-level env applies to all steps."
+                "(steps[]) — 二选一，由 oneOf 强制互斥. Case-level env applies "
+                "to all steps. Declaring both forms is a schema violation."
+            ),
+            "oneOf": [
+                {"$ref": "#/$defs/commandExecution"},
+                {"$ref": "#/$defs/stepsExecution"},
+            ],
+        },
+        "commandExecution": {
+            "type": "object",
+            "required": ["command", "args"],
+            "additionalProperties": False,
+            "description": (
+                "Single-command shorthand form: requires command + args; "
+                "the steps form must not be declared alongside."
             ),
             "properties": {
                 "command": {
@@ -201,11 +248,40 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                         "and scheduler-injected environment variables."
                     ),
                 },
+            },
+        },
+        "stepsExecution": {
+            "type": "object",
+            "required": ["steps"],
+            "additionalProperties": False,
+            "description": (
+                "Full steps form: requires steps; command/args must not be "
+                "declared alongside."
+            ),
+            "properties": {
                 "steps": {
                     "type": "array",
                     "minItems": 1,
                     "items": {"$ref": "#/$defs/step"},
                     "description": "Steps run in order with fail-fast semantics.",
+                },
+                "timeout": {
+                    "type": ["number", "null"],
+                    "description": "Timeout in seconds (default 3600); null = no limit.",
+                },
+                "retry_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["string", "number", "boolean"]},
+                    "description": (
+                        "Case-level environment variables injected into every "
+                        "step (subprocess). Overrides setup-level and "
+                        "scheduler-injected environment variables."
+                    ),
                 },
             },
         },

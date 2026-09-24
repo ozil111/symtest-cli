@@ -8,25 +8,16 @@
 
 形态说明：
 - ``to_dict()`` 输出 v2 分层配置形态（execution/expected/scheduling），
-  可直接写入配置文件（TUI 保存路径即消费方）；
-- 构造函数保留平铺关键字参数作为 legacy 语义归一入口（TUI 编辑路径、
-  迁移等价性测试的 legacy 侧复用它）；
+  可直接写入配置文件；
+- 构造路径唯一：DSL 平铺关键字参数（配置解析、迁移
+  等价性测试共用同一入口）；子 Spec 是内部数据结构，不是构造参数；
 - ``case.command`` / ``case.expected`` / ``case.env`` ... 等属性直通访问器
-  映射到子 Spec，使现有 ``case.xxx`` 访问点零改动。
+  是唯一的公开读写接口，映射到子 Spec；
+- 序列步骤为 :class:`TestStep`（execution + expectation 分层）；
+  ``TestStep.from_flat`` 是 DSL 平铺字段的归一入口。
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-
-
-@dataclass
-class TestCaseStep:
-    """A single step within a sequence test case."""
-    __test__ = False
-    command: str
-    args: List[str]
-    expected: Dict[str, Any]
-    timeout: Optional[float] = None
-    retry_count: int = 0
 
 
 @dataclass
@@ -34,8 +25,9 @@ class ExecutionSpec:
     """执行语义：一个执行单元（case 或 step）要执行什么。
 
     纯数据，不包含任何判定语义（expected 属于 ExpectationSpec）。
-    ``steps`` 非 None 表示 sequence 模式（steps 为原子"执行+判定"对列表）；
-    为 None 表示单命令模式，由 ``command/args/timeout/retry_count`` 描述。
+    ``steps`` 非 None 表示 sequence 模式（steps 为 ``TestStep`` 列表，
+    每项是原子"执行+判定"对）；为 None 表示单命令模式，由
+    ``command/args/timeout/retry_count`` 描述。
     """
     __test__ = False
     name: str = ""
@@ -44,7 +36,7 @@ class ExecutionSpec:
     timeout: Optional[float] = None
     retry_count: int = 0
     env: Dict[str, str] = field(default_factory=dict)
-    steps: Optional[List[TestCaseStep]] = None
+    steps: Optional[List["TestStep"]] = None
 
 
 @dataclass
@@ -57,6 +49,81 @@ class ExpectationSpec:
     """
     __test__ = False
     assertions: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TestStep:
+    """序列中的一个原子步骤：execution + expectation 分层（1.4 v2 模型）。
+
+    DSL 形态不变（step dict：``command/args/expected/timeout/retry_count``），
+    由 parser / ``from_flat`` 负责归一；本类型提供平铺直通访问器，使
+    duck-typing 消费点（``_step_attr``、``compute_config_hash`` 等）零改动。
+    """
+    __test__ = False
+    execution: ExecutionSpec
+    expectation: ExpectationSpec
+
+    @classmethod
+    def from_flat(
+        cls,
+        command: str,
+        args: List[str],
+        expected: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+        retry_count: int = 0,
+    ) -> "TestStep":
+        """DSL 平铺字段 → 分层 TestStep（parser / wire dict 重建入口）。"""
+        return cls(
+            execution=ExecutionSpec(
+                command=command, args=args,
+                timeout=timeout, retry_count=retry_count,
+            ),
+            expectation=ExpectationSpec(assertions=expected if expected else {}),
+        )
+
+    # ── execution 直通访问器 ─────────────────────────────────────────────
+
+    @property
+    def command(self) -> str:
+        return self.execution.command
+
+    @command.setter
+    def command(self, value: str) -> None:
+        self.execution.command = value
+
+    @property
+    def args(self) -> List[str]:
+        return self.execution.args
+
+    @args.setter
+    def args(self, value: List[str]) -> None:
+        self.execution.args = value
+
+    @property
+    def timeout(self) -> Optional[float]:
+        return self.execution.timeout
+
+    @timeout.setter
+    def timeout(self, value: Optional[float]) -> None:
+        self.execution.timeout = value
+
+    @property
+    def retry_count(self) -> int:
+        return self.execution.retry_count
+
+    @retry_count.setter
+    def retry_count(self, value: int) -> None:
+        self.execution.retry_count = value
+
+    # ── expectation 直通访问器 ───────────────────────────────────────────
+
+    @property
+    def expected(self) -> Dict[str, Any]:
+        return self.expectation.assertions
+
+    @expected.setter
+    def expected(self, value: Dict[str, Any]) -> None:
+        self.expectation.assertions = value if value else {}
 
 
 @dataclass
@@ -92,7 +159,7 @@ class TestCase:
         description: str = "",
         timeout: Optional[float] = None,
         resources: Optional[Dict[str, Any]] = None,
-        steps: Optional[List[TestCaseStep]] = None,
+        steps: Optional[List["TestStep"]] = None,
         tags: Optional[List[str]] = None,
         retry_count: int = 0,
         expected_failure: bool = False,
@@ -100,14 +167,13 @@ class TestCase:
         xfail_quiet: bool = False,
         depends_on: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
-        execution: Optional[ExecutionSpec] = None,
-        expectation: Optional[ExpectationSpec] = None,
-        scheduling: Optional[SchedulingSpec] = None,
     ) -> None:
         """构造 TestCase。
 
-        平铺关键字参数（v1 形态）在 ``execution/expectation/scheduling``
-        未显式给出时归一存入对应子 Spec；显式传入子 Spec 时平铺参数被忽略。
+        构造路径唯一：DSL 平铺关键字参数归一存入对应子 Spec。
+        传入 ``execution=`` / ``expectation=`` / ``scheduling=`` 会被
+        TypeError 拒绝——子 Spec 是内部数据结构，不是构造参数，
+        不存在"平铺参数被静默忽略"的第二语义。
         """
         self.name = name
         self.description = description
@@ -116,7 +182,7 @@ class TestCase:
         self.xfail_reason = xfail_reason
         self.xfail_quiet = xfail_quiet
 
-        self.execution = execution if execution is not None else ExecutionSpec(
+        self.execution = ExecutionSpec(
             name=name,
             command=command,
             args=args if args is not None else [],
@@ -125,10 +191,10 @@ class TestCase:
             env=env if env else {},
             steps=steps,
         )
-        self.expectation = expectation if expectation is not None else ExpectationSpec(
+        self.expectation = ExpectationSpec(
             assertions=expected if expected else {},
         )
-        self.scheduling = scheduling if scheduling is not None else SchedulingSpec(
+        self.scheduling = SchedulingSpec(
             depends_on=depends_on if depends_on else [],
             resources=resources,
         )
@@ -176,11 +242,11 @@ class TestCase:
         self.execution.env = value
 
     @property
-    def steps(self) -> Optional[List[TestCaseStep]]:
+    def steps(self) -> Optional[List["TestStep"]]:
         return self.execution.steps
 
     @steps.setter
-    def steps(self, value: Optional[List[TestCaseStep]]) -> None:
+    def steps(self, value: Optional[List["TestStep"]]) -> None:
         self.execution.steps = value
 
     # ── expectation / scheduling 直通访问器 ─────────────────────────────
@@ -213,7 +279,7 @@ class TestCase:
     # ── 统一步骤访问（单命令模式返回单元素列表） ─────────────────────────
 
     @property
-    def all_steps(self) -> List[TestCaseStep]:
+    def all_steps(self) -> List["TestStep"]:
         """Return the unified list of steps regardless of mode.
 
         Single-command cases yield a single-element list; sequence cases yield
@@ -222,7 +288,7 @@ class TestCase:
         """
         if self.execution.steps is not None:
             return self.execution.steps
-        return [TestCaseStep(
+        return [TestStep.from_flat(
             command=self.execution.command,
             args=self.execution.args,
             expected=self.expectation.assertions,

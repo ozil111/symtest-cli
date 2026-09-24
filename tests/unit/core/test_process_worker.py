@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from symtest.core import process_worker
-from symtest.core.test_case import TestCase, TestCaseStep
+from symtest.core.test_case import TestCase, TestStep
 
 
 def passed_result(name="case", output="ok\n"):
@@ -65,8 +65,8 @@ def test_run_sequence_in_process_aggregates_successful_steps():
     case = TestCase(
         name="sequence",
         steps=[
-            TestCaseStep(command="echo", args=["one"], expected={"return_code": 0}),
-            TestCaseStep(command="echo", args=["two"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["one"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["two"], expected={"return_code": 0}),
         ],
     ).to_dict()
 
@@ -87,9 +87,9 @@ def test_run_sequence_in_process_stops_on_first_failure():
     case = TestCase(
         name="sequence",
         steps=[
-            TestCaseStep(command="echo", args=["one"], expected={"return_code": 0}),
-            TestCaseStep(command="tool", args=["fail"], expected={"return_code": 0}),
-            TestCaseStep(command="echo", args=["three"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["one"], expected={"return_code": 0}),
+            TestStep.from_flat(command="tool", args=["fail"], expected={"return_code": 0}),
+            TestStep.from_flat(command="echo", args=["three"], expected={"return_code": 0}),
         ],
     ).to_dict()
 

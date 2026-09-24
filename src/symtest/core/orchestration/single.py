@@ -8,7 +8,8 @@
 - 判定交给 ``validation.validator.validate_result``（只读）；
 - ``--update-baseline`` 写盘改为本层独立 accept 步骤
   （``accept.apply_baseline_accept``）；
-- ``next_action_hint`` 由 ``reporting.diagnosis`` 生成（原则 5）。
+- 结果只携带 ``failure_kind``；``next_action_hint`` 由表现层装配点
+  （``reporting.diagnosis.attach_next_action_hint``）填充（原则 5）。
 
 Phase 3 Schema v2：``case`` 只接受 ``ExecutionSpec``，期望规格由调用方
 显式传入（``expectation``），不再回落读取旧 dict 形态。
@@ -24,7 +25,6 @@ from ..types import TestResultData
 from ..validation.validator import _trim_compare_failures, validate_result
 from ..validation.assertions import ValidationError
 from .accept import apply_baseline_accept
-from ...reporting.diagnosis import build_next_action_hint
 
 logger = logging.getLogger("symtest.core.orchestration.single")
 
@@ -58,14 +58,12 @@ def _execute_command_once(
     if exec_result.error is not None:
         result.message = f"Execution error: {exec_result.error}"
         result.failure_kind = "execution_error"
-        result.next_action_hint = build_next_action_hint("execution_error")
     elif exec_result.timed_out:
         result.status = "timeout"
         result.failure_kind = "timeout"
         result.message = (
             f"Timeout reached! Killed after {exec_result.timeout_limit} seconds."
         )
-        result.next_action_hint = build_next_action_hint("timeout")
     else:
         try:
             vr = validate_result(
@@ -78,18 +76,13 @@ def _execute_command_once(
             result.compare_failures = _trim_compare_failures(exc.compare_failures)
             result.baseline_updated = list(exc.baseline_updated)
             result.assertion_results = list(exc.assertion_results)
-            result.next_action_hint = build_next_action_hint(
-                exc.failure_kind, update_baseline=update_baseline,
-            )
         except AssertionError as exc:
             # Legacy AssertionError catch for backward compatibility
             result.message = str(exc)
             result.failure_kind = result.failure_kind or "unknown"
-            result.next_action_hint = build_next_action_hint(result.failure_kind)
         except Exception as exc:
             result.message = f"Execution error: {str(exc)}"
             result.failure_kind = "execution_error"
-            result.next_action_hint = build_next_action_hint("execution_error")
         else:
             if vr.passed:
                 result.status = "passed"
@@ -99,9 +92,6 @@ def _execute_command_once(
                 result.failure_kind = vr.failure_kind
                 result.compare_failures = _trim_compare_failures(vr.compare_failures)
                 result.assertion_results = vr.assertion_results
-                result.next_action_hint = build_next_action_hint(
-                    vr.failure_kind, update_baseline=update_baseline,
-                )
                 # ── accept 步骤（原则 3：写盘在编排层，不在 Validator） ──
                 if update_baseline and vr.failure_kind == "file_compare":
                     accepted = apply_baseline_accept(vr, workspace)
@@ -111,7 +101,6 @@ def _execute_command_once(
                         result.failure_kind = None
                         result.compare_failures = []
                         result.assertion_results = accepted
-                        result.next_action_hint = None
 
     result.duration = time.perf_counter() - start_time
     return result.to_dict()

@@ -1,3 +1,47 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "symtest-cli"
+version = "1.5.1"
+description = "Regression testing for CLI applications, with multi-step workflows and numerical file comparison."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Xiaotong Wang", email = "xiaotongwang98@gmail.com" },
+]
+requires-python = ">=3.9"
+dependencies = [
+    "h5py>=3.11.0,<4.0.0",
+    "numpy>=1.21.0; python_version<'3.12'",
+    "numpy>=1.26.0; python_version>='3.12'",
+]
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+all = ["PyYAML>=6.0"]
+dev = [
+    "PyYAML>=6.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ozil111/symtest-cli"
+Documentation = "https://github.com/ozil111/symtest-cli/blob/main/docs/user_manual.md"
+Source = "https://github.com/ozil111/symtest-cli"
+Tracker = "https://github.com/ozil111/symtest-cli/issues"
+
+[project.scripts]
+symtest = "symtest.cli:main"
+# Backward-compatible alias for users of the old cli-test-framework.
+cli-test = "symtest.cli:main"
+compare-files = "symtest.commands.compare:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
