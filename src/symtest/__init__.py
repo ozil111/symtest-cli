@@ -16,9 +16,17 @@ runtime.  Library users can enable console logging explicitly::
     setup_console_logging(level=logging.DEBUG)
 """
 
-__version__ = "1.5.1"
 __author__ = "Xiaotong Wang"
 __email__ = "xiaotongwang98@gmail.com"
+
+try:
+    # Version is managed in pyproject.toml ([project] version).
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("symtest-cli")
+except PackageNotFoundError:
+    # Fallback when running from source without installing the package.
+    __version__ = "0.0.0"
 
 # Import main classes for convenient access
 from .runners.json_runner import JSONRunner
