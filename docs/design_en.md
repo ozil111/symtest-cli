@@ -7,7 +7,7 @@
 > their docstrings; usage examples live in `examples/`.
 > This document only carries what cannot be read out of code: architecture
 > layering, responsibility boundaries, key flow semantics, extension contracts,
-> design decisions, and the architecture constitution.
+> design decisions, and the architecture invariants.
 
 ## 1. Architecture Overview
 
@@ -42,8 +42,8 @@ The framework is divided into four layers: **CLI Entry Layer**,
 **Core Foundation Layer**.
 
 Layers are not free-to-wire: cross-layer data flow and dependency directions are
-governed by the §10 Core Architecture Constitution. Resolve feature ownership
-against it first.
+governed by the §10 architecture invariants. Resolve feature ownership
+against them first.
 
 ## 2. Module Map
 
@@ -258,13 +258,11 @@ no interactive UI maintenance burden.
 
 ---
 
-## 10. Core Architecture Constitution
+## 10. Architecture Invariants
 
-> **Status and force**: ratified at Symtest 1.4 Phase 0 review. This section is the
-> project's core architectural contract with supreme authority over all future
-> features — resolve ownership against this constitution before writing any code.
-> Amending it requires explicitly naming the clause being relaxed/waived and the
-> rationale in the change description.
+> **Status**: established at Symtest 1.4 Phase 0 review. These invariants define
+> module ownership and dependency direction. New features should preserve them
+> unless a change explicitly documents why an invariant must evolve.
 
 ### 10.1 Data Flow Spine
 
@@ -381,12 +379,12 @@ For any new requirement, ask ownership first:
 | AI tells me what to do next? | Result consumer / diagnosis |
 
 Litmus test: if arguments like "does this go into execution, the runner, or the
-testcase?" keep recurring, the constitution is not being applied correctly — go
+testcase?" keep recurring, the invariants are not being applied correctly — go
 back to 10.2 and check clause by clause.
 
-### 10.5 Making the Constitution Enforceable
+### 10.5 Making the Invariants Enforceable
 
-The constitution is not a documentation-only convention; it comes with
+These invariants are not documentation-only; they come with
 architecture guard tests enforced by CI:
 
 - Assert the import graph: e.g., imports of `execution/executor.py` must not

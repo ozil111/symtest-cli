@@ -1,6 +1,6 @@
-"""Architecture guard tests —— 架构宪法可执行化（docs/design.md §10）。
+"""Architecture guard tests —— 架构不变量可执行化（docs/design.md §10）。
 
-通过 import 图静态断言依赖方向，由 CI 强制执行，使宪法可回归验证：
+通过 import 图静态断言依赖方向，由 CI 强制执行，使不变量可回归验证：
 - 原则 2：execution 包不得 import validation / assertions（executor 不知道
   expected 的存在 —— Phase 2 唯一验收标准）；
 - 原则 3：validation 只允许 import execution 的 result 类型（读取执行事实），

@@ -1,6 +1,6 @@
 """TestCase v2 分层数据模型（1.4 Core Model Refactoring）。
 
-架构宪法（docs/design.md §10）：
+架构不变量（docs/design.md §10）：
 - TestCase 是声明，不执行任何事情 —— 只有数据与访问器，没有 run/validate。
 - 语义分三层：``execution``（执行什么）、``expectation``（如何判定）、
   ``scheduling``（何时/以何资源执行）；``name/description/tags/xfail_*``
