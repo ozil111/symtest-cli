@@ -4,76 +4,39 @@
 """
 SymTest - Command Line Interface
 
-This module provides the main command-line interface for SymTest.
+Thin entry point: root parser construction + command dispatch only.
+Per-command argument definitions and handlers live in ``symtest.commands.*``;
+each command module exposes ``register_parser(subparsers)`` and a handler.
 """
 
 import argparse
-import json
-import sys
-import os
 import logging
-from pathlib import Path
+import sys
 
+from .commands import compare as compare_cmd
+from .commands import find as find_cmd
+from .commands import migrate as migrate_cmd
+from .commands import run as run_cmd
+from .commands import schema as schema_cmd
+from .commands import validate as validate_cmd
 from .logging_config import setup_console_logging
-from .reporting.diagnosis import attach_next_action_hints
-from .runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
-from .utils.report_generator import ReportGenerator
-from .utils.junit_xml_writer import write_junit_xml
 
 logger = logging.getLogger("symtest.cli")
 
+# Re-exported handlers: ``symtest.cli`` remains the public import surface
+# (docs reference these names; tests and external callers patch/use them).
+run_tests = run_cmd.run_tests
+run_find = find_cmd.run_find
+run_validate = validate_cmd.run_validate
+run_schema = schema_cmd.run_schema
+run_migrate = migrate_cmd.run_migrate
+run_compare = compare_cmd.run_compare
+# Private helpers kept importable from cli for backward compatibility.
+_parse_vars = run_cmd._parse_vars
+_confirm_baseline_update = run_cmd._confirm_baseline_update
+_format_results_html = run_cmd._format_results_html
 
-def _parse_vars(var_list):
-    """Parse ``['solver=/path', 'model=./m.dat']`` → ``{'solver': '/path', ...}``."""
-    variables = {}
-    for item in var_list or []:
-        if '=' not in item:
-            logger.warning("Ignoring invalid --var '%s' (expected KEY=VALUE)", item)
-            continue
-        key, _, value = item.partition('=')
-        variables[key.strip()] = value.strip()
-    return variables
-
-
-def _confirm_baseline_update(args) -> bool:
-    """Require an explicit confirmation before baseline files may be replaced.
-
-    Interactive CLI users type ``yes``. Automation must pass ``--yes`` so a
-    non-interactive process never hangs while waiting for input.
-    """
-    if not getattr(args, 'update_baseline', False):
-        return True
-    if getattr(args, 'yes', False):
-        return True
-
-    if not sys.stdin.isatty():
-        logger.error(
-            "--update-baseline can overwrite reference files. "
-            "Re-run with --yes in non-interactive environments."
-        )
-        return False
-
-    try:
-        response = input(
-            "WARNING: --update-baseline may overwrite reference files when "
-            "comparisons fail.\nType 'yes' to continue: "
-        )
-    except (EOFError, KeyboardInterrupt):
-        logger.warning("Baseline update cancelled.")
-        return False
-
-    if response.strip().lower() != "yes":
-        logger.warning("Baseline update cancelled.")
-        return False
-    return True
-
-
-def create_parser():
-    """Create and configure the argument parser"""
-    parser = argparse.ArgumentParser(
-        description="Regression testing for command-line applications and scientific workflows",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+_EPILOG = """
 Examples:
   symtest run test_cases.json
   symtest run test_cases.json --parallel --workers 4
@@ -83,485 +46,39 @@ Examples:
   symtest migrate old.json --output new.json
   symtest compare file1.json file2.json
   symtest compare file1.txt file2.txt --output-format json
-        """
+"""
+
+
+def create_parser():
+    """Create the root argument parser and register all subcommands."""
+    parser = argparse.ArgumentParser(
+        description="Regression testing for command-line applications and scientific workflows",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_EPILOG,
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # ---- Run command ----
-    run_parser = subparsers.add_parser('run', help='Run test cases from a configuration file')
-    run_parser.add_argument('config_file', help='Path to the test configuration file (JSON or YAML)')
-    run_parser.add_argument('--workspace', '-w', help='Working directory for test execution')
-    run_parser.add_argument('--parallel', '-p', action='store_true', help='Run tests in parallel')
-    run_parser.add_argument('--workers', type=int, help='Number of parallel workers (default: CPU count)')
-    run_parser.add_argument('--execution-mode', choices=['thread', 'process'], default='thread',
-                           help='Parallel execution mode (default: thread)')
-    run_parser.add_argument('--output-format', choices=['text', 'json', 'html'], default='text',
-                           help='Output format for test results')
-    run_parser.add_argument('--test-case', '-t', action='append', default=None,
-                           help='Run only specified test case(s) by name (can be used multiple times)')
-    run_parser.add_argument('--tag', action='append', default=None,
-                           help='Run only test cases with matching tag(s) (can be used multiple times)')
-    run_parser.add_argument('--history-dir',
-                           help='Directory for .symtest runtime history (enables smart scheduling & regression detection)')
-    run_parser.add_argument('--regression-threshold', type=float, default=1.5,
-                           help='Warn if a case runs N times slower than historical average (default: 1.5)')
-    run_parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
-    run_parser.add_argument('--debug', action='store_true', help='Enable debug mode')
-    run_parser.add_argument('--junit-xml', dest='junit_xml',
-                           help='Write JUnit XML report to the specified file path')
-    run_parser.add_argument('--var', action='append', default=[],
-                           metavar='KEY=VALUE',
-                           help='Set a variable for config placeholder substitution, '
-                                'e.g. --var solver=/path/to/solver '
-                                '(can be used multiple times)')
-    run_parser.add_argument('--last-failed', action='store_true',
-                           help='Run only test cases that failed in the previous run')
-    run_parser.add_argument('--update-baseline', action='store_true',
-                           help='On comparison failure, overwrite baseline files with actual output')
-    run_parser.add_argument('--yes', '-y', action='store_true',
-                           help='Confirm potentially destructive actions without prompting '
-                                '(required with --update-baseline in non-interactive environments)')
-    run_parser.add_argument('--update-history', action='store_true',
-                           help='Clear .symtest runtime history for run-involved cases before '
-                                'recording this run (requires --history-dir)')
-    run_parser.add_argument('--resume', action='store_true',
-                           help='Resume sequence test cases from last failed step '
-                                '(trusts workspace artifacts are unchanged)')
-    run_parser.add_argument('--error-analysis', action='store_true',
-                           help='Enable streaming error statistics for numerical file comparisons '
-                                '(CSV/H5): total_numeric_cells, mismatched_cells, '
-                                'max_abs/rel_error, mean/rms_abs_error')
-    run_parser.add_argument('--error-analysis-all', action='store_true',
-                           help='Like --error-analysis, but also report error statistics for '
-                                'PASSED file comparisons in the report (implies --error-analysis)')
-    run_parser.add_argument('--plugin-dir', action='append', default=None,
-                           dest='plugin_dirs',
-                           help='Add a directory for workspace-level comparator plugins '
-                                '(can be used multiple times). '
-                                'The workspace/comparators/ directory is always auto-detected.')
-
-    # ---- Find command ----
-    find_parser = subparsers.add_parser(
-        'find', help='Search test cases across all imported configurations '
-                     '(auto-expands import references)'
-    )
-    find_parser.add_argument(
-        'config_file', help='Path to the test configuration file (JSON or YAML)'
-    )
-    find_parser.add_argument(
-        'pattern', nargs='?', default='',
-        help='Search pattern (empty pattern lists all cases)'
-    )
-    find_parser.add_argument(
-        '--mode', choices=['substring', 'fuzzy', 'regex'], default='substring',
-        help='Search mode (default: substring, case-insensitive)'
-    )
-    find_parser.add_argument(
-        '--tag', action='append', default=None,
-        help='Only show cases with matching tag (exact match, can be used '
-             'multiple times)'
-    )
-    find_parser.add_argument(
-        '--workspace', '-w', help='Working directory'
-    )
-    find_parser.add_argument(
-        '--output-format', choices=['text', 'json'], default='text',
-        help='Output format (default: text)'
-    )
-
-    # ---- Validate command ----
-    validate_parser = subparsers.add_parser(
-        'validate', help='Validate test configuration without running tests'
-    )
-    validate_parser.add_argument(
-        'config_file', help='Path to the test configuration file (JSON or YAML)'
-    )
-    validate_parser.add_argument(
-        '--workspace', '-w', help='Working directory'
-    )
-    validate_parser.add_argument(
-        '--output-format', choices=['text', 'json'], default='text',
-        help='Output format for validation results (default: text)'
-    )
-
-    # ---- Schema command ----
-    subparsers.add_parser(
-        'schema',
-        help='Print the JSON Schema for test configuration files '
-             '(machine-readable contract for generating configs)',
-    )
-
-    # ---- Migrate command ----
-    migrate_parser = subparsers.add_parser(
-        'migrate',
-        help='Migrate a v1 (flat) test configuration to the v2 layered '
-             'schema (execution / expected / scheduling)',
-    )
-    migrate_parser.add_argument(
-        'config_file',
-        help='Path to the v1 configuration file (JSON or YAML)',
-    )
-    migrate_parser.add_argument(
-        '--workspace', '-w', help='Working directory for path resolution',
-    )
-    migrate_parser.add_argument(
-        '--output', '-o',
-        help='Output path (default: <stem>.v2<ext>, e.g. old.json -> old.v2.json)',
-    )
-    migrate_parser.add_argument(
-        '--in-place', action='store_true',
-        help='Migrate the config and every file it imports recursively, '
-             'overwriting each file in place (originals are not kept; '
-             'mutually exclusive with --output)',
-    )
-
-    # ---- Compare command ----
-    compare_parser = subparsers.add_parser('compare', help='Compare two files')
-    compare_parser.add_argument('file1', help='Path to the first file')
-    compare_parser.add_argument('file2', help='Path to the second file')
-    compare_parser.add_argument('--start-line', type=int, default=1, help='Starting line number (1-based)')
-    compare_parser.add_argument('--end-line', type=int, help='Ending line number (1-based)')
-    compare_parser.add_argument('--start-column', type=int, default=1, help='Starting column number (1-based)')
-    compare_parser.add_argument('--end-column', type=int, help='Ending column number (1-based)')
-    compare_parser.add_argument('--file-type', help='Type of the files to compare', default='auto')
-    compare_parser.add_argument('--encoding', default='utf-8', help='File encoding for text files')
-    compare_parser.add_argument('--chunk-size', type=int, default=8192, help='Chunk size for binary comparison')
-    compare_parser.add_argument('--output-format', choices=['text', 'json', 'html'], default='text',
-                               help='Output format for the comparison result')
-    compare_parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
-    compare_parser.add_argument('--debug', action='store_true', help='Enable debug mode with detailed logging')
-    compare_parser.add_argument('--similarity', action='store_true',
-                               help='When comparing binary files, compute and show similarity index')
-    compare_parser.add_argument('--num-threads', type=int, default=4, help='Number of threads for parallel processing')
-
-    # CSV comparison options
-    csv_group = compare_parser.add_argument_group('CSV comparison options')
-    csv_group.add_argument('--csv-rtol', type=float, default=1e-5,
-                          help='Relative tolerance for numerical comparison in CSV files')
-    csv_group.add_argument('--csv-atol', type=float, default=1e-8,
-                          help='Absolute tolerance for numerical comparison in CSV files')
-    csv_group.add_argument('--csv-delimiter', default=',', help='CSV field delimiter (default: comma)')
-    csv_group.add_argument('--csv-quotechar', default='"',
-                          help='Character used for quoting fields in CSV (default: double quote)')
-    csv_group.add_argument('--csv-data-filter', type=str,
-                          help='Data filter to apply before comparison. '
-                               "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
-                               'Filters out numeric cells that do not meet the criteria '
-                               'from BOTH files before comparison.')
-
-    # JSON comparison options
-    json_group = compare_parser.add_argument_group('JSON comparison options')
-    json_group.add_argument('--json-compare-mode', choices=['exact', 'key-based'], default='exact',
-                           help='JSON comparison mode: exact (default) or key-based')
-    json_group.add_argument('--json-key-field', help='Key field(s) to use for key-based JSON comparison')
-
-    # H5 comparison options
-    h5_group = compare_parser.add_argument_group('HDF5 comparison options')
-    h5_group.add_argument('--h5-table', help='Comma-separated list of table names to compare in HDF5 files')
-    h5_group.add_argument('--h5-table-regex',
-                         help='Comma-separated list of regular expression patterns to match table names in HDF5 files')
-    h5_group.add_argument('--h5-structure-only', action='store_true',
-                         help='Only compare HDF5 file structure without comparing content')
-    h5_group.add_argument('--h5-show-content-diff', action='store_true',
-                         help='Show detailed content differences when content differs')
-    h5_group.add_argument('--h5-rtol', type=float, default=1e-5,
-                         help='Relative tolerance for numerical comparison in HDF5 files')
-    h5_group.add_argument('--h5-atol', type=float, default=1e-8,
-                         help='Absolute tolerance for numerical comparison in HDF5 files')
-    h5_group.add_argument('--h5-data-filter', type=str,
-                         help='Data filter to apply before comparison')
-    h5_group.add_argument('--h5-no-expand-path', dest='h5_expand_path', action='store_false',
-                         help='Do not expand HDF5 group paths to compare all sub-items')
+    run_cmd.register_parser(subparsers)
+    find_cmd.register_parser(subparsers)
+    validate_cmd.register_parser(subparsers)
+    schema_cmd.register_parser(subparsers)
+    migrate_cmd.register_parser(subparsers)
+    compare_cmd.register_parser(subparsers)
 
     return parser
-
-
-def run_tests(args):
-    """Run tests based on command line arguments"""
-    # Resolve config_file relative to workspace if specified, otherwise cwd.
-    # This matches BaseRunner's resolution (workspace / config_file).
-    workspace_path = Path(args.workspace) if args.workspace else Path.cwd()
-    config_file = (workspace_path / args.config_file).resolve()
-
-    if not config_file.exists():
-        logger.error("Configuration file not found: %s", config_file)
-        return False
-
-    if not _confirm_baseline_update(args):
-        return False
-
-    # Determine file type
-    file_ext = config_file.suffix.lower()
-
-    # Use getattr for backward compatibility with external callers that
-    # construct Namespace objects without the newer arguments.
-    history_dir = getattr(args, 'history_dir', None)
-    regression_threshold = getattr(args, 'regression_threshold', 1.5)
-    var_list = getattr(args, 'var', [])
-    variables = _parse_vars(var_list)
-    update_baseline = getattr(args, 'update_baseline', False)
-    update_history = getattr(args, 'update_history', False)
-    error_analysis = getattr(args, 'error_analysis', False)
-    error_analysis_all = getattr(args, 'error_analysis_all', False)
-    if error_analysis_all:
-        error_analysis = True
-    last_failed = getattr(args, 'last_failed', False)
-    resume = getattr(args, 'resume', False)
-    plugin_dirs = getattr(args, 'plugin_dirs', None)
-
-    try:
-        if args.parallel:
-            # Format-aware parallel runner selection
-            if file_ext in ['.json']:
-                runner = ParallelJSONRunner(
-                    config_file=str(config_file),
-                    workspace=args.workspace,
-                    max_workers=args.workers,
-                    execution_mode=args.execution_mode,
-                    test_case_filter=args.test_case,
-                    test_case_tag_filter=args.tag,
-                    history_dir=history_dir,
-                    regression_threshold=regression_threshold,
-                    variables=variables,
-                    update_baseline=update_baseline,
-                    update_history=update_history,
-                    error_analysis=error_analysis,
-                    error_analysis_all=error_analysis_all,
-                    last_failed=last_failed,
-                    resume=resume,
-                    plugin_dirs=plugin_dirs,
-                )
-            elif file_ext in ['.yaml', '.yml']:
-                runner = ParallelYAMLRunner(
-                    config_file=str(config_file),
-                    workspace=args.workspace,
-                    max_workers=args.workers,
-                    execution_mode=args.execution_mode,
-                    test_case_filter=args.test_case,
-                    test_case_tag_filter=args.tag,
-                    history_dir=history_dir,
-                    regression_threshold=regression_threshold,
-                    variables=variables,
-                    update_baseline=update_baseline,
-                    update_history=update_history,
-                    error_analysis=error_analysis,
-                    error_analysis_all=error_analysis_all,
-                    last_failed=last_failed,
-                    resume=resume,
-                    plugin_dirs=plugin_dirs,
-                )
-            else:
-                logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)
-                return False
-        else:
-            # Use appropriate single-threaded runner
-            if file_ext in ['.json']:
-                runner = JSONRunner(
-                    config_file=str(config_file),
-                    workspace=args.workspace,
-                    test_case_filter=args.test_case,
-                    test_case_tag_filter=args.tag,
-                    history_dir=history_dir,
-                    regression_threshold=regression_threshold,
-                    variables=variables,
-                    update_baseline=update_baseline,
-                    update_history=update_history,
-                    error_analysis=error_analysis,
-                    error_analysis_all=error_analysis_all,
-                    last_failed=last_failed,
-                    resume=resume,
-                    plugin_dirs=plugin_dirs,
-                )
-            elif file_ext in ['.yaml', '.yml']:
-                runner = YAMLRunner(
-                    config_file=str(config_file),
-                    workspace=args.workspace,
-                    test_case_filter=args.test_case,
-                    test_case_tag_filter=args.tag,
-                    history_dir=history_dir,
-                    regression_threshold=regression_threshold,
-                    variables=variables,
-                    update_baseline=update_baseline,
-                    update_history=update_history,
-                    error_analysis=error_analysis,
-                    error_analysis_all=error_analysis_all,
-                    last_failed=last_failed,
-                    resume=resume,
-                    plugin_dirs=plugin_dirs,
-                )
-            else:
-                logger.error("Unsupported configuration file format: %s", file_ext)
-                return False
-
-        # Run tests
-        logger.info("Running tests from: %s", config_file)
-        if args.parallel:
-            logger.info("Parallel mode: %s, workers: %s", args.execution_mode, args.workers or "auto")
-
-        success = runner.run_tests()
-
-        # Output results using ReportGenerator and honor --output-format
-        if hasattr(runner, 'results'):
-            results = runner.results
-
-            # ── Reporting 装配点（原则 5）：next_action_hint 在报告输出前
-            # 按 failure_kind 填充，orchestration 只产出失败结论 ──
-            attach_next_action_hints(
-                results,
-                update_baseline=bool(getattr(args, 'update_baseline', False)),
-                config_path=str(config_file),
-            )
-
-            output_format = getattr(args, 'output_format', 'text')
-
-            if output_format == 'json':
-                print(json.dumps(results, indent=2, ensure_ascii=False))
-            elif output_format == 'html':
-                report_gen = ReportGenerator(results, '')
-                text_report = report_gen.generate_report()
-                html = _format_results_html(results, text_report)
-                print(html)
-            else:
-                report_gen = ReportGenerator(results, '')
-                report_gen.print_report()
-
-        # --- JUnit XML output (supplementary, works alongside any --output-format) ---
-        junit_xml_path = getattr(args, 'junit_xml', None)
-        if junit_xml_path and hasattr(runner, 'results'):
-            suite_name = config_file.stem
-            write_junit_xml(runner.results, junit_xml_path, suite_name=suite_name)
-            logger.info("JUnit XML report written to: %s", junit_xml_path)
-
-        return success
-
-    except Exception as e:
-        logger.error("Error running tests: %s", e)
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        return False
-
-
-def _format_results_html(results, text_report):
-    """Format test results as a basic HTML page."""
-    escaped_report = text_report.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    pass_pct = (results['passed'] / max(results['total'], 1)) * 100
-    xfailed = results.get('xfailed', 0)
-    xpassed = results.get('xpassed', 0)
-    extras = ""
-    if xfailed:
-        extras += f" | XFailed: <span class=\"xfailed\">{xfailed}</span>"
-    if xpassed:
-        extras += f" | XPassed: <span class=\"xpassed\">{xpassed} (unexpected!)</span>"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Test Results</title>
-<style>
-  body {{ font-family: sans-serif; margin: 2em; }}
-  .summary {{ margin-bottom: 1em; }}
-  .passed {{ color: green; }}
-  .failed {{ color: red; }}
-  .xfailed {{ color: orange; }}
-  .xpassed {{ color: red; font-weight: bold; }}
-  pre {{ background: #f5f5f5; padding: 1em; border-radius: 4px; }}
-</style>
-</head>
-<body>
-<h1>CLI Test Results</h1>
-<div class="summary">
-  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span>{extras}</p>
-  <p>Pass rate: {pass_pct:.1f}%</p>
-</div>
-<pre>{escaped_report}</pre>
-</body>
-</html>"""
-
-
-def run_compare(args):
-    """Execute file comparison via the compare subcommand."""
-    from .commands.compare import run_comparison
-    exit_code = run_comparison(args)
-    return bool(exit_code == 0)
-
-
-def run_find(args):
-    """Search test cases across imported configurations."""
-    from .commands.find import run_find as _run_find
-
-    return _run_find(args)
-
-
-def run_validate(args):
-    """Validate test configuration without running tests."""
-    from .config.config_io import validate_config
-
-    workspace_path = Path(args.workspace) if args.workspace else Path.cwd()
-    config_file = (workspace_path / args.config_file).resolve()
-
-    if not config_file.exists():
-        logger.error("Configuration file not found: %s", config_file)
-        return False
-
-    logger.info("Validating configuration: %s", config_file)
-    report = validate_config(config_file, args.workspace)
-
-    output_format = getattr(args, 'output_format', 'text')
-
-    if output_format == 'json':
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-    else:
-        # Print summary
-        summary = report["summary"]
-        print(f"\n  [OK] Loaded {summary['cases']} test cases from {summary['files']} file(s)\n")
-
-        if report["errors"]:
-            for err in report["errors"]:
-                print(f"  [FAIL] {err}")
-            print()
-        else:
-            print("  [OK] All required fields present")
-            print("  [OK] No circular imports detected")
-
-        if report.get("warnings"):
-            print()
-            for warn in report["warnings"]:
-                print(f"  [WARN] {warn}")
-            print()
-
-        if summary.get("files_loaded"):
-            print("\n  Files:")
-            for f in summary["files_loaded"]:
-                print(f"    - {f}")
-        print()
-
-    return report["valid"]
-
-
-def run_schema() -> None:
-    """Print the JSON Schema for test configuration files."""
-    from .config.config_schema import get_config_schema
-
-    print(json.dumps(get_config_schema(), indent=2, ensure_ascii=False))
-
-
-def run_migrate(args) -> bool:
-    """Migrate a v1 (flat) config to the v2 layered schema."""
-    from .commands.migrate import run_migrate as _run_migrate
-
-    return _run_migrate(args)
 
 
 def _to_exit_code(result) -> int:
     """Single exit-code conversion point for all sub-command handlers.
 
-    Handlers return either a bool (``False`` = failure → 1) or an int exit
+    Handlers return either a bool (``False`` = failure → 1), an int exit
     code directly (commands with richer semantics, e.g. ``find``:
-    0 = match, 1 = no match, 2 = error). No branch in ``main`` should
-    convert codes itself.
+    0 = match, 1 = no match, 2 = error), or ``None`` (treated as success,
+    e.g. ``schema``). No branch in ``main`` should convert codes itself.
     """
+    if result is None:
+        return 0
     if isinstance(result, bool):
         return 0 if result else 1
     return int(result)
@@ -578,26 +95,25 @@ def main():
     ) else logging.INFO
     setup_console_logging(level=level)
 
-    if args.command == 'run':
-        # 0 = all passed, 1 = test failures, 2 = config/framework errors
-        sys.exit(_to_exit_code(run_tests(args)))
-    elif args.command == 'find':
-        # grep-style exit codes: 0 = match, 1 = no match, 2 = error
-        sys.exit(_to_exit_code(run_find(args)))
-    elif args.command == 'validate':
-        # 0 = valid, 1 = validation errors found
-        sys.exit(_to_exit_code(run_validate(args)))
-    elif args.command == 'schema':
-        run_schema()
-        sys.exit(0)
-    elif args.command == 'migrate':
-        # 0 = migrated, 1 = input/format errors
-        sys.exit(_to_exit_code(run_migrate(args)))
-    elif args.command == 'compare':
-        sys.exit(_to_exit_code(run_compare(args)))
-    else:
+    handlers = {
+        # 'run': 0 = all passed, 1 = test failures, 2 = config/framework errors
+        'run': run_tests,
+        # 'find': grep-style exit codes: 0 = match, 1 = no match, 2 = error
+        'find': run_find,
+        # 'validate': 0 = valid, 1 = validation errors found
+        'validate': run_validate,
+        'schema': run_schema,
+        # 'migrate': 0 = migrated, 1 = input/format errors
+        'migrate': run_migrate,
+        'compare': run_compare,
+    }
+
+    handler = handlers.get(args.command)
+    if handler is None:
         parser.print_help()
         sys.exit(1)
+
+    sys.exit(_to_exit_code(handler(args)))
 
 
 if __name__ == '__main__':

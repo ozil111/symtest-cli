@@ -148,7 +148,7 @@ class TestBaselineUpdateConfirmation:
             def run_tests(self):
                 return True
 
-        monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+        monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
         assert cli.run_tests(make_args(
             config, update_baseline=True, yes=True
         ))
@@ -163,7 +163,7 @@ def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, cap
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
 
     success = cli.run_tests(make_args(config, verbose=True, test_case=["ok"]))
 
@@ -188,7 +188,7 @@ def test_run_tests_uses_parallel_runner(tmp_path, monkeypatch):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "ParallelJSONRunner", PassingParallelRunner)
+    monkeypatch.setattr("symtest.commands.run.ParallelJSONRunner", PassingParallelRunner)
 
     success = cli.run_tests(
         make_args(config, parallel=True, workers=3, execution_mode="process")
@@ -212,7 +212,7 @@ def test_run_tests_uses_yaml_runner(tmp_path, monkeypatch, caplog):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "YAMLRunner", PassingYAMLRunner)
+    monkeypatch.setattr("symtest.commands.run.YAMLRunner", PassingYAMLRunner)
 
     success = cli.run_tests(make_args(config))
 
@@ -227,7 +227,7 @@ def test_run_tests_uses_yaml_runner_yml_extension(tmp_path, monkeypatch):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "YAMLRunner", PassingYAMLRunner)
+    monkeypatch.setattr("symtest.commands.run.YAMLRunner", PassingYAMLRunner)
 
     success = cli.run_tests(make_args(config))
 
@@ -247,7 +247,7 @@ def test_run_tests_parallel_yaml_runner(tmp_path, monkeypatch):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "ParallelYAMLRunner", PassingParallelYAMLRunner)
+    monkeypatch.setattr("symtest.commands.run.ParallelYAMLRunner", PassingParallelYAMLRunner)
 
     success = cli.run_tests(make_args(config, parallel=True, workers=2))
 
@@ -278,7 +278,7 @@ def test_run_tests_output_json(tmp_path, monkeypatch, capsys):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
 
     success = cli.run_tests(make_args(config, output_format="json"))
 
@@ -298,7 +298,7 @@ def test_run_tests_output_html(tmp_path, monkeypatch, capsys):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
 
     success = cli.run_tests(make_args(config, output_format="html"))
 
@@ -323,7 +323,7 @@ def test_run_tests_junit_xml(tmp_path, monkeypatch, caplog):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
 
     success = cli.run_tests(make_args(config, junit_xml=str(junit_path)))
 
@@ -341,7 +341,7 @@ def test_run_tests_junit_xml_with_failures(tmp_path, monkeypatch):
         def run_tests(self):
             return False
 
-    monkeypatch.setattr(cli, "JSONRunner", FailingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", FailingRunner)
 
     success = cli.run_tests(make_args(config, junit_xml=str(junit_path)))
 
@@ -364,7 +364,7 @@ def test_run_tests_resolves_config_relative_to_workspace(tmp_path, monkeypatch):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", PassingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
 
     success = cli.run_tests(
         make_args("cases.json", workspace=str(workspace))
@@ -386,7 +386,7 @@ def test_run_tests_exception_caught(tmp_path, monkeypatch, caplog):
         def run_tests(self):
             raise RuntimeError("boom!")
 
-    monkeypatch.setattr(cli, "JSONRunner", CrashingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", CrashingRunner)
 
     success = cli.run_tests(make_args(config))
 
@@ -403,7 +403,7 @@ def test_run_tests_exception_with_debug(tmp_path, monkeypatch, caplog, capsys):
         def run_tests(self):
             raise RuntimeError("debug_boom!")
 
-    monkeypatch.setattr(cli, "JSONRunner", CrashingRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", CrashingRunner)
 
     success = cli.run_tests(make_args(config, debug=True))
 
@@ -430,7 +430,7 @@ def test_run_tests_passes_variables_to_runner(tmp_path, monkeypatch):
         def run_tests(self):
             return True
 
-    monkeypatch.setattr(cli, "JSONRunner", VarRunner)
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", VarRunner)
 
     cli.run_tests(make_args(config, var=["solver=/opt/solver"]))
 
@@ -548,7 +548,7 @@ class TestRunSchema:
     def test_main_schema_dispatch(self, monkeypatch):
         called = []
 
-        def fake_schema():
+        def fake_schema(args):
             called.append("schema")
 
         monkeypatch.setattr(cli, "run_schema", fake_schema)

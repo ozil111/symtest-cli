@@ -158,3 +158,29 @@ def run_migrate(args) -> bool:
         logger.info("Migrated config written to: %s", target)
         print(str(target))
     return True
+
+
+def register_parser(subparsers):
+    """Register the ``migrate`` subcommand on the root parser."""
+    migrate_parser = subparsers.add_parser(
+        'migrate',
+        help='Migrate a v1 (flat) test configuration to the v2 layered '
+             'schema (execution / expected / scheduling)',
+    )
+    migrate_parser.add_argument(
+        'config_file',
+        help='Path to the v1 configuration file (JSON or YAML)',
+    )
+    migrate_parser.add_argument(
+        '--workspace', '-w', help='Working directory for path resolution',
+    )
+    migrate_parser.add_argument(
+        '--output', '-o',
+        help='Output path (default: <stem>.v2<ext>, e.g. old.json -> old.v2.json)',
+    )
+    migrate_parser.add_argument(
+        '--in-place', action='store_true',
+        help='Migrate the config and every file it imports recursively, '
+             'overwriting each file in place (originals are not kept; '
+             'mutually exclusive with --output)',
+    )

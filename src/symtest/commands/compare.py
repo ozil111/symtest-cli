@@ -20,9 +20,9 @@ from ..file_comparator.result import ComparisonResult
 logger = logging.getLogger("symtest.commands.compare")
 
 
-def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Compare two files.")
+def add_compare_arguments(parser):
+    """Add all ``compare`` subcommand arguments (shared by the root CLI
+    parser and the standalone compare-files entry point)."""
     parser.add_argument("file1", help="Path to the first file")
     parser.add_argument("file2", help="Path to the second file")
     parser.add_argument("--start-line", type=int, default=1, help="Starting line number (1-based)")
@@ -39,49 +39,60 @@ def parse_arguments():
     parser.add_argument("--similarity", action="store_true",
                         help="When comparing binary files, compute and show similarity index")
     parser.add_argument("--num-threads", type=int, default=4, help="Number of threads for parallel processing")
-    
+
     # CSV comparison options
     csv_group = parser.add_argument_group('CSV comparison options')
     csv_group.add_argument("--csv-rtol", type=float, default=1e-5,
-                         help="Relative tolerance for numerical comparison in CSV files")
+                           help="Relative tolerance for numerical comparison in CSV files")
     csv_group.add_argument("--csv-atol", type=float, default=1e-8,
-                         help="Absolute tolerance for numerical comparison in CSV files")
+                           help="Absolute tolerance for numerical comparison in CSV files")
     csv_group.add_argument("--csv-delimiter", default=",",
-                         help="CSV field delimiter (default: comma)")
+                           help="CSV field delimiter (default: comma)")
     csv_group.add_argument("--csv-quotechar", default='"',
-                         help="Character used for quoting fields in CSV (default: double quote)")
+                           help="Character used for quoting fields in CSV (default: double quote)")
     csv_group.add_argument("--csv-data-filter", type=str,
-                         help="Data filter to apply before comparison. "
-                              "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
-                              "Filters out numeric cells that do not meet the criteria "
-                              "from BOTH files before comparison.")
+                           help="Data filter to apply before comparison. "
+                                "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
+                                "Filters out numeric cells that do not meet the criteria "
+                                "from BOTH files before comparison.")
 
     # JSON comparison options
     json_group = parser.add_argument_group('JSON comparison options')
     json_group.add_argument("--json-compare-mode", choices=["exact", "key-based"], default="exact",
-                      help="JSON comparison mode: exact (default) or key-based")
+                            help="JSON comparison mode: exact (default) or key-based")
     json_group.add_argument("--json-key-field", help="Key field(s) to use for key-based JSON comparison")
-    
+
     # H5 comparison options
     h5_group = parser.add_argument_group('HDF5 comparison options')
     h5_group.add_argument("--h5-table", help="Comma-separated list of table names to compare in HDF5 files")
-    h5_group.add_argument("--h5-table-regex", help="Comma-separated list of regular expression patterns to match table names in HDF5 files. Each pattern is matched independently.")
-    h5_group.add_argument("--h5-structure-only", action="store_true", 
-                         help="Only compare HDF5 file structure without comparing content")
+    h5_group.add_argument("--h5-table-regex",
+                          help="Comma-separated list of regular expression patterns to match table names in HDF5 files")
+    h5_group.add_argument("--h5-structure-only", action="store_true",
+                          help="Only compare HDF5 file structure without comparing content")
     h5_group.add_argument("--h5-show-content-diff", action="store_true",
-                         help="Show detailed content differences when content differs")
+                          help="Show detailed content differences when content differs")
     h5_group.add_argument("--h5-rtol", type=float, default=1e-5,
-                         help="Relative tolerance for numerical comparison in HDF5 files")
+                          help="Relative tolerance for numerical comparison in HDF5 files")
     h5_group.add_argument("--h5-atol", type=float, default=1e-8,
-                         help="Absolute tolerance for numerical comparison in HDF5 files")
+                          help="Absolute tolerance for numerical comparison in HDF5 files")
     h5_group.add_argument("--h5-data-filter", type=str,
-                         help="Data filter to apply before comparison. "
-                              "Example: '>1e-6', '<=0.01', 'abs>1e-9'. "
-                              "Filters out data that does not meet the criteria from BOTH files before comparison.")
+                          help="Data filter to apply before comparison")
     h5_group.add_argument("--h5-no-expand-path", dest="h5_expand_path", action="store_false",
-                         help="Do not expand HDF5 group paths to compare all sub-items.")
-    
+                          help="Do not expand HDF5 group paths to compare all sub-items")
+    return parser
+
+
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Compare two files.")
+    add_compare_arguments(parser)
     return parser.parse_args()
+
+
+def register_parser(subparsers):
+    """Register the ``compare`` subcommand on the root parser."""
+    compare_parser = subparsers.add_parser('compare', help='Compare two files')
+    add_compare_arguments(compare_parser)
 
 def detect_file_type(file_path):
     """Detect the type of file based on its extension"""
@@ -212,6 +223,13 @@ def run_comparison(args, logger=None):
     print(output)
 
     return 0 if result.identical else 1
+
+
+def run_compare(args) -> bool:
+    """Subcommand entry for ``symtest compare``: return True when the
+    comparison exit code is 0."""
+    exit_code = run_comparison(args)
+    return exit_code == 0
 
 
 def main():
