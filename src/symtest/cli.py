@@ -84,19 +84,6 @@ def _to_exit_code(result) -> int:
     return int(result)
 
 
-def _to_exit_code(result) -> int:
-    """Single exit-code conversion point for all sub-command handlers.
-
-    Handlers return either a bool (``False`` = failure → 1) or an int exit
-    code directly (commands with richer semantics, e.g. ``find``:
-    0 = match, 1 = no match, 2 = error). No branch in ``main`` should
-    convert codes itself.
-    """
-    if isinstance(result, bool):
-        return 0 if result else 1
-    return int(result)
-
-
 def main():
     """Main entry point for the CLI"""
     parser = create_parser()
