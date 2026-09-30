@@ -242,3 +242,34 @@ def run_find(args) -> int:
         print()
 
     return 0
+
+
+def register_parser(subparsers):
+    """Register the ``find`` subcommand on the root parser."""
+    find_parser = subparsers.add_parser(
+        'find', help='Search test cases across all imported configurations '
+                     '(auto-expands import references)'
+    )
+    find_parser.add_argument(
+        'config_file', help='Path to the test configuration file (JSON or YAML)'
+    )
+    find_parser.add_argument(
+        'pattern', nargs='?', default='',
+        help='Search pattern (empty pattern lists all cases)'
+    )
+    find_parser.add_argument(
+        '--mode', choices=['substring', 'fuzzy', 'regex'], default='substring',
+        help='Search mode (default: substring, case-insensitive)'
+    )
+    find_parser.add_argument(
+        '--tag', action='append', default=None,
+        help='Only show cases with matching tag (exact match, can be used '
+             'multiple times)'
+    )
+    find_parser.add_argument(
+        '--workspace', '-w', help='Working directory'
+    )
+    find_parser.add_argument(
+        '--output-format', choices=['text', 'json'], default='text',
+        help='Output format (default: text)'
+    )

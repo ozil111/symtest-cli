@@ -1,5 +1,5 @@
 """
-Central logging configuration for the CLI test framework.
+Central logging configuration for SymTest.
 
 Provides a unified ``get_logger(name)`` helper that returns a logger
 under the ``symtest`` namespace.  By default only a

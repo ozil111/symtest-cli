@@ -1,4 +1,4 @@
-# CLI Test Framework
+# SymTest
 
 [中文](README_cn.md) | English
 
@@ -11,10 +11,14 @@
 > pip install symtest-cli
 > ```
 
-A feature-focused automated testing framework for command-line applications.
-It is built for regression suites that need more than an exit-code check:
-multi-step commands, numerical result comparison, large configuration sets,
-parallel execution, and CI-ready reports.
+Regression testing for numerical and scientific command-line workflows.
+
+Run solvers, compare HDF5/CSV outputs with tolerances, diagnose numerical
+regressions, and rerun only what failed.
+
+SymTest can also be used as a general-purpose CLI regression framework:
+multi-step commands, large configuration sets, parallel execution, and
+CI-ready reports.
 
 The project grew out of finite-element solver development, where a single test
 may run several programs, produce HDF5 or CSV results, compare them with
@@ -22,7 +26,7 @@ tolerances, and track execution time across revisions.
 
 ## What it solves
 
-CLI Test Framework keeps the execution workflow and its acceptance criteria in
+SymTest keeps the execution workflow and its acceptance criteria in
 one JSON or YAML configuration:
 
 - **Execute workflows** — single commands or fail-fast step sequences, with

@@ -2,7 +2,16 @@
 
 ## 概述
 
-CLI Test Framework 支持通过**工作区插件目录**扩展比较器能力。将 `*_comparator.py` 文件放入 workspace 的 `comparators/` 目录，框架会在首次运行时自动发现并注册。
+SymTest 支持通过**工作区插件目录**扩展比较器能力。将 `*_comparator.py` 文件放入 workspace 的 `comparators/` 目录，框架会在首次运行时自动发现并注册。
+
+比较器插件体系（v2）围绕根契约 `ComparatorBase.compare(ctx) -> ComparisonResult` 组织，
+按判定权归属分为**三条泳道**：
+
+| 泳道 | 基类 | 适用场景 | verdict 归属 |
+|---|---|---|---|
+| 文件泳道 | `FileComparator` | 比较两个同类文件（text/json/csv/xml/h5/binary 内置即此类） | 插件 |
+| 数据泳道 | `ExtractorComparator` | 提取数值数据（可多通道），框架按 per-channel 容差判定 | **框架** |
+| 自主泳道 | 直接继承 `ComparatorBase` | 独特判定逻辑（阈值组合、标签解析、渐近分析等） | 插件 |
 
 比较器插件体系（v2）围绕根契约 `ComparatorBase.compare(ctx) -> ComparisonResult` 组织，
 按判定权归属分为**三条泳道**：

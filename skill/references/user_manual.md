@@ -1,4 +1,4 @@
-# CLI Test Framework User Manual
+# SymTest User Manual
 
 ## Table of Contents
 

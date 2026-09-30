@@ -1,5 +1,6 @@
 """
-CLI Test Framework - A powerful command-line testing framework
+SymTest - Regression testing for numerical and scientific command-line
+workflows, also usable as a general-purpose CLI testing framework
 
 This package provides tools for testing command-line applications and scripts
 with support for parallel execution and advanced file comparison capabilities.

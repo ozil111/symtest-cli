@@ -1,5 +1,5 @@
 """
-Configuration management module for the CLI Testing Framework.
+Configuration management module for SymTest.
 
 Provides:
 - import_expander  – recursive expansion of ``import`` references in config files
