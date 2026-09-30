@@ -1,7 +1,7 @@
 """Draft 配置规范化（宽松形态归一，1.4 原则 6 的 DSL 层配套）。
 
 core parser 全系统唯一且只接受 canonical TestCase；半成品/草稿配置
-（TUI 编辑中间态、v1 迁移输出等）先经 ``normalize_draft_config`` 补齐
+（v1 迁移输出等）先经 ``normalize_draft_config`` 补齐
 必填字段缺省值，再调用严格 ``core.config_loader.parse_test_cases``。
 
 本模块属于 ``config`` 层（DSL 规范化），不在 ``core`` 内 —— core 不提供

@@ -1,8 +1,8 @@
 """Phase 1 unit tests for the TestCase v2 layered model.
 
-Covers: 分层构造（metadata + Execution/Expectation/Scheduling Spec）、
-平铺关键字参数归一、属性直通访问器、单命令归一为单元素 steps、
-Spec 边界（execution 不携带 expected）、to_dict / to_execution_dict 形态。
+Covers: 平铺关键字参数构造（唯一构造路径）、子 Spec 归一、属性直通访问器、
+单命令归一为单元素 steps、Spec 边界（execution 不携带 expected）、
+to_dict / to_execution_dict 形态。
 """
 import copy
 
@@ -64,12 +64,11 @@ class TestLayeredConstruction:
         assert tc.scheduling.depends_on == []
         assert tc.scheduling.resources is None
 
-    def test_explicit_specs_take_precedence(self):
-        """显式传入子 Spec 时平铺参数被忽略。"""
+    def test_spec_kwargs_rejected(self):
+        """构造路径唯一：子 Spec 不是构造参数，显式传入直接 TypeError。"""
         spec = ExecutionSpec(command="explicit")
-        tc = TestCase(name="t", command="ignored", execution=spec)
-        assert tc.execution is spec
-        assert tc.command == "explicit"
+        with pytest.raises(TypeError):
+            TestCase(name="t", execution=spec)
 
     def test_sequence_mode(self):
         steps = [
@@ -285,7 +284,7 @@ class TestSerialization:
         assert not hasattr(tc, "to_execution_dict")
 
     def test_deepcopy_works(self):
-        """TUI duplicate_case 依赖 deepcopy。"""
+        """TestCase 支持深拷贝（调用方复制用例的通用前提）。"""
         tc = TestCase(
             name="t",
             steps=[TestStep.from_flat(command="a", args=[], expected={})],

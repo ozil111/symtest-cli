@@ -1,4 +1,4 @@
-"""JUnit XML report writer for CLI Test Framework.
+"""JUnit XML report writer for SymTest.
 
 Generates JUnit-format XML compatible with GitLab CI, Jenkins, CircleCI, etc.
 """

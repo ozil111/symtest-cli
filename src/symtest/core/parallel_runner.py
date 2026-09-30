@@ -8,8 +8,20 @@ import logging
 from .base_runner import BaseRunner
 from .test_case import TestCase
 from .process_worker import run_test_in_process
+from ..file_comparator.factory import ComparatorFactory
 
 logger = logging.getLogger("symtest.core.parallel_runner")
+
+
+def _init_process_worker(plugin_dirs):
+    """ProcessPoolExecutor initializer: register plugin dirs in each worker.
+
+    Replaces the old ``os.environ`` back-channel — plugin directories are
+    passed explicitly through ``initargs`` and registered before any task
+    runs, so the lazy ``_load_comparators()`` in the worker discovers the
+    same workspace plugins as the parent.
+    """
+    ComparatorFactory.set_plugin_dirs(plugin_dirs or [])
 
 
 class AtomicSemaphore:
@@ -129,12 +141,7 @@ class ParallelRunner(BaseRunner):
             
             start_time = time.time()
             
-            if self.execution_mode == "process":
-                executor_class = ProcessPoolExecutor
-            else:
-                executor_class = ThreadPoolExecutor
-            
-            with executor_class(max_workers=self.max_workers) as executor:
+            with self._make_executor() as executor:
                 self._run_dag(executor)
             
             end_time = time.time()
@@ -163,20 +170,30 @@ class ParallelRunner(BaseRunner):
             # 确保teardown总是被执行
             self.setup_manager.teardown_all()
     
+    def _make_executor(self):
+        """Create the executor for the configured execution mode.
+
+        Process mode registers ``_init_process_worker`` as the pool
+        initializer so each spawned worker receives the plugin directories
+        explicitly (no ``os.environ`` back-channel).
+        """
+        if self.execution_mode == "process":
+            return ProcessPoolExecutor(
+                max_workers=self.max_workers,
+                initializer=_init_process_worker,
+                initargs=(self.plugin_dirs,),
+            )
+        return ThreadPoolExecutor(max_workers=self.max_workers)
+
     def _run_tests_flat(self) -> bool:
         """Original flat submission (no depends_on), kept for backward compat."""
         logger.info("Starting parallel test execution... Total tests: %d", self.results["total"])
         logger.info("Execution mode: %s, Max workers: %s", self.execution_mode, self.max_workers or "auto")
         logger.info("=" * 50)
-        
+
         start_time = time.time()
-        
-        if self.execution_mode == "process":
-            executor_class = ProcessPoolExecutor
-        else:
-            executor_class = ThreadPoolExecutor
-            
-        with executor_class(max_workers=self.max_workers) as executor:
+
+        with self._make_executor() as executor:
             # 提交所有测试任务
             if self.execution_mode == "process":
                 # 进程模式：使用独立的工作器函数（v2 wire dict，含 env）

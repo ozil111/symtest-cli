@@ -1,11 +1,11 @@
-"""Architecture guard tests —— 架构宪法可执行化（docs/design.md §10）。
+"""Architecture guard tests —— 架构不变量可执行化（docs/design.md §10）。
 
-通过 import 图静态断言依赖方向，由 CI 强制执行，使宪法可回归验证：
+通过 import 图静态断言依赖方向，由 CI 强制执行，使不变量可回归验证：
 - 原则 2：execution 包不得 import validation / assertions（executor 不知道
   expected 的存在 —— Phase 2 唯一验收标准）；
 - 原则 3：validation 只允许 import execution 的 result 类型（读取执行事实），
   不得 import 编排层；
-- 原则 6：core 不得 import cli / tui / commands / runners / reporting
+- 原则 6：core 不得 import cli / commands / runners / reporting
   （表现层与 result consumer）。
 """
 import re
@@ -77,9 +77,9 @@ class TestCoreDoesNotImportPresentation:
     """原则 6：核心模型不依赖表现层。"""
 
     def test_core_has_no_presentation_imports(self):
-        forbidden_abs = ("symtest.cli", "symtest.tui", "symtest.commands",
+        forbidden_abs = ("symtest.cli", "symtest.commands",
                          "symtest.runners", "symtest.reporting")
-        forbidden_rel = ("cli", "tui", "commands", "runners", "reporting")
+        forbidden_rel = ("cli", "commands", "runners", "reporting")
         offenders = []
         for f in _py_files(SRC / "core"):
             for mod in _imports(f):
@@ -101,6 +101,6 @@ class TestReportingConsumesResultsOnly:
             for mod in _imports(f):
                 norm = mod.lstrip(".")
                 if norm.startswith(("core", "execution", "validation",
-                                    "orchestration", "runners", "tui", "cli")):
+                                    "orchestration", "runners", "cli")):
                     offenders.append(f"{f.relative_to(SRC)}: {mod}")
         assert not offenders, f"reporting 依赖越界: {offenders}"

@@ -1,17 +1,17 @@
-# CLI Test Framework 设计文档
+# SymTest 设计文档
 
 > **维护原则（单一事实来源）**：本文档不镜像代码结构——不再维护目录树、类签名、
 > 函数清单、dataclass 字段定义等会随代码漂移的内容。目录结构与 API 以
 > `src/symtest/` 源码及其 docstring 为准，用法示例见 `examples/`。
 > 本文档只承载代码里读不出来的设计信息：架构分层、职责边界、关键流程语义、
-> 扩展契约、设计决策与核心架构宪法。
+> 扩展契约、设计决策与核心架构不变量。
 
 ## 1. 架构总览
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  CLI 入口层    symtest run / tui / validate / schema /       │
-│                compare-files（+ TUI 交互界面）                │
+│  CLI 入口层    symtest run / find / validate / schema /      │
+│                compare-files                                  │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -32,10 +32,10 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-框架分为四层：**CLI 入口层**（含 TUI）、**Runner / Comparator 业务层**、**Config 管线层**、**Core 基础层**。
+框架分为四层：**CLI 入口层**、**Runner / Comparator 业务层**、**Config 管线层**、**Core 基础层**。
 
-层与层不是自由组合：跨层数据流与依赖方向受 §10「核心架构宪法」约束，
-新增 feature 请先对照宪法确定归属。
+层与层不是自由组合：跨层数据流与依赖方向受 §10「架构不变量」约束，
+新增 feature 请先对照不变量确定归属。
 
 ## 2. 模块地图
 
@@ -49,14 +49,13 @@
 | `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
 | `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
 | `utils/` | 路径解析、报告生成、JUnit XML 输出 |
-| `tui/` | Textual 交互式用例管理（详见 §7） |
 
 ### 2.1 入口点
 
 | 命令 | 映射 |
 |---|---|
 | `symtest run` | `symtest.cli:run_tests` |
-| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest find` | `symtest.commands.find:run_find` |
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
@@ -209,7 +208,7 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 ### 6.3 工厂与插件发现
 
 - `file_type` 取值：`text` / `json` / `csv` / `xml` / `h5` / `binary` / `script` / `script_extract`；工厂按类型分发，支持动态注册与全局 reset（测试用）
-- 插件发现四处来源：内置 `*_comparator.py` 自动发现、`workspace/comparators/` 自动扫描、`--plugin-dir` CLI 参数、`CLITEST_PLUGIN_DIRS` 环境变量（供进程模式 worker 使用）
+- 插件发现四处来源：内置 `*_comparator.py` 自动发现、`workspace/comparators/` 自动扫描、`--plugin-dir` CLI 参数、`CLITEST_PLUGIN_DIRS` 环境变量（用户声明的输入；框架只读，进程模式 worker 经进程池 initializer 显式接收插件目录，框架从不修改 `os.environ`）
 - 命名约定：`*_comparator.py` + `*Comparator` 类名；可用类属性 `comparator_type` 显式指定类型名（如 `script_extract`）；抽象基类自动跳过注册
 - 配置传递与严格校验：`actual`/`baseline`/`type`/`options` 之外的键转发给比较器构造函数（kwargs）；构造器参数是**严格**的——未声明的键（拼写错误）在构造时大声失败并给出支持参数清单。`options` 是框架持有的插件配置命名空间（并入构造参数，显式顶层键优先），核心 schema 不为单个插件增加专属字段；`channels`/`default_channel` 属数据泳道框架结构
 
@@ -226,15 +225,17 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 `compare_numeric` / `NumericComparisonStats` / `parse_data_filter`。
 数据泳道插件只需依赖 `ExtractorComparator` + `ChannelData`，数值判定全部复用框架核心。
 
-## 7. TUI 子系统
+## 7. 用例搜索命令（find）
 
-基于 Textual 的终端交互界面：App + Controller（load / create / update /
-delete / run_single / save 业务动作）+ 列表 / 编辑两屏 + 表格封装、多模式搜索条
-（名称 / 命令 / 标签）、expected 编辑器、steps 编辑器。
+替代已移除的 TUI 搜索能力：`symtest find` 走与 runner 完全相同的加载路径
+（`load_config` 自动展开 import + 继承解析，`parse_test_cases` 全系统唯一
+解析器），在展开后的用例集上按三种模式匹配（子串 / 模糊 / 正则，字段覆盖
+name / command / args / tags / description），支持叠加标签过滤与 JSON 输出
+（供 AI / 脚本消费）。退出码沿用 grep 语义：有匹配 0、无匹配 1、错误 2。
 
-快捷键：`q` / Ctrl+Q 退出、`r` 刷新、`e` 编辑、`f` 单跑、`/` 搜索、`a` 新增、`d` 删除、`s` 保存。
-
-TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处理（§10 原则 6）。
+原 TUI 的另一职责（给不习惯写配置的同事提供图形化定义/修改用例）由官方
+skill（仓库根 `skill/`）承担：AI 编程助手按 skill 知识直接生成/修改
+JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 
 ## 8. 扩展点
 
@@ -245,7 +246,6 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 | 自定义断言 | 扩展 `Assertions` | 特定业务校验逻辑 |
 | 新比较器 | `FileComparator` / `ExtractorComparator` / `ComparatorBase` | 按泳道选择基类（文件格式 / 数据提取+通道 / 全权分析），放入 `comparators/` 目录自动发现 |
 | 新 Runner | `ParallelRunner` / `BaseRunner` | 自定义并行调度策略 |
-| TUI 扩展 | `CaseController` / Widgets | 扩展终端管理界面 |
 
 ## 9. 设计决策
 
@@ -271,17 +271,16 @@ TUI 与 runner 共用同一解析器；宽松的展示形态在 TUI 侧自行处
 | DAG 依赖调度 | 基于 Kahn 拓扑 + 就绪队列，依赖满足后立即提交；依赖失败级联 skip 下游；无依赖时走 fast path 零开销 |
 | --update-baseline | 比较失败时自动将实际输出覆盖 baseline，适合批量更新基准 |
 | next_action_hint 结构化建议 | 失败结果附带下一步操作建议（update_baseline / update_expected / increase_timeout / investigate），便于 AI 消费 |
-| TUI 基于 Textual | 利用成熟的终端 UI 框架，提供交互式用例管理 |
+| 移除 TUI，由官方 skill + `symtest find` 替代 | TUI 的两大职责均有更轻替代：定义/修改用例由 AI 编程助手按官方 skill 完成，跨文件搜索由复用同一解析管线的 `find` 命令覆盖；移除后砍掉 textual 重依赖与交互界面维护负担 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
 
 ---
 
-## 10. 核心架构宪法
+## 10. 架构不变量
 
-> **地位与效力**：本节自 Symtest 1.4 Phase 0 评审定稿，是本项目的核心架构契约，
-> 对所有后续 feature 具有最高约束力——任何功能需求先对照本宪法确定归属，再写代码。
-> 修订宪法必须在变更说明中显式指出所放宽/违反的条款及理由。
+> **定位**：本节自 Symtest 1.4 Phase 0 评审定稿。这些不变量定义了模块归属与依赖方向；
+> 新增 feature 应遵守它们，除非变更说明中显式记录了某条不变量为何需要演进。
 
 ### 10.1 数据流主线
 
@@ -359,10 +358,10 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 
 #### 原则 6 — 核心模型不依赖表现层
 
-`core` 绝对不能 import：`cli` / `tui` / `reporter` / AI-specific adapter。
+`core` 绝对不能 import：`cli` / `reporter` / AI-specific adapter。
 
-解析器全系统唯一：TUI 与 runner 使用同一 parser，不允许存在 "TUI mode 后门"
-（如 workspace=None 时放宽校验）；宽松形态由 TUI 侧自行处理。
+解析器全系统唯一：不允许存在宽松解析后门（如 workspace=None 时放宽校验）；
+宽松形态由调用方先 normalize 再调用。
 
 ### 10.3 模块依赖方向
 
@@ -377,9 +376,9 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 - `execution` 与 `validation` 互不 import；
 - `executor` 不得 import `assertions` / validation 侧模块；
 - `validator` 不得启动被测进程（见原则 3）；
-- `core` 不得 import `cli` / `tui` / `reporter`。
+- `core` 不得 import `cli` / `reporter`。
 
-### 10.4 违宪归属速查
+### 10.4 归属速查
 
 任何新需求先问归属：
 
@@ -391,14 +390,14 @@ Reporter 的合法输入只能是 Result 类型；`next_action_hint` 属于 resu
 | AI 告诉我下一步该干嘛？ | Result consumer / diagnosis |
 
 判据：若仍经常出现"这个功能到底放 execution、runner 还是 testcase？"的争论，
-说明宪法没有被正确适用，应回到 10.2 逐条对照。
+说明不变量没有被正确适用，应回到 10.2 逐条对照。
 
-### 10.5 宪法可执行化
+### 10.5 不变量可执行化
 
-宪法不是纯文档约定，配套 architecture guard 测试并由 CI 强制：
+这些不变量不只是文档约定，配套 architecture guard 测试并由 CI 强制：
 
 - 断言 import 图：如 `execution/executor.py` 的 import 不得出现
-  `assertions` / `validation`；`core/**` 不得 import `cli` / `tui` /
+  `assertions` / `validation`；`core/**` 不得 import `cli` /
   `reporter`；
 - guard 测试纳入常规回归套件（`python tests\run_all.py`），违规即失败；
 - 冲突裁决次序：guard 测试 > 本节文字 > 个人偏好。

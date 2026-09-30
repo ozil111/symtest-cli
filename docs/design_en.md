@@ -1,4 +1,4 @@
-# CLI Test Framework Design Document
+# SymTest Design Document
 
 > **Maintenance principle (single source of truth)**: this document does not mirror
 > code structure — it no longer maintains directory trees, class signatures,
@@ -7,14 +7,14 @@
 > their docstrings; usage examples live in `examples/`.
 > This document only carries what cannot be read out of code: architecture
 > layering, responsibility boundaries, key flow semantics, extension contracts,
-> design decisions, and the architecture constitution.
+> design decisions, and the architecture invariants.
 
 ## 1. Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  CLI Entry Layer    symtest run / tui / validate / schema /  │
-│                     compare-files (+ TUI interface)          │
+│  CLI Entry Layer    symtest run / find / validate / schema / │
+│                     compare-files                             │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -37,13 +37,13 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The framework is divided into four layers: **CLI Entry Layer** (including TUI),
+The framework is divided into four layers: **CLI Entry Layer**,
 **Runner / Comparator Business Layer**, **Config Pipeline Layer**, and
 **Core Foundation Layer**.
 
 Layers are not free-to-wire: cross-layer data flow and dependency directions are
-governed by the §10 Core Architecture Constitution. Resolve feature ownership
-against it first.
+governed by the §10 architecture invariants. Resolve feature ownership
+against them first.
 
 ## 2. Module Map
 
@@ -57,14 +57,13 @@ Responsibilities by package (file-level details and public APIs live in source):
 | `runners/` | Thin wrapper runners: Config/JSON/YAML × sequential/parallel |
 | `file_comparator/` | Comparator family + factory + workspace plugin discovery (see §6) |
 | `utils/` | Path resolution, report generation, JUnit XML output |
-| `tui/` | Interactive Textual case management (see §7) |
 
 ### 2.1 Entry Points
 
 | Command | Mapping |
 |---|---|
 | `symtest run` | `symtest.cli:run_tests` |
-| `symtest tui` | `symtest.tui.app:run_tui` |
+| `symtest find` | `symtest.commands.find:run_find` |
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
@@ -204,17 +203,21 @@ guarantees they are unmodified.
 - Default exit code 0 → pass; optional `pass_pattern` / `fail_pattern` regexes refine the verdict on stdout
 - Timeout configurable
 
-## 7. TUI Subsystem
+## 7. Case Search Command (find)
 
-Textual-based terminal UI: App + Controller (load / create / update / delete /
-run_single / save actions) + list/edit screens + table wrapper, multi-mode
-search bar (name / command / tag), expected editor, steps editor.
+Replaces the search capability of the retired TUI: `symtest find` goes through
+exactly the same loading path as the runners (`load_config` auto-expands
+imports + resolves inheritance; `parse_test_cases` is the single system-wide
+parser), then matches cases in three modes (substring / fuzzy / regex, across
+name / command / args / tags / description) with optional tag filtering and
+JSON output (for AI / scripts). Exit codes follow grep semantics: 0 = match,
+1 = no match, 2 = error.
 
-Key bindings: `q` / Ctrl+Q quit, `r` refresh, `e` edit, `f` run single, `/`
-search, `a` add, `d` delete, `s` save.
-
-TUI and runners share the same parser; relaxed display shapes are handled on the
-TUI side itself (§10 Principle 6).
+The TUI's other responsibility (graphical case authoring/editing for people
+unfamiliar with writing configs) is now covered by the official skill
+(`skill/` at the repository root): AI coding assistants author/modify
+JSON/YAML configs directly from skill knowledge, with lower learning cost and
+no interactive UI maintenance burden.
 
 ## 8. Extension Points
 
@@ -225,7 +228,6 @@ TUI side itself (§10 Principle 6).
 | Custom assertions | Extend `Assertions` | Specific business validation logic |
 | New comparator | `BaseComparator` | Support new file formats; place in `comparators/` for auto-discovery |
 | New Runner | `ParallelRunner` / `BaseRunner` | Custom parallel scheduling strategies |
-| TUI extensions | `CaseController` / Widgets | Extend the terminal management interface |
 
 ## 9. Design Decisions
 
@@ -250,19 +252,17 @@ TUI side itself (§10 Principle 6).
 | DAG dependency scheduling | Kahn topology + ready queue; submits dependents immediately once deps are satisfied; cascade-skips downstream on dep failure; zero-overhead fast path when no deps declared |
 | --update-baseline | Automatically overwrites baseline files with actual output on comparison failure; ideal for batch baseline updates |
 | next_action_hint structured suggestions | Failed results include actionable suggestions (update_baseline / update_expected / increase_timeout / investigate), convenient for AI consumption |
-| TUI based on Textual | Leverages a mature terminal UI framework for interactive case management |
+| TUI removed; replaced by official skill + `symtest find` | Both TUI responsibilities have lighter replacements: case authoring/editing is done by AI assistants via the official skill; cross-file search is covered by the `find` command reusing the same parsing pipeline; removes the heavy textual dependency and interactive-UI maintenance burden |
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Centralized logging | All diagnostic messages go through Python's `logging` module; CLI entry activates console output; library users enable as needed |
 
 ---
 
-## 10. Core Architecture Constitution
+## 10. Architecture Invariants
 
-> **Status and force**: ratified at Symtest 1.4 Phase 0 review. This section is the
-> project's core architectural contract with supreme authority over all future
-> features — resolve ownership against this constitution before writing any code.
-> Amending it requires explicitly naming the clause being relaxed/waived and the
-> rationale in the change description.
+> **Status**: established at Symtest 1.4 Phase 0 review. These invariants define
+> module ownership and dependency direction. New features should preserve them
+> unless a change explicitly documents why an invariant must evolve.
 
 ### 10.1 Data Flow Spine
 
@@ -346,11 +346,11 @@ to result consumers (diagnosis) and must not exist in the execution layer.
 
 #### Principle 6 — The core model does not depend on presentation
 
-`core` must never import: `cli` / `tui` / `reporter` / AI-specific adapters.
+`core` must never import: `cli` / `reporter` / AI-specific adapters.
 
-One parser for the whole system: TUI and runners use the same parser; a "TUI
-mode back door" (e.g., relaxed validation when workspace=None) is forbidden;
-relaxed shapes are handled on the TUI side itself.
+One parser for the whole system: no relaxed-parsing back door is allowed
+(e.g., relaxed validation when workspace=None); relaxed shapes are normalized
+by the caller before invoking the parser.
 
 ### 10.3 Module Dependency Direction
 
@@ -365,7 +365,7 @@ Forbidden:
 - `execution` and `validation` must not import each other;
 - the `executor` must not import `assertions` / validation-side modules;
 - the `validator` must not launch the process under test (see Principle 3);
-- `core` must not import `cli` / `tui` / `reporter`.
+- `core` must not import `cli` / `reporter`.
 
 ### 10.4 Ownership Quick Reference
 
@@ -379,17 +379,17 @@ For any new requirement, ask ownership first:
 | AI tells me what to do next? | Result consumer / diagnosis |
 
 Litmus test: if arguments like "does this go into execution, the runner, or the
-testcase?" keep recurring, the constitution is not being applied correctly — go
+testcase?" keep recurring, the invariants are not being applied correctly — go
 back to 10.2 and check clause by clause.
 
-### 10.5 Making the Constitution Enforceable
+### 10.5 Making the Invariants Enforceable
 
-The constitution is not a documentation-only convention; it comes with
+These invariants are not documentation-only; they come with
 architecture guard tests enforced by CI:
 
 - Assert the import graph: e.g., imports of `execution/executor.py` must not
   contain `assertions` / `validation`; `core/**` must not import `cli` /
-  `tui` / `reporter`;
+  `reporter`;
 - Guard tests are part of the regular regression suite
   (`python tests\run_all.py`); violations fail the build;
 - Conflict resolution order: guard tests > this text > personal preference.

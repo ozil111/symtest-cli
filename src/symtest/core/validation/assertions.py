@@ -173,8 +173,10 @@ class Assertions:
         if baseline_path and workspace and not os.path.isabs(baseline_path):
             baseline_path = os.path.join(workspace, baseline_path)
 
-        # Auto-detect file type from extension
-        if not file_type:
+        # Auto-detect file type from extension (covers omitted type AND an
+        # explicit "auto" — never let "auto" degrade to a silent guess inside
+        # the factory when the file paths are available right here).
+        if not file_type or file_type == "auto":
             if not actual_path:
                 raise ValidationError(
                     "File type cannot be auto-detected: 'actual' path is empty. "

@@ -207,36 +207,3 @@ class TestEnvAffectsConfigHash:
         h3 = compute_config_hash(steps, None, None)
         assert h1 != h2
         assert h1 != h3
-
-
-# ---------------------------------------------------------------------------
-# TUI editor helpers
-# ---------------------------------------------------------------------------
-
-class TestTuiEnvHelpers:
-    """Round-trip of the TUI editor's ``KEY=VALUE`` env helpers."""
-
-    def _helpers(self):
-        from symtest.tui.screens.case_editor import CaseEditorScreen
-
-        return CaseEditorScreen._format_env_text, CaseEditorScreen._parse_env_text
-
-    def test_format_and_parse_roundtrip(self):
-        fmt, parse = self._helpers()
-        env = {"UEL_SYSID_SCALE": "1.0", "OMP_NUM_THREADS": "8"}
-        text = fmt(env)
-        assert parse(text) == env
-
-    def test_format_empty_env(self):
-        fmt, parse = self._helpers()
-        assert fmt({}) == ""
-        assert fmt(None) == ""
-
-    def test_parse_skips_blanks_and_comments(self):
-        _, parse = self._helpers()
-        text = "# comment\n\nA=1\n  B = 2  \ninvalid-line\nC=\n"
-        assert parse(text) == {"A": "1", "B": "2", "C": ""}
-
-    def test_parse_ignores_line_without_equals(self):
-        _, parse = self._helpers()
-        assert parse("no_equals_here\nA=1") == {"A": "1"}

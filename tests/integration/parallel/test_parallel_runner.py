@@ -84,6 +84,69 @@ class TestParallelRunner(unittest.TestCase):
         self.assertTrue(process_success)
         self.assertEqual(thread_runner.results["passed"], process_runner.results["passed"])
 
+    def test_process_mode_discovers_workspace_plugins(self):
+        """Process workers discover workspace plugins via the pool initializer
+        (explicit initargs — the framework never writes os.environ)."""
+        comparators_dir = os.path.join(self.temp_dir, "comparators")
+        os.makedirs(comparators_dir)
+        plugin_code = (
+            "from symtest.file_comparator.base_comparator import ComparatorBase\n"
+            "from symtest.file_comparator.result import ComparisonResult\n"
+            "\n"
+            "class AlwaysPassComparator(ComparatorBase):\n"
+            "    def compare(self, ctx):\n"
+            "        result = ComparisonResult(\n"
+            "            file1=str(ctx.baseline or ''),\n"
+            "            file2=str(ctx.actual or ''),\n"
+            "        )\n"
+            "        result.identical = True\n"
+            "        return result\n"
+        )
+        with open(os.path.join(comparators_dir, "always_pass_comparator.py"),
+                  "w", encoding="utf-8") as f:
+            f.write(plugin_code)
+
+        # Contents deliberately differ: the plugin always passes, so the case
+        # only succeeds if the WORKER actually registered the plugin type.
+        file_a = os.path.join(self.temp_dir, "a.txt")
+        file_b = os.path.join(self.temp_dir, "b.txt")
+        for path, content in ((file_a, "AAA"), (file_b, "BBB")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        config_file = os.path.join(self.temp_dir, "plugin_config.json")
+        test_config = {
+            "test_cases": [
+                {
+                    "name": "plugin_case",
+                    "execution": {
+                        "command": f'"{sys.executable}" -c "print(\'ok\')"',
+                        "args": [],
+                    },
+                    "expected": {
+                        "return_code": 0,
+                        "compare_files": [
+                            {
+                                "actual": "b.txt",
+                                "baseline": "a.txt",
+                                "type": "alwayspass",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(test_config, f, ensure_ascii=False, indent=2)
+
+        runner = ParallelJSONRunner(
+            config_file, self.temp_dir, max_workers=2, execution_mode="process"
+        )
+        success = runner.run_tests()
+
+        self.assertTrue(success)
+        self.assertEqual(runner.results["passed"], 1)
+
     def test_max_workers_configuration(self):
         for max_workers in [1, 2, 4]:
             with self.subTest(max_workers=max_workers):

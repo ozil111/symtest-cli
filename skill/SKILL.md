@@ -1,8 +1,9 @@
 ---
-name: cli-test-framework
+name: symtest
 description: >-
   This skill should be used when writing functional tests for CLI programs,
-  defining acceptance criteria, or using the symtest-cli / symtest framework.
+  defining acceptance criteria, or using the SymTest framework
+  (Python package `symtest-cli`, command `symtest`).
   It covers JSON/YAML test case authoring, multi-step sequence tests,
   numerical golden file comparison (HDF5/CSV/XML), comparator plugin
   development (three-lane architecture: file / data-channel / autonomous),
@@ -13,14 +14,16 @@ description: >-
   symtest.
 ---
 
-# CLI Test Framework (symtest-cli)
+# SymTest (symtest-cli)
 
 ## Overview
 
-CLI Test Framework (`symtest-cli`) is a functional testing framework for
-command-line programs. It uses a single JSON or YAML configuration file to
-describe both the execution workflow and the acceptance criteria. This skill
-provides the knowledge needed to author test configurations and run tests.
+SymTest (`symtest-cli`) is a regression testing framework for numerical and
+scientific command-line workflows, also usable as a general-purpose functional
+testing framework for command-line programs. It uses a single JSON or YAML
+configuration file to describe both the execution workflow and the acceptance
+criteria. This skill provides the knowledge needed to author test
+configurations and run tests.
 
 **Config DSL (Schema v2, 1.4+)**: each test case is layered — execution
 semantics live in `execution` (single-command shorthand or `execution.steps`),
@@ -55,7 +58,7 @@ legacy configs with `symtest migrate`.
    - `return_code` — expected exit code (default 0).
    - `output_contains` — list of strings that must appear in stdout.
    - `output_matches` — regex pattern for stdout.
-   - `compare_files` — file comparison assertions (see Workflow 3).
+   - `compare_files` — file comparison assertions (see Workflow 2).
 4. Add metadata: `tags` for filtering, `description` for context. Put
    `timeout` for long-running commands and `retry_count` for flaky tests
    inside `execution`; declare `depends_on`/`resources` in `scheduling`.
@@ -70,7 +73,8 @@ legacy configs with `symtest migrate`.
 
 For all available fields and their meanings, consult
 `references/field_reference.md`. For complete usage details (setup plugins,
-TUI, resource scheduling, etc.), consult `references/user_manual.md`.
+case search via `symtest find`, resource scheduling, etc.), consult
+`references/user_manual.md`.
 
 ### Workflow 2: Numerical Golden File Testing
 
@@ -98,7 +102,7 @@ starting point.
    `<workspace>/comparators/*_comparator.py`. When troubleshooting a
    custom `type`, check that directory first — verify the plugin file
    exists and its class imports succeed (use `from symtest.file_comparator...`,
-   not other package names). To author a new one, see Workflow 4.
+   not other package names). To author a new one, see Workflow 3.
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
@@ -108,7 +112,7 @@ starting point.
    ```
    Always review updated baselines and keep them in version control.
 
-### Workflow 4: Authoring Comparator Plugins
+### Workflow 3: Authoring Comparator Plugins
 
 Custom comparators follow a **three-lane architecture** around the root
 contract `ComparatorBase.compare(ctx) -> ComparisonResult`. Choose the lane
@@ -160,7 +164,7 @@ Hard rules for all lanes:
   `file1`/`file2` as `None` (no fake empty strings).
 
 Full details (config examples, JSON protocol, result semantics, report
-rendering): `references/user_manual.md` → "自定义文件比较器".
+rendering): `references/user_manual.md` → "Custom File Comparator".
 
 ## Decision Guide
 
@@ -271,7 +275,7 @@ For a complete project entry script with all CLI options, copy and adapt
 - `references/field_reference.md` — Quick field lookup table for test case
   configuration. Consult this when filling in or verifying config fields.
 - `references/user_manual.md` — Complete framework manual covering all
-  features (setup plugins, TUI, resource scheduling, history, custom
+  features (setup plugins, resource scheduling, history, custom
   comparators, extension development). Consult for advanced or uncommon
   features not covered in this file.
 

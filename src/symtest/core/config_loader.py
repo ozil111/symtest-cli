@@ -105,8 +105,8 @@ def parse_test_cases(
     command/args paths are resolved.
 
     解析器全系统唯一且只接受 canonical TestCase：必填字段缺失即抛
-    ``ValueError``（1.4 原则 6：无 TUI 宽松模式后门）。编辑半成品的
-    宽松形态由 TUI 侧自行 normalize 后再调用本函数。
+    ``ValueError``（1.4 原则 6：无宽松模式后门）。编辑半成品的
+    宽松形态由调用方（如迁移命令）先 normalize 后再调用本函数。
     """
     cases: List[TestCase] = []
     resolve = workspace is not None and path_resolver is not None

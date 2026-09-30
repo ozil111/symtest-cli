@@ -117,8 +117,12 @@ class ComparatorFactory:
     def get_comparator_class(file_type):
         """
         @brief Return the comparator class for a type name (no instantiation).
-        @details Falls back to TextComparator for 'auto'/'text' and
-                 BinaryComparator for unknown types (legacy behaviour).
+        @details 'auto'/'text' resolve to TextComparator ('auto' is normally
+                 resolved from the file extension by the assertion/CLI layer
+                 before reaching the factory).  Unknown types fail LOUDLY with
+                 the list of available types — a typo in the compareSpec
+                 ``type`` field must never silently degrade to another
+                 comparator (that would produce wrong "passing" results).
         """
         if not ComparatorFactory._initialized:
             ComparatorFactory._load_comparators()
@@ -128,8 +132,11 @@ class ComparatorFactory:
             if file_type.lower() in ("auto", "text"):
                 from .text_comparator import TextComparator
                 return TextComparator
-            from .binary_comparator import BinaryComparator
-            return BinaryComparator
+            raise ValueError(
+                f"Unknown comparator type '{file_type}'. "
+                f"Available types: {ComparatorFactory.get_available_comparators()}. "
+                f"Unknown types fail loudly — check the compareSpec 'type' for typos."
+            )
         return comparator_class
 
     @staticmethod
@@ -216,12 +223,17 @@ class ComparatorFactory:
     # ------------------------------------------------------------------
     @staticmethod
     def set_plugin_dirs(dirs):
-        """Persist workspace-level plugin directories and expose them via env var.
+        """Register workspace-level plugin directories.
 
         Thread-pool runners share ``_plugin_dirs`` in-process.  Process-pool
-        runners (``spawn``) pick up the plugin paths from ``CLITEST_PLUGIN_DIRS``
-        so that the lazy ``_load_comparators()`` in each worker discovers the
-        same workspace plugins.
+        runners (``spawn``) receive the same list explicitly via the pool
+        ``initializer`` (see ``parallel_runner``) — the framework NEVER
+        mutates ``os.environ``.
+
+        ``CLITEST_PLUGIN_DIRS`` remains a user-facing *input*: when set by
+        the user in the environment, ``_load_comparators()`` reads it as an
+        extra discovery source.  The framework only reads it, never writes
+        or deletes it.
 
         :param dirs: Iterable of absolute or relative directory paths.
         """
@@ -234,7 +246,6 @@ class ComparatorFactory:
                 deduped.append(resolved)
                 seen.add(resolved)
         ComparatorFactory._plugin_dirs = deduped
-        os.environ[_ENV_VAR] = os.pathsep.join(deduped)
         if ComparatorFactory._initialized:
             ComparatorFactory._load_from_dirs(deduped)
 
@@ -333,9 +344,11 @@ class ComparatorFactory:
 
     @staticmethod
     def reset():
-        """Reset all internal state (for testing)."""
+        """Reset all internal state (for testing).
+
+        Never touches ``os.environ`` — ``CLITEST_PLUGIN_DIRS`` belongs to
+        the user's environment, not to framework state.
+        """
         ComparatorFactory._comparators = {}
         ComparatorFactory._initialized = False
         ComparatorFactory._plugin_dirs = []
-        if _ENV_VAR in os.environ:
-            del os.environ[_ENV_VAR]

@@ -1,4 +1,4 @@
-# CLI Test Framework
+# SymTest
 
 [中文](README_cn.md) | English
 
@@ -11,10 +11,14 @@
 > pip install symtest-cli
 > ```
 
-A feature-focused automated testing framework for command-line applications.
-It is built for regression suites that need more than an exit-code check:
-multi-step commands, numerical result comparison, large configuration sets,
-parallel execution, and CI-ready reports.
+Regression testing for numerical and scientific command-line workflows.
+
+Run solvers, compare HDF5/CSV outputs with tolerances, diagnose numerical
+regressions, and rerun only what failed.
+
+SymTest can also be used as a general-purpose CLI regression framework:
+multi-step commands, large configuration sets, parallel execution, and
+CI-ready reports.
 
 The project grew out of finite-element solver development, where a single test
 may run several programs, produce HDF5 or CSV results, compare them with
@@ -22,7 +26,7 @@ tolerances, and track execution time across revisions.
 
 ## What it solves
 
-CLI Test Framework keeps the execution workflow and its acceptance criteria in
+SymTest keeps the execution workflow and its acceptance criteria in
 one JSON or YAML configuration:
 
 - **Execute workflows** — single commands or fail-fast step sequences, with
@@ -30,8 +34,8 @@ one JSON or YAML configuration:
 - **Verify results** — return codes, output text and regular expressions, plus
   text, JSON, CSV, XML, HDF5, binary, and custom-script file comparisons.
 - **Manage large suites** — split configurations with `import`, reuse templates
-  with `extends`, filter by name or tag, and inspect cases across files in the
-  optional TUI.
+  with `extends`, filter by name or tag, and locate cases across files with
+  `symtest find`.
 - **Iterate and integrate** — parallel execution, `--last-failed`, step-level
   `--resume`, runtime history, structured reports, and JUnit XML output.
 
@@ -46,11 +50,10 @@ Python 3.9 or newer is required.
 pip install symtest-cli
 ```
 
-YAML and the TUI are optional:
+YAML support is optional:
 
 ```bash
 pip install "symtest-cli[yaml]"
-pip install "symtest-cli[tui]"
 pip install "symtest-cli[all]"
 ```
 
@@ -155,7 +158,7 @@ symtest run solver_tests.json -t long_case --resume
 `--resume` deliberately trusts that workspace artifacts have not changed
 between runs.
 
-## Large test suites and the optional TUI
+## Large test suites and cross-file search
 
 Large suites can be divided into sub-configurations:
 
@@ -168,12 +171,12 @@ Large suites can be divided into sub-configurations:
 }
 ```
 
-The optional TUI provides one searchable view across imported files. It is
-intended as an aid for locating cases and reviewing scenario coverage in large
-projects, rather than a requirement for normal test execution.
+`symtest find` auto-expands all `import` references and searches across the
+unified case set (substring / fuzzy / regex modes), making it easy to locate
+cases and review scenario coverage in large projects:
 
 ```bash
-symtest tui main_config.json
+symtest find main_config.json "login"
 ```
 
 ## Parallel execution and resources
@@ -249,9 +252,9 @@ requirement for using the framework.
 - [User manual](docs/user_manual_en.md)
 - [Design document](docs/design_en.md)
 - [Plugin examples](examples/plugins/README.md)
-- [AI Skill template](examples/skill/) — import framework knowledge into AI coding
-  assistants so they can author test cases, acceptance criteria,
-  and TDD workflows directly
+- [Official AI Skill](skill/) — install this skill into AI coding assistants
+  so they can author test cases, acceptance criteria, and TDD workflows
+  directly — the recommended entry point for new users
 
 ## Development
 

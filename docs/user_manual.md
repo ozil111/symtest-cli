@@ -1,4 +1,4 @@
-# CLI Test Framework 使用说明书
+# SymTest 使用说明书
 
 ## 目录
 
@@ -8,7 +8,7 @@
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
-- [TUI 交互式管理器](#tui-交互式管理器)
+- [跨文件搜索用例](#跨文件搜索用例find)
 - [运行测试](#运行测试)
 - [项目入口脚本](#项目入口脚本)
 - [占位符（变量替换）](#占位符变量替换)
@@ -38,7 +38,7 @@ YAML 支持需安装可选依赖：
 pip install "symtest-cli[yaml]"
 ```
 
-一次安装 YAML 和 TUI 等全部可选功能：
+一次安装 YAML 等全部可选功能：
 
 ```bash
 pip install "symtest-cli[all]"
@@ -195,7 +195,7 @@ test_cases:
             "name": "D",
             "execution": { "command": "python", "args": ["merge.py"] },
             "scheduling": { "depends_on": ["A", "B", "C"] },
-            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "hdf5"}]}
+            "expected": {"return_code": 0, "compare_files": [{"file": "output.h5", "type": "h5"}]}
         }
     ]
 }
@@ -233,7 +233,7 @@ test_cases:
       return_code: 0
       compare_files:
         - file: output.h5
-          type: hdf5
+          type: h5
 ```
 
 **调度语义**：
@@ -623,10 +623,6 @@ symtest run config.json --var solver=/path/to/solver
 - `abstract` 用例不计入可执行用例数
 - `extends` 用例跳过必填字段检查（内容来自父类）
 
-### TUI 编辑限制
-
-> **注意**：TUI 目前不支持编辑继承用例。继承后的展开用例在 TUI 中可正常查看和运行，但请直接编辑 JSON/YAML 源文件来进行修改。
-
 ## 配置校验
 
 `validate` 命令在不运行测试的情况下检查配置文件的正确性，适合在 CI 流水线中做配置合法性检查。
@@ -677,127 +673,32 @@ symtest validate test_cases.json --output-format json
   [FAIL] Import target not found: /project/cases/nonexistent.json
 ```
 
-## TUI 交互式管理器
+## 跨文件搜索用例（find）
 
-当大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。TUI（Terminal User Interface）在所有导入配置之上提供统一视图，用于浏览、全局搜索、辅助检查覆盖场景，并可按需编辑或运行用例。它是大型测试集的辅助工具，不是日常执行测试的必需组件。
+大型测试项目把用例拆分到多个 JSON/YAML 子配置后，跨文件定位用例和检查场景覆盖会逐渐困难。`symtest find` 自动展开主配置的全部 `import` 引用，在统一展开后的用例集上执行搜索，是轻量、可脚本化的定位方式。
 
-### 安装
-
-TUI 依赖 `textual` 库，并作为按需安装的可选依赖提供：
+### 用法
 
 ```bash
-# 安装时附带 TUI 支持
-pip install "symtest-cli[tui]"
+# 默认子串模式（大小写不敏感），同时匹配 name/command/args/tags/description
+symtest find main_config.json "login"
 
-# 或者在已有框架上单独安装 textual
-pip install textual
+# 正则模式
+symtest find main_config.json "log.*in" --mode regex
+
+# 模糊模式（容忍拼写差异与缩写，按相关度排序）
+symtest find main_config.json "lgin" --mode fuzzy
+
+# 与标签过滤叠加（可多次使用，OR 关系）
+symtest find main_config.json "login" --tag smoke
+
+# 输出 JSON（适合 AI/脚本消费）
+symtest find main_config.json "login" --output-format json
 ```
 
-如果未安装 `textual` 就直接执行 `symtest tui`，框架会给出友好的安装提示。
+不提供搜索词时列出全部用例。文本输出列为：序号、名称、命令、标签、超时、模式（`single` 单命令 / `steps` 步骤序列）。
 
-### 启动
-
-```bash
-# 打开 TUI 编辑测试用例
-symtest tui test_cases.json
-
-# YAML 文件同样支持
-symtest tui test_cases.yaml
-
-# 指定工作目录
-symtest tui test_cases.json --workspace /path/to/project
-
-# 打开带 import 的主配置文件（自动展开子文件中的所有用例）
-symtest tui main_config.json
-```
-
-TUI 启动时会自动通过[配置拆分机制](#配置拆分机制)展开 `import` 引用，将所有用例加载到界面中统一管理。
-
-### 界面概览
-
-TUI 启动后显示**用例列表主界面**：
-
-- **顶部状态栏**：当前文件名、用例总数
-- **搜索栏**：`/` 键聚焦搜索框，支持子串/模糊/正则三种模式
-- **用例表格**：六列（序号、名称、命令、标签、超时、模式），支持键盘导航
-- **底部快捷键栏**：显示所有可用操作
-
-### 快捷键
-
-| 快捷键 | 功能 |
-|---|---|
-| `a` | 新增用例 |
-| `e` | 编辑选中的用例 |
-| `d` | 删除选中的用例 |
-| `u` | 复制选中的用例（名称追加 `_copy` 后缀） |
-| `r` | 运行选中的用例，显示执行结果 |
-| `F6` / `Ctrl+S` | 保存修改到文件 |
-| `/` | 聚焦搜索框 |
-| `Esc` | 清除搜索，恢复完整列表 |
-| `Alt+S` | 切换子串搜索模式（大小写不敏感） |
-| `Alt+F` | 切换模糊搜索模式（容忍拼写差异和缩写） |
-| `Alt+R` | 切换正则搜索模式 |
-| `q` / `Ctrl+Q` | 退出 |
-| `↑` / `↓` / `j` / `k` | 上下移动光标 |
-
-搜索时会同时匹配 `name`、`command`、`args`、`tags`、`description` 等字段，匹配结果在表格中高亮显示。
-
-### 编辑用例
-
-选中用例后按 `e` 进入编辑界面。编辑界面根据用例类型有两种模式：
-
-#### 单命令模式
-
-编辑表单包含以下字段：
-
-| 字段 | 说明 |
-|---|---|
-| `Name` | 用例名称（必填） |
-| `Command` | 要执行的命令 |
-| `Args` | 命令参数，每行一个 |
-| `Tags` | 标签列表，每行一个 |
-| `Description` | 用例描述 |
-| `Timeout` | 超时秒数 |
-| Expected | 期望断言的嵌套子表单（见下文） |
-
-#### 步骤序列模式
-
-当用例包含多个有序步骤时，切换到此模式。每个步骤有独立的 `Command`、`Args`、`Expected` 和 `Timeout`，支持添加、删除、编辑和上下移动步骤。
-
-两种模式可通过编辑界面内的快捷键切换，切换时会提示确认以免丢失数据。
-
-### `expected` 字段编辑
-
-`expected` 字段是一个嵌套字典，编辑器提供结构化输入：
-
-| 字段 | 输入方式 |
-|---|---|
-| `return_code` | 数字输入框 |
-| `output_contains` | 多行文本输入，一行一个匹配字符串 |
-| `output_matches` | 正则表达式文本输入 |
-| `compare_files` | 每行一个 JSON 对象，如 `{"actual":"out.txt","baseline":"base.txt","type":"text"}` |
-
-除上述已知字段外，还支持通过 `+ Add` 按钮添加自定义 key=value 对，value 为字符串或 JSON 文本。更多含义见[测试用例定义](#测试用例定义)。
-
-### 运行用例
-
-在列表中选中某条用例，按 `r` 即可实时调用框架执行引擎运行该用例。运行结束后弹出结果面板，显示：
-
-- 通过/失败状态
-- 返回码
-- 耗时
-- 命令输出（stdout/stderr）
-
-结果面板仅展示、不修改配置文件。
-
-### 保存
-
-对用例的任何增删改操作都在**内存中**进行，不会立即写入磁盘。
-
-- 按 `F6` 或 `Ctrl+S` **保存**：将当前全部用例写回原配置文件。
-- 通过 `save_as` 可**另存为**新文件（通过界面菜单操作）。
-
-退出 TUI 时如有未保存的修改，会弹出确认提示。
+退出码沿用 grep 语义：有匹配返回 `0`，无匹配返回 `1`，配置加载失败返回 `2`，可直接用于脚本判断。
 
 ## 运行测试
 
@@ -2011,7 +1912,7 @@ your-workspace/
 symtest run test_config.json --plugin-dir ./extra_plugins
 ```
 
-插件也会通过环境变量 `CLITEST_PLUGIN_DIRS` 自动继承到 process 模式子进程。
+也可通过环境变量 `CLITEST_PLUGIN_DIRS` 声明额外插件目录（框架只读取该变量，从不修改进程环境变量）；process 模式下框架通过进程池 initializer 把插件目录显式传给子进程，无需环境变量中转。
 
 **命名约定**：
 - 文件名必须以 `_comparator.py` 结尾（如 `my_analysis_comparator.py`）

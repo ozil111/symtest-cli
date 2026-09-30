@@ -35,7 +35,7 @@ def _write_plugin(tmpd: str, filename: str, cls: str) -> Path:
 
 
 class TestWorkspacePluginDiscovery:
-    """Test set_plugin_dirs, _load_from_dirs, and env var cross-process."""
+    """Test set_plugin_dirs, _load_from_dirs, and env-var input discovery."""
 
     def teardown_method(self):
         ComparatorFactory.reset()
@@ -75,11 +75,26 @@ class TestWorkspacePluginDiscovery:
         ComparatorFactory.get_available_comparators()  # must not raise
 
     def test_reset_clears_everything(self):
-        """reset() clears comparators, initialized flag, plugin_dirs, env var."""
+        """reset() clears comparators, initialized flag and plugin_dirs;
+        it never touches os.environ (CLITEST_PLUGIN_DIRS is user-owned)."""
         with tempfile.TemporaryDirectory() as tmpd:
             _write_plugin(tmpd, "reset_test_comparator.py", "ResetTestComparator")
             ComparatorFactory.set_plugin_dirs([tmpd])
             assert "resettest" in ComparatorFactory.get_available_comparators()
             ComparatorFactory.reset()
             assert "resettest" not in ComparatorFactory.get_available_comparators()
+
+    def test_framework_never_writes_environ(self):
+        """set_plugin_dirs / discovery must not mutate os.environ.
+
+        Process workers receive plugin dirs via the pool initializer —
+        the framework has no business writing to the process environment.
+        """
+        with tempfile.TemporaryDirectory() as tmpd:
+            _write_plugin(tmpd, "noenv_comparator.py", "NoenvComparator")
+            environ_before = dict(os.environ)
+            ComparatorFactory.set_plugin_dirs([tmpd])
+            ComparatorFactory.get_available_comparators()
+            ComparatorFactory.reset()
+            assert os.environ == environ_before
             assert "CLITEST_PLUGIN_DIRS" not in os.environ

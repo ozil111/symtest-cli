@@ -2,7 +2,7 @@
 
 自 1.3 ``core/execution.py::_build_next_action_hint`` 原样搬入（公开化命名）。
 ``command`` 字段由装配点填充（``attach_next_action_hint(s)``，CLI 报告
-装配阶段 / TUI 表现层调用），orchestration 只产出 ``failure_kind``。
+装配阶段 / 表现层调用），orchestration 只产出 ``failure_kind``。
 """
 from typing import Any, Dict, Optional
 
@@ -106,7 +106,7 @@ def attach_next_action_hint(
     """Reporting 装配点：按 ``failure_kind`` 为单个失败结果填充 hint。
 
     Orchestration 只产出 ``failure_kind``（原则 5 单向流）；本函数在结果
-    装配/输出阶段（CLI 报告输出前 / TUI run_case）调用，为 ``failure_kind``
+    装配/输出阶段（CLI 报告输出前）调用，为 ``failure_kind``
     非空的结果构建结构化建议并填充具体 CLI 命令。已带 hint 的结果只补
     command 字段（幂等）。
 

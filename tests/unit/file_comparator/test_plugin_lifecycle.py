@@ -238,6 +238,36 @@ class TestDiscoveryRules:
         )
         assert name == "helperchecked"
 
+
+# ---------------------------------------------------------------------------
+# 11: unknown comparator TYPE fails loudly (no silent fallback)
+# ---------------------------------------------------------------------------
+
+class TestUnknownTypeFailsLoudly:
+    def test_unknown_type_raises_with_available_types(self):
+        """A typo'd 'type' (e.g. 'cvs') must raise, naming the available types —
+        never silently degrade to another comparator."""
+        ComparatorFactory._load_comparators()
+        with pytest.raises(ValueError, match="Unknown comparator type 'cvs'"):
+            ComparatorFactory.get_comparator_class("cvs")
+
+    def test_unknown_type_create_comparator_raises(self):
+        with pytest.raises(ValueError, match="Available types"):
+            ComparatorFactory.create_comparator("cvs")
+
+    def test_auto_and_text_still_resolve_to_text(self):
+        """'auto'/'text' keep their documented TextComparator mapping;
+        'auto' is normally resolved from the extension upstream."""
+        from symtest.file_comparator.text_comparator import TextComparator
+        assert ComparatorFactory.get_comparator_class("auto") is TextComparator
+        assert ComparatorFactory.get_comparator_class("text") is TextComparator
+
+    def test_unknown_type_via_assertions_is_validation_error(self):
+        """Through the assertion layer an unknown type surfaces as a
+        ValidationError (failure_kind=file_compare), not a wrong pass."""
+        with pytest.raises(ValidationError, match="Unknown comparator type"):
+            Assertions.compare_files("a.bin", "b.bin", file_type="cvs")
+
     def test_registration_helper_skips_foreign_and_abstract(self):
         class ForeignComparator(ComparatorBase):
             def compare(self, ctx):
