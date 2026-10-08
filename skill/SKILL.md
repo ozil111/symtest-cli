@@ -62,11 +62,15 @@ legacy configs with `symtest migrate`.
 4. Add metadata: `tags` for filtering, `description` for context. Put
    `timeout` for long-running commands and `retry_count` for flaky tests
    inside `execution`; declare `depends_on`/`resources` in `scheduling`.
-5. Validate the configuration:
+5. Declare output artifacts with `execution.outputs` (list of paths, also
+   supported per-step in sequence mode). The framework deletes these files
+   before execution so stale artifacts from previous runs cannot cause
+   false passes. See "Declared outputs" in the Decision Guide.
+6. Validate the configuration:
    ```bash
    symtest validate test_cases.json
    ```
-6. Run:
+7. Run:
    ```bash
    symtest run test_cases.json
    ```
@@ -190,6 +194,24 @@ rendering): `references/user_manual.md` → "Custom File Comparator".
 - When multiple cases share the same structure with only minor differences.
 - Define an `abstract: true` base case, then `extends` it.
 - Use `variables` for parameterization (`{placeholder}` substitution).
+
+### When to use `execution.outputs` (declared artifacts)
+
+- Declare files/directories the command produces
+  (`"outputs": ["result.h5", "logs/solver.log"]`); the framework deletes
+  them before the command starts (and before every retry attempt).
+- Use whenever a case writes output files in the workspace: it prevents
+  stale artifacts from a previous run causing false passes when the
+  solver crashes or the output path changes.
+- Paths resolve against the workspace and must stay inside it (escaping
+  paths fail loudly). Missing files are skipped silently; deletion failure
+  (e.g. file locked) fails the case with `execution_error`.
+- In sequence mode, case-level `outputs` are cleaned once before the first
+  executed step; step-level `outputs` right before that step. With
+  `--resume`, cleanup is skipped for resumed runs/step artifacts — the
+  trust model is preserved.
+- Avoid two concurrently running cases declaring the same output path
+  unless connected via `depends_on` (`symtest validate` warns).
 
 ### When to use `expected_failure` (xfail)
 - Use for a known defect that is intentionally not part of the current

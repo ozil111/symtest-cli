@@ -196,6 +196,56 @@ def _baseline_warnings(expected: Any, prefix: str, workspace: Path) -> List[str]
     return warnings
 
 
+def _iter_case_outputs(test_case: Dict[str, Any]) -> List[Any]:
+    """Yield all declared ``outputs`` entries of a case (case-level + steps)."""
+    execution = _get_execution(test_case)
+    entries: List[Any] = []
+    outputs = execution.get("outputs")
+    if isinstance(outputs, list):
+        entries.extend(outputs)
+    for step in execution.get("steps", []) or []:
+        if isinstance(step, dict) and isinstance(step.get("outputs"), list):
+            entries.extend(step["outputs"])
+    return entries
+
+
+def _outputs_errors(test_case: Dict[str, Any], prefix: str, workspace: Path) -> List[str]:
+    """Error-level checks for declared ``outputs`` paths (Schema v2).
+
+    - must be an array of strings;
+    - ``{placeholder}`` entries are skipped (cannot resolve statically);
+    - resolved path must stay inside the workspace (no escape).
+    """
+    errors: List[str] = []
+    execution = _get_execution(test_case)
+    outputs = execution.get("outputs")
+    if outputs is not None and not (
+        isinstance(outputs, list) and all(isinstance(o, str) for o in outputs)
+    ):
+        errors.append(f"{prefix}: execution.outputs must be an array of strings")
+    for step in execution.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        step_outputs = step.get("outputs")
+        if step_outputs is not None and not (
+            isinstance(step_outputs, list) and all(isinstance(o, str) for o in step_outputs)
+        ):
+            errors.append(f"{prefix}: step outputs must be an array of strings")
+
+    for raw in _iter_case_outputs(test_case):
+        if not isinstance(raw, str) or "{" in raw:
+            continue
+        p = Path(raw)
+        candidate = p.resolve() if p.is_absolute() else (workspace / p).resolve()
+        try:
+            candidate.relative_to(workspace)
+        except ValueError:
+            errors.append(
+                f"{prefix}: output path escapes workspace: '{raw}'"
+            )
+    return errors
+
+
 def _validate_case_warnings(
     test_case: Dict[str, Any], source: str, workspace: Path,
 ) -> List[str]:
@@ -243,10 +293,12 @@ def validate_config(
     - Circular import detection
     - extends target existence
     - Circular extends inheritance detection
+    - ``outputs`` path validity (array of strings, no workspace escape)
 
     Warning-level checks (reported in ``warnings``, do not affect ``valid``):
     - ``command`` executability (PATH lookup / path existence)
     - ``compare_files`` baseline file existence
+    - same ``outputs`` path declared by multiple cases without depends_on
 
     Returns a dict with keys ``valid`` (bool), ``errors`` (list),
     ``warnings`` (list), and ``summary`` (dict with file/case counts).
@@ -309,6 +361,11 @@ def validate_config(
                 # extends cases inherit fields from parent; skip required-field checks
                 if not has_extends:
                     errors.extend(_validate_required_fields(item, idx, source))
+                    errors.extend(
+                        _outputs_errors(
+                            item, f"[{source}] case '{item.get('name', '<unnamed>')}'", ws,
+                        )
+                    )
                 warnings.extend(_validate_case_warnings(item, source, ws))
 
     _walk(path, config, set())
@@ -429,6 +486,40 @@ def validate_config(
                 current = next_dep
 
     _validate_depends_on()
+
+    # ── outputs conflict warning (parallel safety) ──
+    # Two concurrently scheduled cases declaring the same output path race
+    # on deletion. Pairs connected via depends_on are legitimate (upstream
+    # runs first) and are not flagged.
+    def _warn_output_conflicts() -> None:
+        output_owners: Dict[str, List[str]] = {}
+        for case_dict, source in all_cases:
+            name = case_dict.get("name", "<unnamed>")
+            for raw in _iter_case_outputs(case_dict):
+                if not isinstance(raw, str) or "{" in raw:
+                    continue
+                key = str(Path(raw)).replace("\\", "/").lower()
+                output_owners.setdefault(key, []).append(name)
+        deps_map: Dict[str, List[str]] = {
+            case_dict.get("name", "<unnamed>"): (
+                _get_depends_on(case_dict) if isinstance(_get_depends_on(case_dict), list) else []
+            )
+            for case_dict, _ in all_cases
+        }
+        for key, owners in output_owners.items():
+            unique = list(dict.fromkeys(owners))
+            for i in range(len(unique)):
+                for j in range(i + 1, len(unique)):
+                    a, b = unique[i], unique[j]
+                    if a in deps_map.get(b, []) or b in deps_map.get(a, []):
+                        continue
+                    warnings.append(
+                        f"output path declared by multiple cases without "
+                        f"depends_on: '{key}' ({a}, {b}); concurrent runs may "
+                        f"delete each other's artifacts"
+                    )
+
+    _warn_output_conflicts()
 
     valid = len(errors) == 0
     return {

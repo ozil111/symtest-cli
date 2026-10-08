@@ -5,6 +5,7 @@
 - [安装](#安装)
 - [测试用例定义](#测试用例定义)
 - [Case 级环境变量](#case-级环境变量env)
+- [结果产物声明（outputs）](#结果产物声明outputs)
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
@@ -271,6 +272,7 @@ test_cases:
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
 | `scheduling.depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
 | `execution.env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），定义在 `execution` 内，仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
+| `execution.outputs` | 否 | 声明的结果产物路径列表（如 `["result.h5", "logs/solver.log"]`），运行前自动删除（每次重试 attempt 前也会重新清理），防止上一轮遗留的陈旧产物导致假通过，见 [结果产物声明（outputs）](#结果产物声明outputs) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
@@ -380,6 +382,55 @@ test_cases:
     ]
 }
 ```
+
+## 结果产物声明（outputs）
+
+回归测试的一个经典陷阱：被测程序本轮崩溃或输出路径改变，根本没有生成结果文件，但上一轮运行遗留的旧文件还在 workspace 里——`compare_files` 拿旧文件去比 baseline，可能**假通过**。通过 `execution.outputs` 声明结果产物，框架会在执行前（以及每次重试 attempt 前）把这些文件/目录删掉，保证比较的一定是本轮产物。
+
+### JSON
+
+```json
+{
+    "name": "求解器回归",
+    "execution": {
+        "command": "{solver}",
+        "args": ["-i", "input.dat"],
+        "outputs": ["result.h5", "summary.csv", "logs/solver.log"]
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### 序列模式（case 级 + step 级）
+
+```json
+{
+    "name": "多步骤流程",
+    "execution": {
+        "outputs": ["final.h5"],
+        "steps": [
+            { "command": "python", "args": ["pre.py"], "outputs": ["mesh.dat"], "expected": { "return_code": 0 } },
+            { "command": "{solver}", "args": ["mesh.dat"], "expected": { "return_code": 0 } }
+        ]
+    }
+}
+```
+
+### 语义
+
+| 决策点 | 行为 |
+|---|---|
+| 清理时机 | 每次 attempt 的命令启动之前；`retry_count` 重试时同样重新清理 |
+| 文件不存在 | 静默跳过，不构成错误 |
+| 删除失败（文件被占用锁定等） | **大声失败**：用例判为 `execution_error`，不执行命令（避免静默保留假通过通道） |
+| 路径解析 | 相对路径按 workspace 解析；resolve 后必须位于 workspace 内，绝对路径或 `..` 逃逸在解析/校验阶段即报错 |
+| 目录 | 支持声明整个输出目录（运行前整体删除） |
+| 占位符 / 继承 | 自动支持（`{var}` 替换；extends 深合并，list 字段整体替换，与 `args` 一致） |
+| 序列模式 step 级 | 在该 step 实际执行前清理 |
+| 序列模式 case 级 | 仅在从头执行（非 resume 续跑）时、第一个执行的 step 之前清理一次 |
+| 并行冲突 | 多个 case 声明同一产物路径会互相删除，`symtest validate` 会给出 warning；`depends_on` 连接的上下游视为合法 |
+
+> **与 `--resume` 的交互**：resume 跳过的已通过 step 及其产物是被信任的对象，不会清理——case 级 `outputs` 清理仅在从头执行时进行，被跳过 step 的 step 级 `outputs` 也不会删除。step 的 `outputs` 变化会使 resume 的配置哈希失效，触发全量重跑。
 
 ## 配置拆分机制
 
@@ -810,6 +861,8 @@ symtest run config.json
 
 **信任模型**：`--resume` **不校验工作区产物**（输入文件、前置步骤生成的文件等）。使用 `--resume` 即表示用户确认输入文件未被修改。如果怀疑工作区被污染，应不带 `--resume` 全量重跑。
 
+**与 `outputs` 的交互**：声明了 `execution.outputs` 的用例在 resume 续跑时不会清理产物（case 级清理仅在从头执行时进行，被跳过 step 的 step 级 `outputs` 也不删除）；任何 step 的 `outputs` 变化会使配置哈希失效，触发全量重跑。
+
 ```bash
 # 首次全量运行，long_pipeline 的 step 4 失败（总耗时 72s）
 symtest run config.json
@@ -825,7 +878,7 @@ symtest run config.json
 
 **限制**：
 - 仅对序列步骤用例（`steps` 模式）生效，单命令模式忽略
-- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count 或 case 级 expected 变化而失效
+- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count/outputs 或 case 级 expected 变化而失效
 - 缓存输出主要用于重建 `combined_output`，报告中的 `output` 字段仍只包含失败步骤的输出
 
 ### 自动更新基线文件（--update-baseline）
@@ -1351,7 +1404,7 @@ test_cases:
             return_code: 0
 ```
 
-每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。
+每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count`、`outputs` 字段。
 
 **失败输出瘦身**：当序列中某一步失败时，结果字典的 `output` 字段**仅包含失败步骤的输出**——不会拼接前面成功步骤的大量输出。这大幅减少了失败报告的体积，适合 AI 快速诊断失败的步骤。
 

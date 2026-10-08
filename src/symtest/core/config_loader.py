@@ -137,6 +137,7 @@ def parse_test_cases(
                 "expected": case_expected,
                 "timeout": execution.get("timeout"),
                 "retry_count": execution.get("retry_count", 0),
+                "outputs": execution.get("outputs", []),
             }]
 
         steps: List[TestStep] = []
@@ -160,6 +161,7 @@ def parse_test_cases(
                 expected=step["expected"] if "expected" in step else step.get("expected", {}),
                 timeout=step.get("timeout"),
                 retry_count=step.get("retry_count", 0),
+                outputs=step.get("outputs") or [],
             ))
 
         if is_sequence:
@@ -175,6 +177,7 @@ def parse_test_cases(
                 xfail_quiet=case.get("xfail_quiet", False),
                 depends_on=scheduling.get("depends_on", []),
                 env=_parse_env(execution.get("env")),
+                outputs=execution.get("outputs") or [],
             ))
         else:
             # ── Single-command mode: execution shorthand fields → steps[0] ──
@@ -201,6 +204,7 @@ def parse_test_cases(
                 xfail_quiet=case.get("xfail_quiet", False),
                 depends_on=scheduling.get("depends_on", []),
                 env=_parse_env(execution.get("env")),
+                outputs=execution.get("outputs") or [],
             ))
 
     return cases

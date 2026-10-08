@@ -270,6 +270,7 @@ test_cases:
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
 | `scheduling.depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
 | `execution.env` | No | Case-level environment variable mapping (e.g. `{"MYAPP_SCALE": "1.0"}`), defined inside `execution`, injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
+| `execution.outputs` | No | Declared output artifacts (list of paths), deleted before execution and before every retry attempt so stale files cannot cause false passes. Relative paths resolve against the workspace and must stay inside it. In sequence mode, case-level `outputs` are cleaned once before the first executed step (skipped by `--resume` when starting from a resumed step); steps may declare their own `outputs`, cleaned before that step runs |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |

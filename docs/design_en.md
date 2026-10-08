@@ -158,7 +158,11 @@ JSON Schema; it is not restated here.
 ### 4.5 Single Test Execution
 
 PathResolver resolves (system commands pass-through, shell builtins wrapped for
-the platform, compound commands split) → subprocess-isolated execution (captures
+the platform, compound commands split) → declared-output cleanup (files/directories
+declared via `execution.outputs` are deleted before the subprocess starts; resolved
+paths must stay inside the workspace, deletion failure fails loudly as an execution
+error; runs on every attempt, and steps skipped by `--resume` are naturally not
+cleaned) → subprocess-isolated execution (captures
 stdout / stderr / returncode / duration) → assertions (return_code / contains /
 matches / compare_files) → retries on failure up to `retry_count` → kills the
 whole process group on timeout → structured result with `next_action_hint`.
@@ -253,6 +257,7 @@ no interactive UI maintenance burden.
 | --update-baseline | Automatically overwrites baseline files with actual output on comparison failure; ideal for batch baseline updates |
 | next_action_hint structured suggestions | Failed results include actionable suggestions (update_baseline / update_expected / increase_timeout / investigate), convenient for AI consumption |
 | TUI removed; replaced by official skill + `symtest find` | Both TUI responsibilities have lighter replacements: case authoring/editing is done by AI assistants via the official skill; cross-file search is covered by the `find` command reusing the same parsing pipeline; removes the heavy textual dependency and interactive-UI maintenance burden |
+| `execution.outputs` artifact cleanup hooked at the execute_command entry | Declare artifacts and delete them before the run, eliminating stale-artifact false passes. Cleanup is execution-environment preparation (same category as env injection) and belongs to the execution layer; `execute_command` is the single convergence point of all execution paths, so hooking there makes retry re-clean and resume skip (skipped steps never enter the function) hold automatically with zero orchestration-layer changes. Failures are loud (`execution_error`) so no silent false-pass channel remains |
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Centralized logging | All diagnostic messages go through Python's `logging` module; CLI entry activates console output; library users enable as needed |
 

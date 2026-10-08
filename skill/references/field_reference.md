@@ -36,6 +36,7 @@ metadata only.
 | `execution.timeout` | int/null | No | Timeout in seconds (default 3600, null = unlimited) |
 | `execution.retry_count` | int | No | Auto-retry count on failure (default 0) |
 | `execution.env` | object | No | Case-level environment variables injected into the subprocess (all steps in sequence mode) |
+| `execution.outputs` | array[string] | No | Declared output artifacts, deleted before execution (and before every retry attempt). Relative paths resolve against the workspace and must stay inside it. Case-level outputs in sequence mode are cleaned once before the first executed step (skipped by `--resume` when starting from a resumed step) |
 | `execution.steps` | array | — | Sequence mode: ordered steps (see below). Mutually exclusive with `execution.command` |
 
 ### scheduling (when / with what resources)
@@ -76,8 +77,10 @@ metadata only.
 
 ### execution.steps (Sequence Mode)
 
-Each step has: `command`, `args`, `expected`, `timeout`, `retry_count`.
+Each step has: `command`, `args`, `expected`, `timeout`, `retry_count`, `outputs`.
 Case-level `expected` runs only if all steps pass.
+Step-level `outputs` are deleted right before that step runs; steps skipped
+by `--resume` keep their artifacts.
 
 ### import (Config Splitting)
 

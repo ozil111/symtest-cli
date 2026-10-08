@@ -257,6 +257,7 @@ class ParallelConfigRunner(ParallelRunner):
             error_analysis=self.error_analysis,
             resume=self.resume,
             env=case.env,
+            case_outputs=case.outputs,
         )
 
     def run_single_test(self, case: TestCase) -> Dict[str, Any]:

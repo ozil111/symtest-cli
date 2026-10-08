@@ -366,6 +366,7 @@ class BaseRunner(ABC):
             case_expected=case.expected if case.expected else None,
             resume=self.resume,
             env=case.env,
+            case_outputs=case.outputs,
         )
 
     @abstractmethod

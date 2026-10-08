@@ -7,10 +7,12 @@
 import logging
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from .result import ExecutionResult
@@ -59,6 +61,52 @@ def _spec_get(spec: Any, key: str, default: Any = None) -> Any:
     return getattr(spec, key, default)
 
 
+def clean_outputs(
+    outputs: Optional[List[Any]],
+    workspace: Optional[str],
+) -> Optional[str]:
+    """Delete declared output artifacts before execution.
+
+    语义（execution 层职责，与判定无关）：
+    - ``outputs`` 为空 → 零开销直接返回；
+    - 相对路径按 *workspace* 解析；resolve 后必须位于 workspace 内，
+      否则拒绝（防逃逸）；声明了 outputs 但 workspace 未设置 → 报错
+      （禁止静默回落到 CWD，并行/process 模式下 CWD 不可靠）；
+    - 文件 / 目录 / 符号链接：存在则删除（目录整体 rmtree），不存在
+      则静默跳过；
+    - 删除失败（占用 / 权限）返回错误消息，由调用方大声失败——
+      静默继续会保留"陈旧产物假通过"的通道。
+
+    :returns: 错误消息（str）或 ``None``（成功 / 无需清理）。
+    """
+    if not outputs:
+        return None
+    if not workspace:
+        return (
+            f"outputs declared but no workspace set; cannot resolve: "
+            f"{[str(o) for o in outputs]}"
+        )
+    ws_root = Path(workspace).resolve()
+    for raw in outputs:
+        p = Path(str(raw))
+        candidate = p.resolve() if p.is_absolute() else (ws_root / p).resolve()
+        try:
+            candidate.relative_to(ws_root)
+        except ValueError:
+            return f"output path escapes workspace: '{raw}'"
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        try:
+            if candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate)
+            else:
+                candidate.unlink()
+            logger.info("Cleaned declared output: %s", candidate)
+        except OSError as exc:
+            return f"failed to delete declared output '{raw}': {exc}"
+    return None
+
+
 def execute_command(
     spec: Any,
     workspace: Optional[str] = None,
@@ -68,8 +116,10 @@ def execute_command(
 ) -> ExecutionResult:
     """Execute a single command once (no retry, no validation).
 
-    :param spec: ExecutionSpec，读取 name/command/args/timeout/env；
-                 不读取任何判定语义。
+    :param spec: ExecutionSpec，读取 name/command/args/timeout/env/outputs；
+                 不读取任何判定语义。声明的 ``outputs``（结果产物）在
+                 subprocess 启动前删除（每次 attempt 都执行，retry 时
+                 同样重新清理）。
     :param workspace: Working directory for the subprocess.
     :param env: Optional environment variables to inject/override (merged with
                 os.environ; case-level ``env`` in *spec* takes the highest
@@ -97,6 +147,15 @@ def execute_command(
         command=full_command,
         timeout_limit=timeout_limit,
     )
+
+    # ── Pre-execution cleanup of declared outputs ──
+    # Every attempt cleans (retry re-runs this path); failure is loud:
+    # recorded as result.error so orchestration maps it to execution_error.
+    clean_err = clean_outputs(_spec_get(spec, "outputs", None) or [], workspace)
+    if clean_err:
+        result.error = clean_err
+        result.duration = time.perf_counter() - start_time
+        return result
 
     # Prepare environment variables
     # Default to current environment, merge with provided env if any.
