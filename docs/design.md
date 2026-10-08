@@ -48,7 +48,7 @@
 | `config/` | 配置 IO、JSON Schema 校验（draft 2020-12）、import 展开、extends 继承、变量与占位符替换 |
 | `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
 | `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
-| `utils/` | 路径解析、报告生成、JUnit XML 输出 |
+| `utils/` | 路径解析、报告生成（文本 / 结构化 HTML）、JUnit XML 输出 |
 
 ### 2.1 入口点
 

@@ -34,7 +34,6 @@ run_compare = compare_cmd.run_compare
 # Private helpers kept importable from cli for backward compatibility.
 _parse_vars = run_cmd._parse_vars
 _confirm_baseline_update = run_cmd._confirm_baseline_update
-_format_results_html = run_cmd._format_results_html
 
 _EPILOG = """
 Examples:

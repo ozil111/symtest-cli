@@ -19,6 +19,7 @@
 - [资源感知调度](#资源感知调度)
 - [历史记录与回归检测](#历史记录与回归检测)
 - [JUnit XML 报告](#junit-xml-报告)
+- [HTML 报告](#html-报告)
 - [日志配置](#日志配置)
 - [文件比较](#文件比较)
 - [扩展开发](#扩展开发)
@@ -739,8 +740,11 @@ symtest run test_cases.json --verbose
 # 调试模式
 symtest run test_cases.json --debug
 
-# 输出格式
+# 输出格式（html 为自包含的可折叠 HTML 报告，打印到 stdout）
 symtest run test_cases.json --output-format json|html|text
+
+# 额外落盘一份可折叠 HTML 报告（控制台输出不受影响）
+symtest run test_cases.json --html-report report.html
 
 # 启用历史记录（智能调度 + 回归检测）
 symtest run test_cases.json --history-dir ./hist
@@ -1548,6 +1552,42 @@ write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 
 状态映射：`passed` 记为通过；`failed` 记为 failure（断言失败）或 error（执行错误）；`timeout` 记为 error；`xfailed` 记为 **skipped**（预期失败，不影响构建）；`xpassed` 记为 **failure**（意外通过，视为构建失败）。每个 testcase 元素附带命令输出与失败原因。
 
+## HTML 报告
+
+symtest 可生成**自包含的可折叠 HTML 报告**：单文件、内联样式与脚本、零外部依赖，离线双击即可打开。信息按三层密度组织，默认视图一眼扫完，细节按需展开：
+
+| 层 | 内容 | 默认状态 |
+|---|---|---|
+| 顶部摘要 | Total / Passed / Failed / XFailed / XPassed / 通过率进度条 / 总时长 | 永远可见 |
+| 失败导航 | 失败用例列表，点击锚点直达 | 仅存在失败时出现 |
+| 工具栏 | 全部 / 仅失败 / 仅通过过滤，全部展开 / 收起按钮 | — |
+| 用例一览 | 每行 = 状态 + 名称 + **description** + tags + 耗时 | 全部收起 |
+| 用例详情 | command、expected 验收标准、step_results、误差统计（带文件对标签）、失败详情 | 点击展开 |
+| 命令输出 | Command Output / Comparator Output / Error Trace | 再嵌套折叠 |
+
+### CLI 用法
+
+```bash
+# 直接输出 HTML 到 stdout（可重定向落盘）
+symtest run test_cases.json --output-format html > report.html
+
+# 补充落盘输出：控制台报告不受影响，与 --junit-xml 可并存
+symtest run test_cases.json --html-report report.html
+symtest run test_cases.json --html-report report.html --junit-xml report.xml
+```
+
+相对路径按当前工作目录解析。
+
+### 数据解释规则
+
+与文本报告严格同源：
+
+- `description` / `tags` / `expected` 展示来自 results detail；
+- `channels` 只从结构化 `channels` 列表渲染（数据泳道比较器），`error_stats` 为扁平 fallback；
+- 通过用例的误差统计仅在 `--error-analysis-all` 启用时展示，每个统计块标注所属文件对
+  （`baseline: X vs actual: Y`），多个并列的 `compare_files` 断言可区分；
+- 所有用户数据均经 HTML 转义，长输出自动折叠并限制滚动高度。
+
 ## 日志配置
 
 框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `symtest` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
@@ -1710,7 +1750,7 @@ CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内�
 symtest run config.json --error-analysis-all
 ```
 
-启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline vs actual):` 的形式列出上述统计量（与失败用例的 `error_stats` 字段一致）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`，便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
+启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline: X vs actual: Y):` 的形式列出上述统计量（标注所属文件对，多个并列的 compare_files 断言可区分）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`（各条目附带 `actual` / `baseline` 路径），便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
 
 **CLI 用法**：
 

@@ -46,37 +46,37 @@ def make_args(config_file, **overrides):
 
 
 # =========================================================================
-# _format_results_html
+# --output-format html（结构化 HTML 报告）
 # =========================================================================
 
 
-class TestFormatResultsHtml:
-    """Test the _format_results_html helper."""
+class TestHtmlOutputFormat:
+    """``--output-format html`` 输出自包含的可折叠 HTML 报告。"""
 
-    def test_basic_html_structure(self):
-        results = {"total": 2, "passed": 1, "failed": 1}
-        html = cli._format_results_html(results, "Hello & <World>")
-        assert "<!DOCTYPE html>" in html
-        assert "Total: 2" in html
-        assert "Passed:" in html
-        assert "Failed:" in html
-        assert "50.0%" in html
-        assert "Hello &amp; &lt;World&gt;" in html  # escaped
+    def _run_html(self, tmp_path, monkeypatch, capsys, **runner_extra):
+        config = tmp_path / "cases.json"
+        config.write_text('{"test_cases": []}', encoding="utf-8")
 
-    def test_all_passed(self):
-        results = {"total": 3, "passed": 3, "failed": 0}
-        html = cli._format_results_html(results, "all good")
-        assert "100.0%" in html
+        class PassingRunner(DummyRunner):
+            def run_tests(self):
+                return True
 
-    def test_all_failed(self):
-        results = {"total": 2, "passed": 0, "failed": 2}
-        html = cli._format_results_html(results, "all bad")
-        assert "0.0%" in html
+        monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
+        assert cli.run_tests(make_args(config, output_format="html"))
+        return capsys.readouterr().out
 
-    def test_zero_total(self):
-        results = {"total": 0, "passed": 0, "failed": 0}
-        html = cli._format_results_html(results, "empty")
-        assert "0.0%" in html
+    def test_html_page_structure(self, tmp_path, monkeypatch, capsys):
+        out = self._run_html(tmp_path, monkeypatch, capsys)
+        assert out.startswith("<!DOCTYPE html>")
+        assert "<title>SymTest Report</title>" in out
+        assert 'class="case' in out
+        assert "expandAll(" in out
+
+    def test_html_includes_case_and_failure(self, tmp_path, monkeypatch, capsys):
+        out = self._run_html(tmp_path, monkeypatch, capsys)
+        assert "ok" in out
+        assert "bad" in out
+        assert "Failed cases:" in out
 
 
 # =========================================================================
@@ -304,9 +304,9 @@ def test_run_tests_output_html(tmp_path, monkeypatch, capsys):
 
     assert success
     captured = capsys.readouterr()
-    assert "<!DOCTYPE html>" in captured.out
-    assert "Total:" in captured.out
-    assert "Passed:" in captured.out
+    assert captured.out.startswith("<!DOCTYPE html>")
+    assert "<title>SymTest Report</title>" in captured.out
+    assert "Pass rate" in captured.out
 
 
 # =========================================================================

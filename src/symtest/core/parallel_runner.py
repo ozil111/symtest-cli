@@ -352,6 +352,9 @@ class ParallelRunner(BaseRunner):
                     "command": _case_command_str(case),
                     "return_code": None,
                     "duration": 0,
+                    "expected": case.expected if (case and case.expected) else None,
+                    "description": case.description if case else None,
+                    "tags": (case.tags or []) if case else [],
                 }
                 self._update_results_skipped(skip_result, idx, current)
 
@@ -415,6 +418,12 @@ class ParallelRunner(BaseRunner):
         with self.lock:
             # Apply xfail status mapping before counting
             self._apply_xfail_status(result, case)
+
+            # ── Echo expected / description / tags（与顺序 runner 对齐，
+            #    否则并行运行的报告缺失用例描述） ──
+            result["expected"] = case.expected if case.expected else None
+            result["description"] = case.description or None
+            result["tags"] = case.tags or []
 
             self.results["details"].append(result)
             duration = result.get("duration", 0)

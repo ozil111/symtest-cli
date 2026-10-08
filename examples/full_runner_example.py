@@ -12,7 +12,7 @@
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
   - --error-analysis 启用 CSV/HDF5 数值比较的流式误差统计
-  - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 退出码处理
+  - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 可折叠 HTML 报告 + 退出码处理
 
 用法示例：
   # 全量运行
@@ -44,6 +44,9 @@
 
   # 输出 JUnit XML 供 Jenkins/GitLab CI 解析
   python run_tests.py test_cases.json --junit-xml report.xml
+
+  # 额外落盘一份可折叠 HTML 报告（浏览器打开，用例默认收起、可展开看详情）
+  python run_tests.py test_cases.json --html-report report.html
 """
 
 import argparse
@@ -57,6 +60,7 @@ from symtest.runners import (
     ParallelYAMLRunner,
 )
 from symtest.utils.report_generator import ReportGenerator
+from symtest.utils.html_report import generate_html_report
 from symtest import write_junit_xml, setup_console_logging
 
 
@@ -135,6 +139,7 @@ def main():
   python run_tests.py test_cases.json --update-baseline
   python run_tests.py test_cases.json --update-history
   python run_tests.py test_cases.json --junit-xml report.xml --workers 4
+  python run_tests.py test_cases.json --html-report report.html
         """,
     )
 
@@ -212,6 +217,12 @@ def main():
         default=None,
         metavar="PATH",
         help="JUnit XML 报告输出路径（供 Jenkins/GitLab CI 解析）",
+    )
+    parser.add_argument(
+        "--html-report",
+        default=None,
+        metavar="PATH",
+        help="可折叠 HTML 报告输出路径（自包含单文件，浏览器打开）",
     )
     parser.add_argument(
         "--report",
@@ -350,6 +361,17 @@ def main():
             junit_path,
             suite_name=os.path.splitext(os.path.basename(args.config))[0],
         )
+
+    # ---- 可折叠 HTML 报告（浏览器打开，用例默认收起） ----
+    if args.html_report:
+        html_path = (
+            os.path.join(workspace, args.html_report)
+            if not os.path.isabs(args.html_report)
+            else args.html_report
+        )
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(generate_html_report(runner.results))
+        print(f"HTML report written to: {html_path}", file=sys.stderr)
 
     # ---- 退出码 ----
     return 0 if success else 1

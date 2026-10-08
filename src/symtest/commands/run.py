@@ -15,6 +15,7 @@ from pathlib import Path
 from ..reporting.diagnosis import attach_next_action_hints
 from ..runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
 from ..utils.report_generator import ReportGenerator
+from ..utils.html_report import generate_html_report
 from ..utils.junit_xml_writer import write_junit_xml
 
 logger = logging.getLogger("symtest.commands.run")
@@ -206,10 +207,7 @@ def run_tests(args):
             if output_format == 'json':
                 print(json.dumps(results, indent=2, ensure_ascii=False))
             elif output_format == 'html':
-                report_gen = ReportGenerator(results, '')
-                text_report = report_gen.generate_report()
-                html = _format_results_html(results, text_report)
-                print(html)
+                print(generate_html_report(results))
             else:
                 report_gen = ReportGenerator(results, '')
                 report_gen.print_report()
@@ -221,6 +219,13 @@ def run_tests(args):
             write_junit_xml(runner.results, junit_xml_path, suite_name=suite_name)
             logger.info("JUnit XML report written to: %s", junit_xml_path)
 
+        # --- HTML report output (supplementary, works alongside any --output-format) ---
+        html_report_path = getattr(args, 'html_report', None)
+        if html_report_path and hasattr(runner, 'results'):
+            with open(html_report_path, 'w', encoding='utf-8') as f:
+                f.write(generate_html_report(runner.results))
+            logger.info("HTML report written to: %s", html_report_path)
+
         return success
 
     except Exception as e:
@@ -229,43 +234,6 @@ def run_tests(args):
             import traceback
             traceback.print_exc()
         return False
-
-
-def _format_results_html(results, text_report):
-    """Format test results as a basic HTML page."""
-    escaped_report = text_report.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    pass_pct = (results['passed'] / max(results['total'], 1)) * 100
-    xfailed = results.get('xfailed', 0)
-    xpassed = results.get('xpassed', 0)
-    extras = ""
-    if xfailed:
-        extras += f" | XFailed: <span class=\"xfailed\">{xfailed}</span>"
-    if xpassed:
-        extras += f" | XPassed: <span class=\"xpassed\">{xpassed} (unexpected!)</span>"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Test Results</title>
-<style>
-  body {{ font-family: sans-serif; margin: 2em; }}
-  .summary {{ margin-bottom: 1em; }}
-  .passed {{ color: green; }}
-  .failed {{ color: red; }}
-  .xfailed {{ color: orange; }}
-  .xpassed {{ color: red; font-weight: bold; }}
-  pre {{ background: #f5f5f5; padding: 1em; border-radius: 4px; }}
-</style>
-</head>
-<body>
-<h1>CLI Test Results</h1>
-<div class="summary">
-  <p>Total: {results['total']} | Passed: <span class="passed">{results['passed']}</span> | Failed: <span class="failed">{results['failed']}</span>{extras}</p>
-  <p>Pass rate: {pass_pct:.1f}%</p>
-</div>
-<pre>{escaped_report}</pre>
-</body>
-</html>"""
 
 
 def register_parser(subparsers):
@@ -291,6 +259,10 @@ def register_parser(subparsers):
     run_parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     run_parser.add_argument('--junit-xml', dest='junit_xml',
                            help='Write JUnit XML report to the specified file path')
+    run_parser.add_argument('--html-report', dest='html_report',
+                            help='Write a self-contained collapsible HTML report to the '
+                                 'specified file path (supplementary, console output '
+                                 'is unaffected)')
     run_parser.add_argument('--var', action='append', default=[],
                            metavar='KEY=VALUE',
                            help='Set a variable for config placeholder substitution, '

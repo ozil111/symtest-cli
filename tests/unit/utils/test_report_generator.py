@@ -100,7 +100,11 @@ def test_error_analysis_all_reports_stats_for_passed():
     )
     report = generator.generate_report()
     assert "pass_csv" in report
-    assert "error_stats:" in report
+    # 文件对标签：并列的 error_stats 块可归属到具体文件
+    assert (
+        "error_stats (baseline: data_base.csv vs actual: data_actual.csv):"
+        in report
+    )
     assert "total_numeric_cells: 4" in report
     assert "mismatched_cells: 0" in report
     assert "max_abs_error: 1.2e-07" in report

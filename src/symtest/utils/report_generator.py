@@ -26,6 +26,20 @@ def _render_message_lines(prefix: str, message: str, cont_indent: str) -> str:
     return out
 
 
+def _format_compare_scope(entry: dict) -> str:
+    """Build a ``(baseline: X vs actual: Y)`` label from an assertion entry.
+
+    Lets parallel error_stats / channels blocks be attributed to their file
+    pairs; returns an empty string for entries without file info (e.g.
+    return_code / output_contains assertions).
+    """
+    baseline = entry.get("baseline")
+    actual = entry.get("actual")
+    if not baseline and not actual:
+        return ""
+    return f" (baseline: {baseline} vs actual: {actual})"
+
+
 def _render_stats(es: dict, indent: str) -> str:
     """Render an error_stats dict as flat ``key: value`` lines.
 
@@ -136,14 +150,15 @@ class ReportGenerator:
             # ``channels`` list; error_stats is the flat fallback.
             if status == 'passed' and self.results.get('error_analysis_all'):
                 for ar in detail.get('assertion_results', []):
+                    scope = _format_compare_scope(ar)
                     channels = ar.get('channels')
                     if channels:
-                        report += "   channels:\n"
+                        report += f"   channels{scope}:\n"
                         report += _render_channels(channels, indent="     ")
                     else:
                         es = ar.get('error_stats')
                         if es:
-                            report += "   error_stats:\n"
+                            report += f"   error_stats{scope}:\n"
                             report += _render_stats(es, indent="     ")
 
         # 添加失败案例的详细输出信息（含 xfailed、xpassed、timeout 等非通过状态）

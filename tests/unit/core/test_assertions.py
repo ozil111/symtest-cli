@@ -185,6 +185,8 @@ def test_validate_result_compare_files_passes():
             {
                 "assertion": "compare_files",
                 "passed": True,
+                "actual": "out.txt",
+                "baseline": "ref.txt",
                 "error_stats": None,
                 "channels": [],
                 "compare_failures": [],
@@ -333,6 +335,27 @@ def test_dispatch_omits_type_when_absent(monkeypatch):
         assertions=AS(),
     )
     assert calls[0][2] is None  # file_type
+
+
+def test_dispatch_success_includes_actual_and_baseline_paths(monkeypatch):
+    """成功分支的断言结果必须携带 actual/baseline 路径，使报告中并列的
+    error_stats / channels 块可归属到具体文件对。"""
+    monkeypatch.setattr(
+        "symtest.core.validation.assertions.Assertions.compare_files",
+        lambda _self, actual_path, baseline_path, file_type, workspace=None, **kwargs: {
+            "identical": True, "baseline_updated": False,
+            "error_stats": {"total_numeric_cells": 4, "mismatched_cells": 0},
+            "channels": [],
+        },
+    )
+    result = _dispatch_file_compare(
+        {"actual": "out.csv", "baseline": "ref.csv", "type": "csv"},
+        workspace="/ws",
+        assertions=AS(),
+    )
+    assert result["passed"] is True
+    assert result["actual"] == "out.csv"
+    assert result["baseline"] == "ref.csv"
 
 
 # ---------------------------------------------------------------------------
