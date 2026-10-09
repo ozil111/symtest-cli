@@ -33,7 +33,7 @@ def load_config(
     Parameters
     ----------
     config_file_path:
-        Path to the config file (JSON or YAML).
+        Path to the config file (JSON, JSONC or YAML).
     expand:
         If ``True`` (default), recursively expand ``import`` references.
 
@@ -66,14 +66,16 @@ def save_config(
     config:
         Config dict (must contain at least ``test_cases``).
     file_path:
-        Output path; ``.json`` → JSON, ``.yaml``/``.yml`` → YAML.
+        Output path; ``.json``/``.jsonc`` → JSON, ``.yaml``/``.yml`` → YAML.
     """
     path = Path(file_path)
     ext = path.suffix.lower()
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if ext == ".json":
+    if ext in (".json", ".jsonc"):
+        # .jsonc output is written as plain JSON: rewriting a config
+        # (e.g. ``symtest migrate``) cannot preserve comments.
         with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
     elif ext in (".yaml", ".yml"):
@@ -83,7 +85,8 @@ def save_config(
             yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     else:
         raise ValueError(
-            f"Unsupported output format: {ext} (expected .json, .yaml, or .yml)"
+            f"Unsupported output format: {ext} "
+            f"(expected .json, .jsonc, .yaml, or .yml)"
         )
 
     logger.info("Config saved to: %s", path)

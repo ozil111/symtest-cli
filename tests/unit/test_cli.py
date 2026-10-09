@@ -175,6 +175,21 @@ def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, cap
     assert "boom" in log_text
 
 
+def test_run_tests_uses_json_runner_jsonc_extension(tmp_path, monkeypatch):
+    config = tmp_path / "cases.jsonc"
+    config.write_text('{"test_cases": []}', encoding="utf-8")
+
+    class PassingRunner(DummyRunner):
+        def run_tests(self):
+            return True
+
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
+
+    success = cli.run_tests(make_args(config))
+
+    assert success
+
+
 def test_run_tests_uses_parallel_runner(tmp_path, monkeypatch):
     config = tmp_path / "cases.json"
     config.write_text('{"test_cases": []}', encoding="utf-8")

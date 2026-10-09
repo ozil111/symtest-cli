@@ -521,7 +521,11 @@ test_cases:
 
 ### 跨格式支持
 
-主配置为 JSON 时可以 import YAML 子文件，反之亦然。框架根据子文件扩展名（`.json` / `.yaml` / `.yml`）自动选择解析器。
+主配置为 JSON 时可以 import YAML 子文件，反之亦然。框架根据子文件扩展名（`.json` / `.jsonc` / `.yaml` / `.yml`）自动选择解析器。
+
+### JSONC 支持
+
+`.jsonc` 配置文件支持 VS Code JSONC 语法：`//` 与 `/* ... */` 注释、对象和数组的尾逗号。字符串字面量内的 `//`、URL、转义引号不会被误删。`.jsonc` 既可以作为主配置也可以作为 import 子文件（Runner 按扩展名自动选择 JSONC 解析器）。注意 `symtest migrate` 会把 `.jsonc` 重写为标准 JSON（注释无法在读写转换中保留）。
 
 ### Setup 合并规则
 
@@ -1045,7 +1049,7 @@ for detail in runner.results["details"]:
 
 | 参数 | 说明 |
 |---|---|
-| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .yaml） |
+| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .jsonc / .yaml） |
 | `--test-target` / `-t` | 按名称过滤用例 |
 | `--tag` | 按标签过滤用例（OR 关系） |
 | `--last-failed` | 只运行上次失败的用例 |

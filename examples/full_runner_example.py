@@ -107,14 +107,14 @@ def _auto_create_runner(config_file, workspace, max_workers, execution_mode,
     )
     common_kwargs.update(extra_kwargs)
 
-    if ext == ".json":
+    if ext in (".json", ".jsonc"):
         return ParallelJSONRunner(**common_kwargs)
     elif ext in (".yaml", ".yml"):
         return ParallelYAMLRunner(**common_kwargs)
     else:
         raise ValueError(
             f"Unsupported config file format '{ext}'. "
-            f"Expected .json, .yaml, or .yml."
+            f"Expected .json, .jsonc, .yaml, or .yml."
         )
 
 

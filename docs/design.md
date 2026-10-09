@@ -65,7 +65,7 @@
 配置文件在加载时经过五步管线处理：
 
 ```
-raw JSON/YAML 文件
+raw JSON/JSONC/YAML 文件（.jsonc 由 config/jsonc.py 剥离注释与尾逗号）
     │
     ▼
 expand_imports()          # 递归展开 import 引用（合并 setup、注入 tags）

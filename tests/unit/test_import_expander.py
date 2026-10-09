@@ -122,3 +122,40 @@ def test_deeply_nested_import():
     assert len(result["test_cases"]) == 2  # 2 cases in sub_text_tests.json
     names = {tc["name"] for tc in result["test_cases"]}
     assert names == {"text_identical", "text_diff"}
+
+
+def test_load_jsonc_file(tmp_path):
+    """_load_raw_config parses .jsonc files (comments + trailing commas)."""
+    sub = tmp_path / "sub.jsonc"
+    sub.write_text(
+        "// commented-out case\n"
+        "// { \"name\": \"disabled\" }\n"
+        "{\n"
+        "  \"test_cases\": [\n"
+        "    {\"name\": \"c1\", \"command\": \"echo\", \"args\": [\"x\"], \"expected\": {}},\n"
+        "  ],\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    config = _load_raw_config(sub)
+    names = [tc["name"] for tc in config["test_cases"]]
+    assert names == ["c1"]
+
+
+def test_import_jsonc_subfile(tmp_path):
+    """A JSON main config can import .jsonc sub-files."""
+    sub = tmp_path / "sub.jsonc"
+    sub.write_text(
+        '{ /* generated */ "test_cases": ['
+        '{"name": "sub_case", "command": "echo", "args": [], "expected": {}}'
+        '], }',
+        encoding="utf-8",
+    )
+    main_path = tmp_path / "main.json"
+    main_path.write_text(
+        '{"test_cases": [{"import": "sub.jsonc"}]}',
+        encoding="utf-8",
+    )
+    config = _load_raw_config(main_path)
+    result = expand_imports(config, main_path)
+    assert [tc["name"] for tc in result["test_cases"]] == ["sub_case"]

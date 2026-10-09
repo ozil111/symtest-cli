@@ -102,7 +102,7 @@ def run_tests(args):
     try:
         if args.parallel:
             # Format-aware parallel runner selection
-            if file_ext in ['.json']:
+            if file_ext in ['.json', '.jsonc']:
                 runner = ParallelJSONRunner(
                     config_file=str(config_file),
                     workspace=args.workspace,
@@ -145,7 +145,7 @@ def run_tests(args):
                 return False
         else:
             # Use appropriate single-threaded runner
-            if file_ext in ['.json']:
+            if file_ext in ['.json', '.jsonc']:
                 runner = JSONRunner(
                     config_file=str(config_file),
                     workspace=args.workspace,
@@ -239,7 +239,7 @@ def run_tests(args):
 def register_parser(subparsers):
     """Register the ``run`` subcommand on the root parser."""
     run_parser = subparsers.add_parser('run', help='Run test cases from a configuration file')
-    run_parser.add_argument('config_file', help='Path to the test configuration file (JSON or YAML)')
+    run_parser.add_argument('config_file', help='Path to the test configuration file (JSON/JSONC or YAML)')
     run_parser.add_argument('--workspace', '-w', help='Working directory for test execution')
     run_parser.add_argument('--parallel', '-p', action='store_true', help='Run tests in parallel')
     run_parser.add_argument('--workers', type=int, help='Number of parallel workers (default: CPU count)')

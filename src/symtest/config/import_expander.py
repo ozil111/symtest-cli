@@ -34,10 +34,14 @@ logger = logging.getLogger("symtest.config.import_expander")
 
 
 def _load_raw_config(file_path: Path) -> Dict[str, Any]:
-    """Load a raw config dict from a JSON or YAML file."""
+    """Load a raw config dict from a JSON, JSONC or YAML file."""
     ext = file_path.suffix.lower()
-    if ext == ".json":
+    if ext in (".json", ".jsonc"):
         with open(file_path, "r", encoding="utf-8") as f:
+            if ext == ".jsonc":
+                from . import jsonc
+
+                return jsonc.load(f)
             return json.load(f)
     elif ext in (".yaml", ".yml"):
         import yaml
@@ -46,7 +50,8 @@ def _load_raw_config(file_path: Path) -> Dict[str, Any]:
             return yaml.safe_load(f)
     else:
         raise ValueError(
-            f"Unsupported config file format: {file_path} (expected .json, .yaml, or .yml)"
+            f"Unsupported config file format: {file_path} "
+            f"(expected .json, .jsonc, .yaml, or .yml)"
         )
 
 

@@ -520,7 +520,11 @@ When all cases in a sub-file share the same tags (e.g., `"text"`), there is no n
 
 ### Cross-Format Support
 
-A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.yaml` / `.yml`).
+A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.jsonc` / `.yaml` / `.yml`).
+
+### JSONC Support
+
+`.jsonc` config files support VS Code JSONC syntax: `//` and `/* ... */` comments, plus trailing commas in objects and arrays. Comment markers inside string literals (URLs, escaped quotes) are never stripped. A `.jsonc` file can be used both as the main config and as an imported sub-file (the runner picks the JSONC parser by extension). Note that `symtest migrate` rewrites `.jsonc` as plain JSON (comments cannot survive a read/rewrite round-trip).
 
 ### Setup Merge Rules
 

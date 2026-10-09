@@ -73,7 +73,7 @@ Responsibilities by package (file-level details and public APIs live in source):
 Configuration files go through a five-step pipeline during loading:
 
 ```
-raw JSON/YAML file
+raw JSON/JSONC/YAML file (.jsonc is preprocessed by config/jsonc.py: comments and trailing commas are stripped)
     │
     ▼
 expand_imports()          # Recursively expand import references (merge setup, inject tags)
