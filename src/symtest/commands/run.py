@@ -97,6 +97,7 @@ def run_tests(args):
         error_analysis = True
     last_failed = getattr(args, 'last_failed', False)
     resume = getattr(args, 'resume', False)
+    with_deps = getattr(args, 'with_deps', False)
     plugin_dirs = getattr(args, 'plugin_dirs', None)
 
     try:
@@ -110,6 +111,7 @@ def run_tests(args):
                     execution_mode=args.execution_mode,
                     test_case_filter=args.test_case,
                     test_case_tag_filter=args.tag,
+                    with_deps=with_deps,
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
@@ -129,6 +131,7 @@ def run_tests(args):
                     execution_mode=args.execution_mode,
                     test_case_filter=args.test_case,
                     test_case_tag_filter=args.tag,
+                    with_deps=with_deps,
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
@@ -151,6 +154,7 @@ def run_tests(args):
                     workspace=args.workspace,
                     test_case_filter=args.test_case,
                     test_case_tag_filter=args.tag,
+                    with_deps=with_deps,
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
@@ -168,6 +172,7 @@ def run_tests(args):
                     workspace=args.workspace,
                     test_case_filter=args.test_case,
                     test_case_tag_filter=args.tag,
+                    with_deps=with_deps,
                     history_dir=history_dir,
                     regression_threshold=regression_threshold,
                     variables=variables,
@@ -270,6 +275,9 @@ def register_parser(subparsers):
                                 '(can be used multiple times)')
     run_parser.add_argument('--last-failed', action='store_true',
                            help='Run only test cases that failed in the previous run')
+    run_parser.add_argument('--with-deps', action='store_true',
+                            help='When filtering by test case name, automatically include '
+                                 'their transitive depends_on dependencies in the run')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
     run_parser.add_argument('--yes', '-y', action='store_true',

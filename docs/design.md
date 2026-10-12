@@ -144,6 +144,7 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 - 依赖"满足" = `passed` 或 `xfailed`；`failed` / `xpassed` 触发 BFS 级联 skip 全部下游
 - `skipped` 不计入 `failed` 计数，报告中单独列出
 - 顺序 runner 同样按拓扑序执行，依赖失效时跳过下游
+- 名称过滤默认不展开依赖闭包：依赖未选中时依赖边失效并打 WARNING；`--with-deps` 在过滤前对 `test_case_filter` 展开 `depends_on` 传递闭包（标签过滤不展开；`--last-failed` 不隐式展开）
 
 ### 4.5 单测试执行
 

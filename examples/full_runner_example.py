@@ -7,7 +7,7 @@
 
 核心能力：
   - 支持 JSON 和 YAML 配置文件（自动按扩展名识别）
-  - 全参数 CLI 透传：--test-target / --tag / --last-failed / --resume /
+  - 全参数 CLI 透传：--test-target / --tag / --with-deps / --last-failed / --resume /
     --update-baseline / --yes / --update-history / --junit-xml / --workers
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
@@ -20,6 +20,9 @@
 
   # 只运行指定用例
   python run_tests.py test_cases.json --test-target alpha gamma
+
+  # 定向运行并自动纳入依赖（按 DAG 顺序先跑依赖）
+  python run_tests.py test_cases.json --test-target downstream_case --with-deps
 
   # 按标签过滤
   python run_tests.py test_cases.json --tag smoke
@@ -133,6 +136,7 @@ def main():
 示例:
   python run_tests.py test_cases.json
   python run_tests.py test_cases.json --test-target alpha gamma
+  python run_tests.py test_cases.json --test-target downstream_case --with-deps
   python run_tests.py test_cases.json --tag smoke
   python run_tests.py test_cases.json --last-failed
   python run_tests.py test_cases.json --resume -t long_pipeline
@@ -162,6 +166,12 @@ def main():
         default=None,
         dest="test_tag",
         help="按标签过滤测试案例，支持多个（OR 关系），例如: --tag smoke --tag regression",
+    )
+    parser.add_argument(
+        "--with-deps",
+        action="store_true",
+        default=False,
+        help="定向运行时自动纳入被选用例的 depends_on 依赖（传递闭包），按 DAG 顺序先跑依赖",
     )
 
     # ---- 运行模式 ----
@@ -329,6 +339,7 @@ def main():
         execution_mode=args.execution_mode,
         test_case_filter=args.test_target,
         test_case_tag_filter=args.test_tag,
+        with_deps=args.with_deps,
         update_baseline=args.update_baseline,
         update_history=args.update_history,
         last_failed=args.last_failed,

@@ -235,6 +235,9 @@ symtest run test_cases.yaml
 # By name (multiple allowed)
 symtest run test_cases.json -t case1 -t case2
 
+# By name + auto-include their depends_on dependencies (transitive closure)
+symtest run test_cases.json -t case1 --with-deps
+
 # By tag (OR relationship)
 symtest run test_cases.json --tag smoke --tag regression
 

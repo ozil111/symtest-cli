@@ -253,6 +253,18 @@ test_cases:
 - `depends_on` and `steps` are independent—`depends_on` is a case-level concept, `steps` is an intra-case step-level concept
 - Zero-overhead fast path when no dependencies are declared
 
+**Interaction with case filtering (`--with-deps`)**:
+
+When running by name (`-t` / `--test-case`), only the specified cases themselves run by default. If a selected case's dependency is not in the selection, that dependency is **ignored** (the downstream case runs immediately), and the framework emits a WARNING. Use `--with-deps` to automatically include the selected cases' dependencies (including transitive ones) in the run, scheduled in DAG topological order:
+
+```bash
+# Automatically runs C's dependency B, then B's dependency A, before running C
+symtest run test_cases.json -t C --with-deps
+```
+
+- Dependency expansion applies to name filtering only; tag filtering does not expand
+- `--last-failed` does not expand dependencies by default (keeps iteration re-runs lightweight); explicitly add `--with-deps` to re-run together with dependencies
+
 ### Field Descriptions
 
 | Field | Required | Description |

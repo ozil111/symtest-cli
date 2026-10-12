@@ -154,6 +154,7 @@ JSON Schema; it is not restated here.
 - Semantics: dependency satisfied = `passed` or `xfailed`; `failed` / `xpassed` triggers BFS cascade-skip of all downstream cases
 - `skipped` is NOT counted as `failed`; listed separately in reports
 - The sequential runner executes in topological order as well, skipping invalid downstream
+- Name filtering does not expand the dependency closure by default: when a selected case's dependency is not selected, the dependency edge drops silently with a WARNING; `--with-deps` expands the `depends_on` transitive closure of `test_case_filter` before filtering (tag filtering never expands; `--last-failed` does not expand implicitly)
 
 ### 4.5 Single Test Execution
 
