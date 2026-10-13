@@ -7,6 +7,7 @@ Extracted from ``cli.py`` so the CLI entry point stays a thin
 parser + dispatch layer.
 """
 
+import argparse
 import json
 import logging
 import sys
@@ -14,6 +15,11 @@ from pathlib import Path
 
 from ..reporting.diagnosis import attach_next_action_hints
 from ..runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
+from ..utils.project_config import (
+    load_project_config,
+    merge_project_config,
+    resolve_path,
+)
 from ..utils.report_generator import ReportGenerator
 from ..utils.html_report import generate_html_report
 from ..utils.junit_xml_writer import write_junit_xml
@@ -71,6 +77,16 @@ def run_tests(args):
     # Resolve config_file relative to workspace if specified, otherwise cwd.
     # This matches BaseRunner's resolution (workspace / config_file).
     workspace_path = Path(args.workspace) if args.workspace else Path.cwd()
+
+    # Project-level defaults (.symtest/symtest.json): command line values
+    # win, then project config, then built-in defaults. --no-config skips
+    # the file and applies built-in defaults only.
+    if getattr(args, 'no_config', False):
+        logger.info("--no-config: ignoring project configuration")
+        merge_project_config(args, {}, workspace_path)
+    else:
+        merge_project_config(args, load_project_config(workspace_path), workspace_path)
+
     config_file = (workspace_path / args.config_file).resolve()
 
     if not config_file.exists():
@@ -221,15 +237,27 @@ def run_tests(args):
         junit_xml_path = getattr(args, 'junit_xml', None)
         if junit_xml_path and hasattr(runner, 'results'):
             suite_name = config_file.stem
-            write_junit_xml(runner.results, junit_xml_path, suite_name=suite_name)
-            logger.info("JUnit XML report written to: %s", junit_xml_path)
+            resolved_junit = resolve_path(junit_xml_path, workspace_path)
+            Path(resolved_junit).parent.mkdir(parents=True, exist_ok=True)
+            write_junit_xml(runner.results, resolved_junit, suite_name=suite_name)
+            logger.info("JUnit XML report written to: %s", resolved_junit)
 
         # --- HTML report output (supplementary, works alongside any --output-format) ---
         html_report_path = getattr(args, 'html_report', None)
         if html_report_path and hasattr(runner, 'results'):
-            with open(html_report_path, 'w', encoding='utf-8') as f:
+            resolved_html = resolve_path(html_report_path, workspace_path)
+            Path(resolved_html).parent.mkdir(parents=True, exist_ok=True)
+            with open(resolved_html, 'w', encoding='utf-8') as f:
                 f.write(generate_html_report(runner.results))
-            logger.info("HTML report written to: %s", html_report_path)
+            logger.info("HTML report written to: %s", resolved_html)
+
+        # --- Text report output (supplementary, works alongside any --output-format) ---
+        text_report_path = getattr(args, 'text_report', None)
+        if text_report_path and hasattr(runner, 'results'):
+            resolved_text = resolve_path(text_report_path, workspace_path)
+            Path(resolved_text).parent.mkdir(parents=True, exist_ok=True)
+            ReportGenerator(runner.results, resolved_text).save_report()
+            logger.info("Text report written to: %s", resolved_text)
 
         return success
 
@@ -244,12 +272,17 @@ def run_tests(args):
 def register_parser(subparsers):
     """Register the ``run`` subcommand on the root parser."""
     run_parser = subparsers.add_parser('run', help='Run test cases from a configuration file')
-    run_parser.add_argument('config_file', help='Path to the test configuration file (JSON/JSONC or YAML)')
-    run_parser.add_argument('--workspace', '-w', help='Working directory for test execution')
-    run_parser.add_argument('--parallel', '-p', action='store_true', help='Run tests in parallel')
-    run_parser.add_argument('--workers', type=int, help='Number of parallel workers (default: CPU count)')
-    run_parser.add_argument('--execution-mode', choices=['thread', 'process'], default='thread',
-                           help='Parallel execution mode (default: thread)')
+    run_parser.add_argument('config_file', nargs='?', default=None,
+                            help='Path to the test configuration file (JSON/JSONC or YAML); '
+                                 'omitted: value from project config, otherwise test_cases.json')
+    run_parser.add_argument('--workspace', '-w', help='Working directory for test execution '
+                                                      '(project config is read from here too)')
+    run_parser.add_argument('--parallel', '-p', action=argparse.BooleanOptionalAction, default=None,
+                            help='Run tests in parallel (default: from project config, otherwise off)')
+    run_parser.add_argument('--workers', type=int, default=None,
+                            help='Number of parallel workers (default: from project config, otherwise CPU count)')
+    run_parser.add_argument('--execution-mode', choices=['thread', 'process'], default=None,
+                            help='Parallel execution mode (default: from project config, otherwise thread)')
     run_parser.add_argument('--output-format', choices=['text', 'json', 'html'], default='text',
                            help='Output format for test results')
     run_parser.add_argument('--test-case', '-t', action='append', default=None,
@@ -257,17 +290,29 @@ def register_parser(subparsers):
     run_parser.add_argument('--tag', action='append', default=None,
                            help='Run only test cases with matching tag(s) (can be used multiple times)')
     run_parser.add_argument('--history-dir',
-                           help='Directory for .symtest runtime history (enables smart scheduling & regression detection)')
-    run_parser.add_argument('--regression-threshold', type=float, default=1.5,
-                           help='Warn if a case runs N times slower than historical average (default: 1.5)')
+                           help='Directory for .symtest runtime history (enables smart scheduling '
+                                '& regression detection; default: from project config)')
+    run_parser.add_argument('--regression-threshold', type=float, default=None,
+                           help='Warn if a case runs N times slower than historical average '
+                                '(default: from project config, otherwise 1.5)')
     run_parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     run_parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     run_parser.add_argument('--junit-xml', dest='junit_xml',
-                           help='Write JUnit XML report to the specified file path')
+                           help='Write JUnit XML report to the specified file path '
+                                '(default: from project config)')
+    run_parser.add_argument('--text-report', dest='text_report',
+                            help='Save the text report to the specified file path '
+                                 '(supplementary, console output is unaffected; '
+                                 'default: from project config; relative paths are '
+                                 'resolved against --workspace)')
     run_parser.add_argument('--html-report', dest='html_report',
                             help='Write a self-contained collapsible HTML report to the '
                                  'specified file path (supplementary, console output '
-                                 'is unaffected)')
+                                 'is unaffected; default: from project config; relative '
+                                 'paths are resolved against --workspace)')
+    run_parser.add_argument('--no-config', dest='no_config', action='store_true',
+                            help='Ignore the project configuration (.symtest/symtest.json) '
+                                 'for this run and use built-in defaults')
     run_parser.add_argument('--var', action='append', default=[],
                            metavar='KEY=VALUE',
                            help='Set a variable for config placeholder substitution, '
@@ -275,9 +320,10 @@ def register_parser(subparsers):
                                 '(can be used multiple times)')
     run_parser.add_argument('--last-failed', action='store_true',
                            help='Run only test cases that failed in the previous run')
-    run_parser.add_argument('--with-deps', action='store_true',
+    run_parser.add_argument('--with-deps', action=argparse.BooleanOptionalAction, default=None,
                             help='When filtering by test case name, automatically include '
-                                 'their transitive depends_on dependencies in the run')
+                                 'their transitive depends_on dependencies in the run '
+                                 '(default: from project config, otherwise off)')
     run_parser.add_argument('--update-baseline', action='store_true',
                            help='On comparison failure, overwrite baseline files with actual output')
     run_parser.add_argument('--yes', '-y', action='store_true',
@@ -289,13 +335,15 @@ def register_parser(subparsers):
     run_parser.add_argument('--resume', action='store_true',
                            help='Resume sequence test cases from last failed step '
                                 '(trusts workspace artifacts are unchanged)')
-    run_parser.add_argument('--error-analysis', action='store_true',
+    run_parser.add_argument('--error-analysis', action=argparse.BooleanOptionalAction, default=None,
                            help='Enable streaming error statistics for numerical file comparisons '
                                 '(CSV/H5): total_numeric_cells, mismatched_cells, '
-                                'max_abs/rel_error, mean/rms_abs_error')
-    run_parser.add_argument('--error-analysis-all', action='store_true',
+                                'max_abs/rel_error, mean/rms_abs_error '
+                                '(default: from project config, otherwise off)')
+    run_parser.add_argument('--error-analysis-all', action=argparse.BooleanOptionalAction, default=None,
                            help='Like --error-analysis, but also report error statistics for '
-                                'PASSED file comparisons in the report (implies --error-analysis)')
+                                'PASSED file comparisons in the report (implies --error-analysis) '
+                                '(default: from project config, otherwise off)')
     run_parser.add_argument('--plugin-dir', action='append', default=None,
                            dest='plugin_dirs',
                            help='Add a directory for workspace-level comparator plugins '

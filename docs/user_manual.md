@@ -11,6 +11,7 @@
 - [配置校验](#配置校验)
 - [跨文件搜索用例](#跨文件搜索用例find)
 - [运行测试](#运行测试)
+- [项目默认配置](#项目默认配置symtestsymtestjson)
 - [项目入口脚本](#项目入口脚本)
 - [占位符（变量替换）](#占位符变量替换)
 - [标签过滤](#标签过滤)
@@ -776,6 +777,10 @@ symtest find main_config.json "login" --output-format json
 # 运行 JSON 测试
 symtest run test_cases.json
 
+# 省略配置文件名：使用项目默认配置（.symtest/symtest.json）中的文件，
+# 未配置则为 test_cases.json
+symtest run
+
 # 运行 YAML 测试
 symtest run test_cases.yaml
 
@@ -812,6 +817,12 @@ symtest run test_cases.json --output-format json|html|text
 
 # 额外落盘一份可折叠 HTML 报告（控制台输出不受影响）
 symtest run test_cases.json --html-report report.html
+
+# 额外落盘一份文本报告（控制台输出不受影响）
+symtest run test_cases.json --text-report test_report.txt
+
+# 本次运行忽略项目默认配置（.symtest/symtest.json）
+symtest run test_cases.json --no-config
 
 # 启用历史记录（智能调度 + 回归检测）
 symtest run test_cases.json --history-dir ./hist
@@ -1033,6 +1044,58 @@ for detail in runner.results["details"]:
 | `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`error_stats`、`actual`/`baseline` 路径、容差参数） |
 | `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
 
+## 项目默认配置（.symtest/symtest.json）
+
+如果每次运行都重复同一组参数（如 `--parallel --workers 4 --error-analysis-all --html-report test_report.html`），可以在项目 workspace 放一个 `.symtest/symtest.json`，为 `symtest run` 保存项目级默认值：
+
+```json
+{
+  "run": {
+    "config_file": "test_cases.json",
+    "parallel": true,
+    "workers": 4,
+    "execution_mode": "thread",
+    "history_dir": ".symtest",
+    "regression_threshold": 1.5,
+    "with_deps": true,
+    "error_analysis": true,
+    "error_analysis_all": true
+  },
+  "report": {
+    "text": "test_report.txt",
+    "html": "test_report.html",
+    "junit": null
+  }
+}
+```
+
+### 键说明
+
+`run` 组的键与 CLI 选项一一对应（`config_file`、`parallel`、`workers`、`execution_mode`、`history_dir`、`regression_threshold`、`with_deps`、`error_analysis`、`error_analysis_all`）；`report` 组的 `text` / `html` / `junit` 分别对应 `--text-report`、`--html-report`、`--junit-xml` 的默认输出路径。过滤类选项（`-t`、`--tag`、`--last-failed` 等）与一次性动作（`--update-baseline` 等）不进配置，保持每次显式传入。
+
+### 优先级
+
+**命令行显式值 > 项目配置 > 程序内置默认**。
+
+- 省略配置文件名时：使用项目配置的 `run.config_file`，未配置则为 `test_cases.json`
+- 布尔项支持显式关闭：`--no-parallel`、`--no-with-deps`、`--no-error-analysis-all` 等（不传 = 交给配置，传了以命令行为准）
+- `--no-config`：本次运行完全忽略项目配置，只用内置默认
+
+### 路径解析
+
+项目配置从 `--workspace` 指定的目录读取（未指定则为当前目录）；`report` 中的报告相对路径也基于该目录解析（绝对路径原样使用）。
+
+### 容错语义
+
+未知 section/键、类型错误、JSON 损坏或文件缺失只打 warning，不阻断运行——未知键按忽略处理，便于发现拼写错误；配置文件是纯加分项，坏掉不会让测试跑不起来。
+
+配好之后，日常命令简化为：
+
+```bash
+symtest run                        # 全量运行
+symtest run -t case_1 --last-failed # 定向重跑
+```
+
 ## 项目入口脚本
 
 如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `symtest run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
@@ -1050,8 +1113,8 @@ for detail in runner.results["details"]:
 | 场景 | 推荐方式 |
 |---|---|
 | 需要预设环境变量（如注入 venv PATH） | 入口脚本 |
-| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本 |
-| 团队共享固定运行参数（workers、history-dir 等） | 入口脚本 |
+| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本，或项目默认配置（见上文 `report` 组） |
+| 团队共享固定运行参数（workers、history-dir 等） | 项目默认配置 `.symtest/symtest.json`（可被命令行覆盖），或入口脚本 |
 | 需要根据配置文件扩展名自动选择 JSON/YAML runner | 入口脚本 |
 | Windows 下 console-script 命令（如 `compare-files`）找不到的问题 | 入口脚本（注入 venv Scripts 到 PATH） |
 
@@ -1645,7 +1708,7 @@ symtest run test_cases.json --html-report report.html
 symtest run test_cases.json --html-report report.html --junit-xml report.xml
 ```
 
-相对路径按当前工作目录解析。
+相对路径按 `--workspace` 指定目录解析（未指定则为当前目录）。
 
 ### 数据解释规则
 

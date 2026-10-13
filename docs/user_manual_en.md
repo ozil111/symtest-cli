@@ -11,6 +11,7 @@
 - [Configuration Validation](#configuration-validation)
 - [Cross-File Case Search](#cross-file-case-search-find)
 - [Running Tests](#running-tests)
+- [Project Defaults](#project-defaults-symtestsymtestjson)
 - [Project Entry Script](#project-entry-script)
 - [Placeholders (Variable Substitution)](#placeholders-variable-substitution)
 - [Tag Filtering](#tag-filtering)
@@ -781,6 +782,10 @@ Exit codes follow grep semantics: 0 = match found, 1 = no match,
 # Run JSON tests
 symtest run test_cases.json
 
+# Omit the config file name: uses the file from the project defaults
+# (.symtest/symtest.json), falling back to test_cases.json
+symtest run
+
 # Run YAML tests
 symtest run test_cases.yaml
 
@@ -839,6 +844,12 @@ symtest run test_cases.json --update-baseline --yes
 
 # Enable error analysis (full stats output for numerical comparisons)
 symtest run test_cases.json --error-analysis
+
+# Additionally save a text report to file (console output unaffected)
+symtest run test_cases.json --text-report test_report.txt
+
+# Ignore project defaults (.symtest/symtest.json) for this run
+symtest run test_cases.json --no-config
 ```
 
 ### Run Only Last-Failed Cases (--last-failed)
@@ -1035,6 +1046,74 @@ for detail in runner.results["details"]:
 | `compare_failures` | list | Structured info for each failed file comparison (includes `diff_summary`, `differences`, `error_stats`, `actual`/`baseline` paths, tolerance params) |
 | `baseline_updated` | list | Paths of baseline files overwritten by `--update-baseline` |
 
+## Project Defaults (.symtest/symtest.json)
+
+If every run repeats the same options (`--parallel --workers 4 --error-analysis-all`), place a `.symtest/symtest.json` in the project workspace to store per-project defaults for `symtest run`:
+
+```json
+{
+  "run": {
+    "config_file": "test_cases.json",
+    "parallel": true,
+    "workers": 4,
+    "execution_mode": "thread",
+    "history_dir": ".symtest",
+    "regression_threshold": 1.5,
+    "with_deps": true,
+    "error_analysis": true,
+    "error_analysis_all": true
+  },
+  "report": {
+    "text": "test_report.txt",
+    "html": "test_report.html",
+    "junit": null
+  }
+}
+```
+
+### Keys
+
+Keys in the `run` group map one-to-one to CLI options (`config_file`,
+`parallel`, `workers`, `execution_mode`, `history_dir`,
+`regression_threshold`, `with_deps`, `error_analysis`,
+`error_analysis_all`); the `report` group's `text` / `html` / `junit`
+keys hold default output paths for `--text-report`, `--html-report` and
+`--junit-xml`. Filtering options (`-t`, `--tag`, `--last-failed`, ...) and
+one-shot actions (`--update-baseline`, ...) are not part of the config and
+stay explicit on the command line.
+
+### Precedence
+
+**Explicit command line > project config > built-in defaults.**
+
+- Omitting the config file argument uses `run.config_file` from the project
+  config, falling back to `test_cases.json`
+- Boolean options support explicit opt-out: `--no-parallel`,
+  `--no-with-deps`, `--no-error-analysis-all`, etc. (omitted = leave it to
+  the config; passed = command line wins)
+- `--no-config`: ignore the project config entirely for this run and use
+  built-in defaults only
+
+### Path Resolution
+
+The project config is read from the directory given by `--workspace`
+(the current directory otherwise); relative report paths in the `report`
+group resolve against the same directory (absolute paths used as-is).
+
+### Tolerance Semantics
+
+Unknown sections/keys, wrong-typed values, broken JSON or a missing file
+only produce a warning and never abort the run — unknown keys are ignored
+(which surfaces typos); the config file is a pure bonus, a broken one never
+prevents tests from running.
+
+With the defaults in place, everyday commands simplify to:
+
+```bash
+symtest run                         # full run
+symtest run -t case_1 --last-failed # targeted rerun
+```
+
 ## Project Entry Script
 
 If your test project has a complex structure (requiring preset environment variables, customized report paths, etc.), using `symtest run` directly may not be flexible enough. You can create a project entry script (e.g., `test.py` or `run_tests.py`) that calls the framework API from Python code.
@@ -1052,8 +1131,8 @@ If your test project has a complex structure (requiring preset environment varia
 | Scenario | Recommendation |
 |---|---|
 | Need to set environment variables (e.g., inject venv PATH) | Entry script |
-| Need to output multiple report formats simultaneously (text + JUnit XML) | Entry script |
-| Team-shared fixed run parameters (workers, history-dir, etc.) | Entry script |
+| Need to output multiple report formats simultaneously (text + JUnit XML) | Entry script, or project defaults (see `report` group above) |
+| Team-shared fixed run parameters (workers, history-dir, etc.) | Project defaults `.symtest/symtest.json` (overridable per run), or entry script |
 | Need to auto-select JSON/YAML runner by config file extension | Entry script |
 | Windows console-script commands (e.g., `compare-files`) not found | Entry script (inject venv Scripts into PATH) |
 

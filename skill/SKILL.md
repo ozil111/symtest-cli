@@ -228,7 +228,24 @@ rendering): `references/user_manual.md` → "Custom File Comparator".
 ```bash
 symtest run test_cases.json
 symtest run test_cases.yaml
+
+# No config file argument: uses run.config_file from the project defaults
+# (.symtest/symtest.json), falling back to test_cases.json
+symtest run
 ```
+
+### Project defaults
+If a project always runs with the same options, place a
+`.symtest/symtest.json` in the workspace. The `run` group stores run
+options (`config_file`, `parallel`, `workers`, `execution_mode`,
+`history_dir`, `regression_threshold`, `with_deps`, `error_analysis`,
+`error_analysis_all`); the `report` group stores default output paths
+(`text`, `html`, `junit`). Precedence: **command line > project config >
+built-in defaults**; boolean flags support explicit opt-out via
+`--no-parallel` / `--no-with-deps` / `--no-error-analysis-all`, and
+`--no-config` ignores the file entirely for one run. Unknown keys are
+warned about and ignored; a missing or broken config never blocks a run.
+Report paths resolve against the `--workspace` directory.
 
 ### Filtering
 ```bash
