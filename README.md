@@ -268,6 +268,12 @@ python -m pytest tests/unit tests/integration tests/e2e
 Bug fixes, comparator plugins, documentation improvements, and reports from
 real-world test workflows are welcome.
 
+Follow [the development guidelines](AGENTS.md) for documentation maintenance.
+After changing the English manual or official Python runner example, run
+`python tools/sync_skill_assets.py` to refresh their skill copies.
+Before delivery, run `python tools/sync_skill_assets.py --check`; CI also runs
+this check.
+
 ## License
 
 MIT

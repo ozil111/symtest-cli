@@ -5,6 +5,7 @@
 - [Installation](#installation)
 - [Test Case Definition](#test-case-definition)
 - [Case-Level Environment Variables](#case-level-environment-variables-env)
+- [Declared Outputs](#declared-outputs-outputs)
 - [Configuration Splitting](#configuration-splitting)
 - [Configuration Inheritance](#configuration-inheritance)
 - [Configuration Validation](#configuration-validation)
@@ -283,7 +284,7 @@ symtest run test_cases.json -t C --with-deps
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
 | `scheduling.depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
 | `execution.env` | No | Case-level environment variable mapping (e.g. `{"MYAPP_SCALE": "1.0"}`), defined inside `execution`, injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
-| `execution.outputs` | No | Declared output artifacts (list of paths), deleted before execution and before every retry attempt so stale files cannot cause false passes. Relative paths resolve against the workspace and must stay inside it. In sequence mode, case-level `outputs` are cleaned once before the first executed step (skipped by `--resume` when starting from a resumed step); steps may declare their own `outputs`, cleaned before that step runs |
+| `execution.outputs` | No | Declared output artifacts (list of paths, e.g. `["result.h5", "logs/solver.log"]`), deleted before execution (and before every retry attempt) so stale files from a previous run cannot cause false passes. See [Declared Outputs](#declared-outputs-outputs) |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |
@@ -394,6 +395,55 @@ Use the `env` field inside `execution` (same level as `command` and `steps`) to 
 | Inheritance (extends) | Auto-supported; `env` is a dict, deep-merged with child keys overriding parent |
 | Value type | Strings; numeric/boolean values are coerced with `str()` at parse time |
 
+## Declared Outputs (outputs)
+
+A classic regression-testing trap: the solver crashes this round or the output path changed, so no result file was produced — but the stale file from the previous run is still in the workspace, and `compare_files` may then **false-pass** against the baseline. By declaring result artifacts with `execution.outputs`, the framework deletes these files/directories before execution (and before every retry attempt), guaranteeing comparisons always use artifacts from the current run.
+
+### JSON
+
+```json
+{
+    "name": "Solver regression",
+    "execution": {
+        "command": "{solver}",
+        "args": ["-i", "input.dat"],
+        "outputs": ["result.h5", "summary.csv", "logs/solver.log"]
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### Sequence mode (case-level + step-level)
+
+```json
+{
+    "name": "Multi-step pipeline",
+    "execution": {
+        "outputs": ["final.h5"],
+        "steps": [
+            { "command": "python", "args": ["pre.py"], "outputs": ["mesh.dat"], "expected": { "return_code": 0 } },
+            { "command": "{solver}", "args": ["mesh.dat"], "expected": { "return_code": 0 } }
+        ]
+    }
+}
+```
+
+### Semantics
+
+| Decision point | Behavior |
+|---|---|
+| Cleanup timing | Before every attempt starts; retried attempts re-clean as well |
+| Missing file | Silently skipped, not an error |
+| Deletion failure (locked file etc.) | **Loud failure**: the case is marked `execution_error` and the command is not run (no silent false-pass channel) |
+| Path resolution | Relative paths resolve against the workspace; the resolved path must stay inside the workspace — absolute paths or `..` escapes are rejected at parse/validate time |
+| Directories | A whole output directory may be declared (deleted recursively before the run) |
+| Placeholders / inheritance | Automatic (`{var}` substitution; extends deep-merge with list replacement, same as `args`) |
+| Sequence step-level | Cleaned right before that step actually runs |
+| Sequence case-level | Cleaned once before the first executed step on full runs only |
+| Parallel conflicts | Two cases declaring the same output path may delete each other's artifacts; `symtest validate` warns. Pairs connected via `depends_on` are considered legitimate |
+
+> **Interaction with `--resume`**: artifacts of resumed runs are trusted and never cleaned — case-level `outputs` cleanup only happens on full runs, and step-level `outputs` of skipped steps are not deleted. Changing any step's `outputs` invalidates the resume config hash and triggers a full rerun.
+
 ## Configuration Splitting
 
 When a test project grows to dozens or even hundreds of test cases, a single config file becomes hard to maintain. The configuration splitting mechanism lets you break a large file into multiple sub-files by module/feature and assemble them via `import` references, which are merged at load time automatically.
@@ -483,7 +533,11 @@ When all cases in a sub-file share the same tags (e.g., `"text"`), there is no n
 
 ### Cross-Format Support
 
-A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.yaml` / `.yml`).
+A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.jsonc` / `.yaml` / `.yml`).
+
+### JSONC Support
+
+`.jsonc` config files support VS Code JSONC syntax: `//` and `/* ... */` comments, plus trailing commas in objects and arrays. Comment markers inside string literals (URLs, escaped quotes) are never stripped. A `.jsonc` file can be used both as the main config and as an imported sub-file (the runner picks the JSONC parser by extension). Note that `symtest migrate` rewrites `.jsonc` as plain JSON (comments cannot survive a read/rewrite round-trip).
 
 ### Setup Merge Rules
 
@@ -728,6 +782,10 @@ Exit codes follow grep semantics: 0 = match found, 1 = no match,
 # Run JSON tests
 symtest run test_cases.json
 
+# Omit the config file name: uses the file from the project defaults
+# (.symtest/symtest.json), falling back to test_cases.json
+symtest run
+
 # Run YAML tests
 symtest run test_cases.yaml
 
@@ -787,10 +845,6 @@ symtest run test_cases.json --update-baseline --yes
 # Enable error analysis (full stats output for numerical comparisons)
 symtest run test_cases.json --error-analysis
 
-# Omit the config file name: uses the file from the project defaults
-# (.symtest/symtest.json), falling back to test_cases.json
-symtest run
-
 # Additionally save a text report to file (console output unaffected)
 symtest run test_cases.json --text-report test_report.txt
 
@@ -835,6 +889,8 @@ symtest run config.json
 - Hash mismatch (config changed) → full rerun automatically, old state discarded
 
 **Trust model**: `--resume` does **not verify workspace artifacts** (input files, files generated by prior steps, etc.). Using `--resume` means the user confirms input files are unmodified. If workspace contamination is suspected, rerun fully without `--resume`.
+
+**Interaction with `outputs`**: cases declaring `execution.outputs` do not clean artifacts on resumed runs (case-level cleanup only happens on full runs; step-level `outputs` of skipped steps are not deleted). Changing any step's `outputs` invalidates the config hash and triggers a full rerun.
 
 ```bash
 # First full run, long_pipeline step 4 fails (total 72s)
