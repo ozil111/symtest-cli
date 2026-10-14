@@ -35,7 +35,7 @@ def make_args(**overrides):
         "parallel": None,
         "workers": None,
         "execution_mode": None,
-        "output_format": "text",
+        "output_format": "none",
         "test_case": None,
         "tag": None,
         "var": [],

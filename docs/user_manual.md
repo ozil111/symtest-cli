@@ -812,8 +812,11 @@ symtest run test_cases.json --verbose
 # 调试模式
 symtest run test_cases.json --debug
 
-# 输出格式（html 为自包含的可折叠 HTML 报告，打印到 stdout）
-symtest run test_cases.json --output-format json|html|text
+# 输出格式：报告通道控制（默认 none，控制台只输出日志）
+#   none：不输出报告（日常推荐；pass/failed 总数等摘要见日志输出）
+#   text/json/html：将报告打印到 stdout，可重定向落盘
+#     例如 symtest run test_cases.json --output-format text > report.txt
+symtest run test_cases.json --output-format none|text|json|html
 
 # 额外落盘一份可折叠 HTML 报告（控制台输出不受影响）
 symtest run test_cases.json --html-report report.html
@@ -1671,7 +1674,7 @@ symtest run config.json --history-dir ./hist --update-history
 symtest run test_cases.json --junit-xml report.xml
 ```
 
-`--junit-xml` 是补充输出，与 `--output-format`（text/json/html）并存，不影响控制台报告。
+`--junit-xml` 是补充输出，与 `--output-format` 并存。
 
 ### Python API
 
@@ -1723,6 +1726,8 @@ symtest run test_cases.json --html-report report.html --junit-xml report.xml
 ## 日志配置
 
 框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `symtest` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
+
+控制台遵循 **log/report 通道分离**：stderr 只承载日志（运行中每个用例一行的进度、最终 pass/failed 摘要与警告），报告**不会**自动重放到终端。需要查看完整细节时，通过 `--output-format text/json/html` 将报告打印到 stdout（可重定向落盘），或经 `--text-report` / `--html-report` / `--junit-xml` 写入文件。
 
 ### 命令行控制日志级别
 

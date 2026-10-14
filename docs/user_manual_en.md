@@ -817,8 +817,12 @@ symtest run test_cases.json --verbose
 # Debug mode
 symtest run test_cases.json --debug
 
-# Output format
-symtest run test_cases.json --output-format json|html|text
+# Output format: report channel control (default none, console shows logs only)
+#   none: no report output (recommended for daily use; the pass/failed summary
+#         appears in the log output)
+#   text/json/html: print the report to stdout, redirectable to a file
+#     e.g. symtest run test_cases.json --output-format text > report.txt
+symtest run test_cases.json --output-format none|text|json|html
 
 # Enable history (smart scheduling + regression detection)
 symtest run test_cases.json --history-dir ./hist
@@ -1687,7 +1691,7 @@ Use `--junit-xml` to output a JUnit-format XML report alongside test execution, 
 symtest run test_cases.json --junit-xml report.xml
 ```
 
-`--junit-xml` is a supplementary output, coexisting with `--output-format` (text/json/html) without affecting the console report.
+`--junit-xml` is a supplementary output, coexisting with `--output-format`.
 
 ### Python API
 
@@ -1703,6 +1707,8 @@ Status mapping: `passed` → pass; `failed` → failure (assertion failure) or e
 ## Logging Configuration
 
 All framework diagnostic and status information is output through Python's standard `logging` module, unified under the `symtest` namespace. Logs are written to **stderr** by default, keeping `stdout` clean for safe use with `--output-format json` for machine-readable output.
+
+The console follows **log/report channel separation**: stderr carries logs only (one progress line per case, the final pass/failed summary, and warnings); reports are **not** replayed to the terminal automatically. To inspect full details, print the report to stdout via `--output-format text/json/html` (redirectable to a file), or write it to disk via `--text-report` / `--html-report` / `--junit-xml`.
 
 ### CLI Log Level Control
 

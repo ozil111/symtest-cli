@@ -279,6 +279,7 @@ JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | 项目级默认配置（`.symtest/symtest.json`） | 常用运行参数（并行、误差分析、依赖展开、报告路径）项目内固化，`symtest run` 免重复输入。三级优先级（CLI > 项目配置 > 内置默认）靠 tri-state 布尔项实现（argparse 默认 `None`，`--no-xxx` 显式关闭）；未知键/坏 JSON 宽容处理只警告——配置是纯加分项，不阻断运行。替代各仓库自建入口脚本保存默认参数的用法 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
+| 控制台 log/report 通道分离 | 控制台（stderr logging）只承载进度与摘要日志；报告仅在显式 `--output-format text/json/html` 时走 stdout（可重定向落盘），细节经 `--text-report`/`--html-report`/`--junit-xml` 写文件。修复原 `print_report` 把整份文本报告经 `logger.info` 重放到终端的通道混流——`--error-analysis-all` 下逐用例 error_stats 会淹没 pass/failed 摘要 |
 
 ---
 
@@ -298,7 +299,7 @@ TestCase（specification，永不执行）
            Validator.validate(ExpectationSpec, ExecutionResult)
                              ▼
                     ValidationResult ──▶ TestResult ──▶ Reporter
-                                          console / JSON / JUnit / AI diagnosis
+                                          stdout(text/json/html) / JUnit / AI diagnosis
 ```
 
 一次 attempt = `Executor.execute → Validator.validate`；verdict 由编排层聚合为 TestResult。
@@ -352,8 +353,7 @@ flaky 判定也在编排层）；但不自己实现 subprocess 管理、float �
 #### 原则 5 — Reporting 只能消费 Result
 
 ```
-TestResult ──▶ Reporter ──┬── console
-                          ├── JSON
+TestResult ──▶ Reporter ──┬── stdout（按需 text/json/html）
                           ├── JUnit
                           └── AI diagnosis
 ```

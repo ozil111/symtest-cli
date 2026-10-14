@@ -223,15 +223,23 @@ def run_tests(args):
                 config_path=str(config_file),
             )
 
-            output_format = getattr(args, 'output_format', 'text')
+            output_format = getattr(args, 'output_format', 'none')
 
+            # Channel separation: the console is the log channel only
+            # (progress + summary from the runner's logging). Reports reach
+            # stdout solely via an explicit --output-format, or are written
+            # to files via --text-report / --html-report / --junit-xml.
+            # Redirected pipes/files default to the ANSI codepage on Windows
+            # (e.g. GBK), which cannot encode status symbols like "✓";
+            # degrade to replacement instead of crashing the whole run.
+            if output_format != 'none' and hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(errors="replace")
             if output_format == 'json':
                 print(json.dumps(results, indent=2, ensure_ascii=False))
             elif output_format == 'html':
                 print(generate_html_report(results))
-            else:
-                report_gen = ReportGenerator(results, '')
-                report_gen.print_report()
+            elif output_format == 'text':
+                print(ReportGenerator(results, '').generate_report())
 
         # --- JUnit XML output (supplementary, works alongside any --output-format) ---
         junit_xml_path = getattr(args, 'junit_xml', None)
@@ -283,8 +291,11 @@ def register_parser(subparsers):
                             help='Number of parallel workers (default: from project config, otherwise CPU count)')
     run_parser.add_argument('--execution-mode', choices=['thread', 'process'], default=None,
                             help='Parallel execution mode (default: from project config, otherwise thread)')
-    run_parser.add_argument('--output-format', choices=['text', 'json', 'html'], default='text',
-                           help='Output format for test results')
+    run_parser.add_argument('--output-format', choices=['none', 'text', 'json', 'html'],
+                           default='none',
+                           help='Report output channel: none (default, console shows '
+                                'logs only), text, json or html. text/json/html print '
+                                'the report to stdout (redirectable to a file)')
     run_parser.add_argument('--test-case', '-t', action='append', default=None,
                            help='Run only specified test case(s) by name (can be used multiple times)')
     run_parser.add_argument('--tag', action='append', default=None,

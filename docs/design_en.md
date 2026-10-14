@@ -262,6 +262,7 @@ no interactive UI maintenance burden.
 | `execution.outputs` artifact cleanup hooked at the execute_command entry | Declare artifacts and delete them before the run, eliminating stale-artifact false passes. Cleanup is execution-environment preparation (same category as env injection) and belongs to the execution layer; `execute_command` is the single convergence point of all execution paths, so hooking there makes retry re-clean and resume skip (skipped steps never enter the function) hold automatically with zero orchestration-layer changes. Failures are loud (`execution_error`) so no silent false-pass channel remains |
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Project-level default configuration (`.symtest/symtest.json`) | Frequently used run options (parallel, error analysis, dependency expansion, report paths) are stored per project so `symtest run` needs no repeated input. Three-level precedence (CLI > project config > built-in defaults) is implemented with tri-state booleans (argparse defaults to `None`; `--no-xxx` turns a flag off explicitly); unknown keys and bad JSON are handled tolerantly with a warning only — the config is a pure bonus and never blocks a run. Replaces per-repo entry scripts whose only job was storing default arguments |
+| Console log/report channel separation | The console (stderr logging) carries progress and summary logs only. Reports reach stdout solely via an explicit `--output-format text/json/html` (redirectable to a file), with full details written to disk via `--text-report`/`--html-report`/`--junit-xml`. Fixes the channel confusion where the former `print_report` replayed the whole text report through `logger.info` — with `--error-analysis-all` the per-case error_stats flooded the terminal and buried the pass/failed summary |
 
 ---
 
@@ -282,7 +283,7 @@ TestCase (specification, never executes)
            Validator.validate(ExpectationSpec, ExecutionResult)
                              ▼
                     ValidationResult ──▶ TestResult ──▶ Reporter
-                                          console / JSON / JUnit / AI diagnosis
+                                          stdout(text/json/html) / JUnit / AI diagnosis
 ```
 
 One attempt = `Executor.execute → Validator.validate`; verdicts are aggregated
@@ -342,8 +343,7 @@ management, float comparison, or stdout matching themselves.
 #### Principle 5 — Reporting can only consume Results
 
 ```
-TestResult ──▶ Reporter ──┬── console
-                          ├── JSON
+TestResult ──▶ Reporter ──┬── stdout (on-demand text/json/html)
                           ├── JUnit
                           └── AI diagnosis
 ```

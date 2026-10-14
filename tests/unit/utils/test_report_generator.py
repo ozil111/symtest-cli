@@ -47,15 +47,10 @@ def test_save_report_writes_utf8_file(tmp_path):
     assert "Total Tests: 1" in report_path.read_text(encoding="utf-8")
 
 
-def test_print_report_outputs_generated_report(caplog):
-    generator = ReportGenerator(
-        {"total": 0, "passed": 0, "failed": 0, "details": []},
-        "unused.txt",
-    )
-
-    generator.print_report()
-
-    assert "Test Results Summary" in caplog.text
+def test_report_generator_has_no_console_replay():
+    """log/report 通道分离：ReportGenerator 不提供 print_report 等日志重放入口，
+    报告只能写文件（save_report/generate_report 由调用方决定去向）。"""
+    assert not hasattr(ReportGenerator, "print_report")
 
 
 # ── error_analysis_all (--error-analysis-all) ──

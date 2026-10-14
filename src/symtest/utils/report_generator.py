@@ -1,8 +1,3 @@
-import logging
-
-logger = logging.getLogger("symtest.utils.report_generator")
-
-
 def _format_flaky_label(detail: dict) -> str:
     """Build a flaky/retry label if applicable."""
     attempts = detail.get("attempts", 1)
@@ -303,7 +298,3 @@ class ReportGenerator:
         report = self.generate_report()
         with open(self.file_path, 'w', encoding='utf-8') as f:
             f.write(report)
-
-    def print_report(self) -> None:
-        report = self.generate_report()
-        logger.info(report)

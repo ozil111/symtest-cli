@@ -33,7 +33,7 @@ def make_args(config_file, **overrides):
         "parallel": False,
         "workers": None,
         "execution_mode": "thread",
-        "output_format": "text",
+        "output_format": "none",
         "test_case": None,
         "tag": None,
         "verbose": False,
@@ -155,7 +155,9 @@ class TestBaselineUpdateConfirmation:
         assert captured["update_baseline"] is True
 
 
-def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, caplog):
+def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, caplog, capsys):
+    """默认 --output-format none：run_tests 本身不再经 logger 重放报告
+    （摘要日志由 runner 输出）；stdout 保持干净。"""
     config = tmp_path / "cases.json"
     config.write_text('{"test_cases": []}', encoding="utf-8")
 
@@ -167,12 +169,9 @@ def test_run_tests_uses_json_runner_and_prints_totals(tmp_path, monkeypatch, cap
 
     success = cli.run_tests(make_args(config, verbose=True, test_case=["ok"]))
 
-    log_text = caplog.text
     assert success
-    assert "Total Tests: 2" in log_text
-    assert "Passed: 1" in log_text
-    assert "bad" in log_text
-    assert "boom" in log_text
+    assert "Total Tests: 2" not in caplog.text
+    assert capsys.readouterr().out == ""
 
 
 def test_run_tests_uses_json_runner_jsonc_extension(tmp_path, monkeypatch):
@@ -322,6 +321,44 @@ def test_run_tests_output_html(tmp_path, monkeypatch, capsys):
     assert captured.out.startswith("<!DOCTYPE html>")
     assert "<title>SymTest Report</title>" in captured.out
     assert "Pass rate" in captured.out
+
+
+def test_run_tests_output_text_goes_to_stdout(tmp_path, monkeypatch, capsys):
+    """--output-format text 把文本报告打印到 stdout（与 json/html 同为报告通道，
+    可重定向落盘），不再经 logging 混入 stderr 日志通道。"""
+    config = tmp_path / "cases.json"
+    config.write_text('{"test_cases": []}', encoding="utf-8")
+
+    class PassingRunner(DummyRunner):
+        def run_tests(self):
+            return True
+
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
+
+    success = cli.run_tests(make_args(config, output_format="text"))
+
+    assert success
+    captured = capsys.readouterr()
+    assert "Test Results Summary" in captured.out
+    assert "Passed: 1" in captured.out
+
+
+def test_run_tests_default_none_prints_no_report(tmp_path, monkeypatch, capsys):
+    """默认 --output-format none：控制台只走日志通道（stderr），stdout 保持干净。"""
+    config = tmp_path / "cases.json"
+    config.write_text('{"test_cases": []}', encoding="utf-8")
+
+    class PassingRunner(DummyRunner):
+        def run_tests(self):
+            return True
+
+    monkeypatch.setattr("symtest.commands.run.JSONRunner", PassingRunner)
+
+    success = cli.run_tests(make_args(config))
+
+    assert success
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 # =========================================================================
