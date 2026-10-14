@@ -21,7 +21,7 @@ import copy
 from typing import Any, Dict, List
 
 # v1 平铺字段 → v2 去向
-EXECUTION_FIELDS = ("command", "args", "timeout", "retry_count", "env", "steps")
+EXECUTION_FIELDS = ("command", "args", "timeout", "retry_count", "env", "outputs", "steps")
 SCHEDULING_FIELDS = ("depends_on", "resources")
 
 # v2 输出中 metadata 的期望排列顺序（仅影响美观，不影响语义）

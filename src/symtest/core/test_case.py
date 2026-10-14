@@ -36,6 +36,7 @@ class ExecutionSpec:
     timeout: Optional[float] = None
     retry_count: int = 0
     env: Dict[str, str] = field(default_factory=dict)
+    outputs: List[str] = field(default_factory=list)
     steps: Optional[List["TestStep"]] = None
 
 
@@ -71,12 +72,14 @@ class TestStep:
         expected: Optional[Dict[str, Any]] = None,
         timeout: Optional[float] = None,
         retry_count: int = 0,
+        outputs: Optional[List[str]] = None,
     ) -> "TestStep":
         """DSL 平铺字段 → 分层 TestStep（parser / wire dict 重建入口）。"""
         return cls(
             execution=ExecutionSpec(
                 command=command, args=args,
                 timeout=timeout, retry_count=retry_count,
+                outputs=outputs if outputs else [],
             ),
             expectation=ExpectationSpec(assertions=expected if expected else {}),
         )
@@ -114,6 +117,14 @@ class TestStep:
     @retry_count.setter
     def retry_count(self, value: int) -> None:
         self.execution.retry_count = value
+
+    @property
+    def outputs(self) -> List[str]:
+        return self.execution.outputs
+
+    @outputs.setter
+    def outputs(self, value: List[str]) -> None:
+        self.execution.outputs = value if value else []
 
     # ── expectation 直通访问器 ───────────────────────────────────────────
 
@@ -167,6 +178,7 @@ class TestCase:
         xfail_quiet: bool = False,
         depends_on: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
+        outputs: Optional[List[str]] = None,
     ) -> None:
         """构造 TestCase。
 
@@ -189,6 +201,7 @@ class TestCase:
             timeout=timeout,
             retry_count=retry_count,
             env=env if env else {},
+            outputs=outputs if outputs else [],
             steps=steps,
         )
         self.expectation = ExpectationSpec(
@@ -240,6 +253,14 @@ class TestCase:
     @env.setter
     def env(self, value: Dict[str, str]) -> None:
         self.execution.env = value
+
+    @property
+    def outputs(self) -> List[str]:
+        return self.execution.outputs
+
+    @outputs.setter
+    def outputs(self, value: List[str]) -> None:
+        self.execution.outputs = value if value else []
 
     @property
     def steps(self) -> Optional[List["TestStep"]]:
@@ -294,6 +315,7 @@ class TestCase:
             expected=self.expectation.assertions,
             timeout=self.execution.timeout,
             retry_count=self.execution.retry_count,
+            outputs=self.execution.outputs,
         )]
 
     @property
@@ -317,17 +339,22 @@ class TestCase:
         }
         if self.env:
             execution["env"] = dict(self.env)
+        if self.outputs:
+            execution["outputs"] = list(self.outputs)
         if self.steps is not None:
-            execution["steps"] = [
-                {
+            serialized_steps = []
+            for s in self.steps:
+                step_dict = {
                     "command": s.command,
                     "args": s.args,
                     "expected": s.expected,
                     "timeout": s.timeout,
                     "retry_count": s.retry_count,
                 }
-                for s in self.steps
-            ]
+                if s.outputs:
+                    step_dict["outputs"] = list(s.outputs)
+                serialized_steps.append(step_dict)
+            execution["steps"] = serialized_steps
         else:
             execution["command"] = self.command
             execution["args"] = self.args

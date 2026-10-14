@@ -16,6 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..execution.result import ExecutionResult
+from ..execution.executor import clean_outputs
 from ..test_case import ExecutionSpec
 from ..validation.validator import validate_result
 from ..validation.assertions import ValidationError  # noqa: F401  (legacy except 兼容)
@@ -32,6 +33,39 @@ logger = logging.getLogger("symtest.core.orchestration.sequence")
 def _step_attr(step: Any, key: str, default: Any = None) -> Any:
     """Get attribute from a ``TestStep``（dict 支持已在 Phase 3 移除）。"""
     return getattr(step, key, default)
+
+
+def _cleanup_failed_result(
+    case_name: str,
+    steps: List[Any],
+    message: str,
+) -> Dict[str, Any]:
+    """Case-level outputs cleanup failed → immediate failed result.
+
+    结构与 :func:`execute_sequence` 正常返回字典同形（原则 5：下游
+    Reporter 只消费 result）。
+    """
+    command_summary = " -> ".join(
+        f"{_step_attr(s, 'command')} {' '.join(_step_attr(s, 'args'))}".strip()
+        for s in steps
+    )
+    return {
+        "name": case_name,
+        "status": "failed",
+        "message": message,
+        "command": command_summary,
+        "output": "",
+        "return_code": None,
+        "duration": 0.0,
+        "step_results": [],
+        "failed_step": 0,
+        "failure_kind": "execution_error",
+        "compare_failures": [],
+        "attempts": 1,
+        "flaky": False,
+        "assertion_results": [],
+        "next_action_hint": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +85,7 @@ def execute_sequence(
     error_analysis: bool = False,
     resume: bool = False,
     env: Optional[Dict[str, str]] = None,
+    case_outputs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -182,6 +217,27 @@ def execute_sequence(
             prefix,
         )
 
+    # ── Case-level outputs cleanup ──
+    # Declared case artifacts are deleted once, before the first executed
+    # step — only on full runs.  A resumed run (start_step > 0) must NOT
+    # clean them: they may be products of skipped steps that later steps
+    # consume（resume 纯信任模型）.
+    if case_outputs:
+        if resume and start_step > 0:
+            logger.info(
+                "  %sResume: skipping case-level outputs cleanup "
+                "(steps resumed).",
+                prefix,
+            )
+        else:
+            clean_err = clean_outputs(case_outputs, workspace)
+            if clean_err:
+                logger.error(
+                    "  %sCase-level outputs cleanup failed: %s",
+                    prefix, clean_err,
+                )
+                return _cleanup_failed_result(case_name, steps, clean_err)
+
     for i, step in enumerate(steps):
         if i < start_step:
             continue  # already resumed
@@ -195,6 +251,7 @@ def execute_sequence(
             timeout=_step_attr(step, "timeout"),
             retry_count=_step_attr(step, "retry_count", 0),
             env=env or {},
+            outputs=_step_attr(step, "outputs") or [],
         )
         step_expected = _step_attr(step, "expected") or {}
 

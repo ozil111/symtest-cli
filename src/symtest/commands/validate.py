@@ -69,7 +69,7 @@ def register_parser(subparsers):
         'validate', help='Validate test configuration without running tests'
     )
     validate_parser.add_argument(
-        'config_file', help='Path to the test configuration file (JSON or YAML)'
+        'config_file', help='Path to the test configuration file (JSON/JSONC or YAML)'
     )
     validate_parser.add_argument(
         '--workspace', '-w', help='Working directory'

@@ -27,6 +27,7 @@ def _spec_from_v2(case_data: Dict[str, Any]) -> ExecutionSpec:
                 expected=s.get("expected") or {},
                 timeout=s.get("timeout"),
                 retry_count=s.get("retry_count", 0),
+                outputs=s.get("outputs") or [],
             )
             for s in execution["steps"]
         ]
@@ -35,6 +36,7 @@ def _spec_from_v2(case_data: Dict[str, Any]) -> ExecutionSpec:
             steps=steps,
             retry_count=execution.get("retry_count", 0),
             env=execution.get("env") or {},
+            outputs=execution.get("outputs") or [],
         )
     return ExecutionSpec(
         name=case_data.get("name", ""),
@@ -43,6 +45,7 @@ def _spec_from_v2(case_data: Dict[str, Any]) -> ExecutionSpec:
         timeout=execution.get("timeout"),
         retry_count=execution.get("retry_count", 0),
         env=execution.get("env") or {},
+        outputs=execution.get("outputs") or [],
     )
 
 
@@ -84,6 +87,7 @@ def run_test_in_process(
             error_analysis=error_analysis,
             resume=resume,
             env=spec.env,
+            case_outputs=spec.outputs,
         )
 
     # Single command mode

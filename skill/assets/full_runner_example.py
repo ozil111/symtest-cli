@@ -7,12 +7,12 @@
 
 核心能力：
   - 支持 JSON 和 YAML 配置文件（自动按扩展名识别）
-  - 全参数 CLI 透传：--test-target / --tag / --last-failed / --resume /
+  - 全参数 CLI 透传：--test-target / --tag / --with-deps / --last-failed / --resume /
     --update-baseline / --yes / --update-history / --junit-xml / --workers
   - 可选 venv 环境 PATH 注入（解决 Windows 下 compare-files 子进程
     WinError 2 问题，详见下方注释）
   - --error-analysis 启用 CSV/HDF5 数值比较的流式误差统计
-  - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 退出码处理
+  - 文本报告落盘 + JUnit XML 报告（CI 集成）+ 可折叠 HTML 报告 + 退出码处理
 
 用法示例：
   # 全量运行
@@ -20,6 +20,9 @@
 
   # 只运行指定用例
   python run_tests.py test_cases.json --test-target alpha gamma
+
+  # 定向运行并自动纳入依赖（按 DAG 顺序先跑依赖）
+  python run_tests.py test_cases.json --test-target downstream_case --with-deps
 
   # 按标签过滤
   python run_tests.py test_cases.json --tag smoke
@@ -44,6 +47,9 @@
 
   # 输出 JUnit XML 供 Jenkins/GitLab CI 解析
   python run_tests.py test_cases.json --junit-xml report.xml
+
+  # 额外落盘一份可折叠 HTML 报告（浏览器打开，用例默认收起、可展开看详情）
+  python run_tests.py test_cases.json --html-report report.html
 """
 
 import argparse
@@ -57,6 +63,7 @@ from symtest.runners import (
     ParallelYAMLRunner,
 )
 from symtest.utils.report_generator import ReportGenerator
+from symtest.utils.html_report import generate_html_report
 from symtest import write_junit_xml, setup_console_logging
 
 
@@ -103,14 +110,14 @@ def _auto_create_runner(config_file, workspace, max_workers, execution_mode,
     )
     common_kwargs.update(extra_kwargs)
 
-    if ext == ".json":
+    if ext in (".json", ".jsonc"):
         return ParallelJSONRunner(**common_kwargs)
     elif ext in (".yaml", ".yml"):
         return ParallelYAMLRunner(**common_kwargs)
     else:
         raise ValueError(
             f"Unsupported config file format '{ext}'. "
-            f"Expected .json, .yaml, or .yml."
+            f"Expected .json, .jsonc, .yaml, or .yml."
         )
 
 
@@ -129,12 +136,14 @@ def main():
 示例:
   python run_tests.py test_cases.json
   python run_tests.py test_cases.json --test-target alpha gamma
+  python run_tests.py test_cases.json --test-target downstream_case --with-deps
   python run_tests.py test_cases.json --tag smoke
   python run_tests.py test_cases.json --last-failed
   python run_tests.py test_cases.json --resume -t long_pipeline
   python run_tests.py test_cases.json --update-baseline
   python run_tests.py test_cases.json --update-history
   python run_tests.py test_cases.json --junit-xml report.xml --workers 4
+  python run_tests.py test_cases.json --html-report report.html
         """,
     )
 
@@ -157,6 +166,12 @@ def main():
         default=None,
         dest="test_tag",
         help="按标签过滤测试案例，支持多个（OR 关系），例如: --tag smoke --tag regression",
+    )
+    parser.add_argument(
+        "--with-deps",
+        action="store_true",
+        default=False,
+        help="定向运行时自动纳入被选用例的 depends_on 依赖（传递闭包），按 DAG 顺序先跑依赖",
     )
 
     # ---- 运行模式 ----
@@ -212,6 +227,12 @@ def main():
         default=None,
         metavar="PATH",
         help="JUnit XML 报告输出路径（供 Jenkins/GitLab CI 解析）",
+    )
+    parser.add_argument(
+        "--html-report",
+        default=None,
+        metavar="PATH",
+        help="可折叠 HTML 报告输出路径（自包含单文件，浏览器打开）",
     )
     parser.add_argument(
         "--report",
@@ -318,6 +339,7 @@ def main():
         execution_mode=args.execution_mode,
         test_case_filter=args.test_target,
         test_case_tag_filter=args.test_tag,
+        with_deps=args.with_deps,
         update_baseline=args.update_baseline,
         update_history=args.update_history,
         last_failed=args.last_failed,
@@ -350,6 +372,17 @@ def main():
             junit_path,
             suite_name=os.path.splitext(os.path.basename(args.config))[0],
         )
+
+    # ---- 可折叠 HTML 报告（浏览器打开，用例默认收起） ----
+    if args.html_report:
+        html_path = (
+            os.path.join(workspace, args.html_report)
+            if not os.path.isabs(args.html_report)
+            else args.html_report
+        )
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(generate_html_report(runner.results))
+        print(f"HTML report written to: {html_path}", file=sys.stderr)
 
     # ---- 退出码 ----
     return 0 if success else 1

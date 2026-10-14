@@ -251,7 +251,7 @@ def register_parser(subparsers):
                      '(auto-expands import references)'
     )
     find_parser.add_argument(
-        'config_file', help='Path to the test configuration file (JSON or YAML)'
+        'config_file', help='Path to the test configuration file (JSON/JSONC or YAML)'
     )
     find_parser.add_argument(
         'pattern', nargs='?', default='',

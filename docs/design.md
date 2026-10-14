@@ -48,7 +48,7 @@
 | `config/` | 配置 IO、JSON Schema 校验（draft 2020-12）、import 展开、extends 继承、变量与占位符替换 |
 | `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
 | `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
-| `utils/` | 路径解析、报告生成、JUnit XML 输出 |
+| `utils/` | 路径解析、报告生成（文本 / 结构化 HTML）、JUnit XML 输出、项目级默认配置（`.symtest/symtest.json`） |
 
 ### 2.1 入口点
 
@@ -65,7 +65,7 @@
 配置文件在加载时经过五步管线处理：
 
 ```
-raw JSON/YAML 文件
+raw JSON/JSONC/YAML 文件（.jsonc 由 config/jsonc.py 剥离注释与尾逗号）
     │
     ▼
 expand_imports()          # 递归展开 import 引用（合并 setup、注入 tags）
@@ -144,10 +144,12 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 - 依赖"满足" = `passed` 或 `xfailed`；`failed` / `xpassed` 触发 BFS 级联 skip 全部下游
 - `skipped` 不计入 `failed` 计数，报告中单独列出
 - 顺序 runner 同样按拓扑序执行，依赖失效时跳过下游
+- 名称过滤默认不展开依赖闭包：依赖未选中时依赖边失效并打 WARNING；`--with-deps` 在过滤前对 `test_case_filter` 展开 `depends_on` 传递闭包（标签过滤不展开；`--last-failed` 不隐式展开）
 
 ### 4.5 单测试执行
 
 PathResolver 解析（系统命令直通、shell builtin 平台包装、复合命令拆分解析）
+→ 声明产物清理（`execution.outputs` 声明的文件/目录在 subprocess 启动前删除；路径 resolve 后必须在 workspace 内，删除失败大声失败记为执行错误；每次 attempt 都执行，`--resume` 跳过的 step 天然不清理）
 → subprocess 隔离执行（捕获 stdout / stderr / returncode / duration）
 → 断言校验（return_code / contains / matches / compare_files）
 → 失败按 `retry_count` 重试
@@ -164,6 +166,7 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 
 | 状态 | 内容 | 更新时机 / 语义 |
 |---|---|---|
+| 项目默认配置 `symtest.json` | `run` 组运行选项 + `report` 组报告路径 | 运行启动时读取（CLI > 项目配置 > 内置默认）；只读，运行中不更新 |
 | 历史记录 | per-case `avg_duration` / `last_duration` / `run_count` | 运行后累计平均更新；先回归检测后写入 |
 | `last_run.json` | case → 上次状态 | 覆写参与执行的用例；未执行的保留旧状态 |
 | `sequence_state/<case>.json` | steps + case expected 的 SHA-256 配置哈希、已通过的 step 集 | 每步 pass 后保存；全部通过后清理 |
@@ -272,8 +275,11 @@ JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 | --update-baseline | 比较失败时自动将实际输出覆盖 baseline，适合批量更新基准 |
 | next_action_hint 结构化建议 | 失败结果附带下一步操作建议（update_baseline / update_expected / increase_timeout / investigate），便于 AI 消费 |
 | 移除 TUI，由官方 skill + `symtest find` 替代 | TUI 的两大职责均有更轻替代：定义/修改用例由 AI 编程助手按官方 skill 完成，跨文件搜索由复用同一解析管线的 `find` 命令覆盖；移除后砍掉 textual 重依赖与交互界面维护负担 |
+| `execution.outputs` 产物清理挂在 execute_command 入口 | 声明产物、运行前删除，消除"陈旧产物假通过"。清理是执行环境准备（与 env 注入同类），归属 execution 层；`execute_command` 是所有执行路径的唯一汇聚点，挂在该处使 retry 重清与 resume 不删（被跳过 step 不进入该函数）两个语义自动成立，编排层零改动。失败大声报 `execution_error`，防止静默保留假通过通道 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
+| 项目级默认配置（`.symtest/symtest.json`） | 常用运行参数（并行、误差分析、依赖展开、报告路径）项目内固化，`symtest run` 免重复输入。三级优先级（CLI > 项目配置 > 内置默认）靠 tri-state 布尔项实现（argparse 默认 `None`，`--no-xxx` 显式关闭）；未知键/坏 JSON 宽容处理只警告——配置是纯加分项，不阻断运行。替代各仓库自建入口脚本保存默认参数的用法 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
+| 控制台 log/report 通道分离 | 控制台（stderr logging）只承载进度与摘要日志；报告仅在显式 `--output-format text/json/html` 时走 stdout（可重定向落盘），细节经 `--text-report`/`--html-report`/`--junit-xml` 写文件。修复原 `print_report` 把整份文本报告经 `logger.info` 重放到终端的通道混流——`--error-analysis-all` 下逐用例 error_stats 会淹没 pass/failed 摘要 |
 
 ---
 
@@ -293,7 +299,7 @@ TestCase（specification，永不执行）
            Validator.validate(ExpectationSpec, ExecutionResult)
                              ▼
                     ValidationResult ──▶ TestResult ──▶ Reporter
-                                          console / JSON / JUnit / AI diagnosis
+                                          stdout(text/json/html) / JUnit / AI diagnosis
 ```
 
 一次 attempt = `Executor.execute → Validator.validate`；verdict 由编排层聚合为 TestResult。
@@ -347,8 +353,7 @@ flaky 判定也在编排层）；但不自己实现 subprocess 管理、float �
 #### 原则 5 — Reporting 只能消费 Result
 
 ```
-TestResult ──▶ Reporter ──┬── console
-                          ├── JSON
+TestResult ──▶ Reporter ──┬── stdout（按需 text/json/html）
                           ├── JUnit
                           └── AI diagnosis
 ```

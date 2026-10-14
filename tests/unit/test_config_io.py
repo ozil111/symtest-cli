@@ -76,6 +76,22 @@ class TestSaveConfig:
             loaded = load_config(path, expand=False)
             assert loaded["test_cases"][0]["name"] == "tc1"
 
+    def test_save_and_load_jsonc(self):
+        """Round-trip save/load for .jsonc (written as plain JSON)."""
+        config = {
+            "test_cases": [
+                {"name": "tc1", "command": "echo", "args": ["hi"],
+                 "expected": {"return_code": 0}},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test_config.jsonc"
+            save_config(config, path)
+            assert path.exists()
+
+            loaded = load_config(path, expand=False)
+            assert loaded["test_cases"][0]["name"] == "tc1"
+
     def test_save_unsupported_extension(self):
         """Unsupported extension raises ValueError."""
         with tempfile.TemporaryDirectory() as tmpdir:

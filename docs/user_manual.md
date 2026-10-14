@@ -5,11 +5,13 @@
 - [安装](#安装)
 - [测试用例定义](#测试用例定义)
 - [Case 级环境变量](#case-级环境变量env)
+- [结果产物声明（outputs）](#结果产物声明outputs)
 - [配置拆分机制](#配置拆分机制)
 - [配置继承](#配置继承)
 - [配置校验](#配置校验)
 - [跨文件搜索用例](#跨文件搜索用例find)
 - [运行测试](#运行测试)
+- [项目默认配置](#项目默认配置symtestsymtestjson)
 - [项目入口脚本](#项目入口脚本)
 - [占位符（变量替换）](#占位符变量替换)
 - [标签过滤](#标签过滤)
@@ -19,6 +21,7 @@
 - [资源感知调度](#资源感知调度)
 - [历史记录与回归检测](#历史记录与回归检测)
 - [JUnit XML 报告](#junit-xml-报告)
+- [HTML 报告](#html-报告)
 - [日志配置](#日志配置)
 - [文件比较](#文件比较)
 - [扩展开发](#扩展开发)
@@ -253,6 +256,18 @@ test_cases:
 - 与 `steps` 模式互不影响——`depends_on` 是用例级概念，`steps` 是用例内步骤级概念
 - 无依赖时走 fast path，调度开销为零
 
+**与用例过滤的交互（`--with-deps`）**：
+
+按名称（`-t` / `--test-case`）定向运行时，默认只执行指定用例本身。被选用例的依赖若不在选中集合内，该依赖会被**忽略**（下游用例直接运行），框架会输出 WARNING 提示。使用 `--with-deps` 可将被选用例的依赖（含传递依赖）一并纳入运行，并按 DAG 拓扑顺序调度：
+
+```bash
+# 自动先运行 C 的依赖 B、B 的依赖 A，再运行 C
+symtest run test_cases.json -t C --with-deps
+```
+
+- 依赖展开仅对名称过滤生效；标签过滤不做展开
+- `--last-failed` 默认不展开依赖（保持迭代重跑轻量）；如需连同依赖重跑，显式叠加 `--with-deps`
+
 ### 字段说明
 
 | 字段 | 必填 | 说明 |
@@ -270,6 +285,7 @@ test_cases:
 | `xfail_quiet` | 否 | 设为 `true` 时，xfailed 状态下报告中不输出 Command Output（stdout/stderr 大段输出），仅保留命令、返回码、失败原因等元信息 |
 | `scheduling.depends_on` | 否 | 依赖的测试用例名称列表（如 `["A", "B"]`）。当前用例必须等待所有依赖用例通过后才执行。依赖失败时自动 skip 当前用例及下游。支持并行和顺序两种 runner |
 | `execution.env` | 否 | case 级环境变量字典（如 `{"MYAPP_SCALE": "1.0"}`），定义在 `execution` 内，仅在执行该 case（序列模式为所有 step）时注入子进程，见 [Case 级环境变量](#case-级环境变量env) |
+| `execution.outputs` | 否 | 声明的结果产物路径列表（如 `["result.h5", "logs/solver.log"]`），运行前自动删除（每次重试 attempt 前也会重新清理），防止上一轮遗留的陈旧产物导致假通过，见 [结果产物声明（outputs）](#结果产物声明outputs) |
 | `expected.return_code` | 否 | 期望返回码 |
 | `expected.output_contains` | 否 | 输出需包含的字符串列表 |
 | `expected.output_matches` | 否 | 输出需匹配的正则表达式（单个字符串） |
@@ -380,6 +396,55 @@ test_cases:
 }
 ```
 
+## 结果产物声明（outputs）
+
+回归测试的一个经典陷阱：被测程序本轮崩溃或输出路径改变，根本没有生成结果文件，但上一轮运行遗留的旧文件还在 workspace 里——`compare_files` 拿旧文件去比 baseline，可能**假通过**。通过 `execution.outputs` 声明结果产物，框架会在执行前（以及每次重试 attempt 前）把这些文件/目录删掉，保证比较的一定是本轮产物。
+
+### JSON
+
+```json
+{
+    "name": "求解器回归",
+    "execution": {
+        "command": "{solver}",
+        "args": ["-i", "input.dat"],
+        "outputs": ["result.h5", "summary.csv", "logs/solver.log"]
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### 序列模式（case 级 + step 级）
+
+```json
+{
+    "name": "多步骤流程",
+    "execution": {
+        "outputs": ["final.h5"],
+        "steps": [
+            { "command": "python", "args": ["pre.py"], "outputs": ["mesh.dat"], "expected": { "return_code": 0 } },
+            { "command": "{solver}", "args": ["mesh.dat"], "expected": { "return_code": 0 } }
+        ]
+    }
+}
+```
+
+### 语义
+
+| 决策点 | 行为 |
+|---|---|
+| 清理时机 | 每次 attempt 的命令启动之前；`retry_count` 重试时同样重新清理 |
+| 文件不存在 | 静默跳过，不构成错误 |
+| 删除失败（文件被占用锁定等） | **大声失败**：用例判为 `execution_error`，不执行命令（避免静默保留假通过通道） |
+| 路径解析 | 相对路径按 workspace 解析；resolve 后必须位于 workspace 内，绝对路径或 `..` 逃逸在解析/校验阶段即报错 |
+| 目录 | 支持声明整个输出目录（运行前整体删除） |
+| 占位符 / 继承 | 自动支持（`{var}` 替换；extends 深合并，list 字段整体替换，与 `args` 一致） |
+| 序列模式 step 级 | 在该 step 实际执行前清理 |
+| 序列模式 case 级 | 仅在从头执行（非 resume 续跑）时、第一个执行的 step 之前清理一次 |
+| 并行冲突 | 多个 case 声明同一产物路径会互相删除，`symtest validate` 会给出 warning；`depends_on` 连接的上下游视为合法 |
+
+> **与 `--resume` 的交互**：resume 跳过的已通过 step 及其产物是被信任的对象，不会清理——case 级 `outputs` 清理仅在从头执行时进行，被跳过 step 的 step 级 `outputs` 也不会删除。step 的 `outputs` 变化会使 resume 的配置哈希失效，触发全量重跑。
+
 ## 配置拆分机制
 
 当测试项目规模增长、用例数量达到数十甚至数百条时，单个配置文件可能变得难以维护。配置拆分机制允许将大文件按模块/功能拆分为多个子文件，通过 `import` 引用组装，运行时自动合并加载。
@@ -469,7 +534,11 @@ test_cases:
 
 ### 跨格式支持
 
-主配置为 JSON 时可以 import YAML 子文件，反之亦然。框架根据子文件扩展名（`.json` / `.yaml` / `.yml`）自动选择解析器。
+主配置为 JSON 时可以 import YAML 子文件，反之亦然。框架根据子文件扩展名（`.json` / `.jsonc` / `.yaml` / `.yml`）自动选择解析器。
+
+### JSONC 支持
+
+`.jsonc` 配置文件支持 VS Code JSONC 语法：`//` 与 `/* ... */` 注释、对象和数组的尾逗号。字符串字面量内的 `//`、URL、转义引号不会被误删。`.jsonc` 既可以作为主配置也可以作为 import 子文件（Runner 按扩展名自动选择 JSONC 解析器）。注意 `symtest migrate` 会把 `.jsonc` 重写为标准 JSON（注释无法在读写转换中保留）。
 
 ### Setup 合并规则
 
@@ -708,6 +777,10 @@ symtest find main_config.json "login" --output-format json
 # 运行 JSON 测试
 symtest run test_cases.json
 
+# 省略配置文件名：使用项目默认配置（.symtest/symtest.json）中的文件，
+# 未配置则为 test_cases.json
+symtest run
+
 # 运行 YAML 测试
 symtest run test_cases.yaml
 
@@ -739,8 +812,20 @@ symtest run test_cases.json --verbose
 # 调试模式
 symtest run test_cases.json --debug
 
-# 输出格式
-symtest run test_cases.json --output-format json|html|text
+# 输出格式：报告通道控制（默认 none，控制台只输出日志）
+#   none：不输出报告（日常推荐；pass/failed 总数等摘要见日志输出）
+#   text/json/html：将报告打印到 stdout，可重定向落盘
+#     例如 symtest run test_cases.json --output-format text > report.txt
+symtest run test_cases.json --output-format none|text|json|html
+
+# 额外落盘一份可折叠 HTML 报告（控制台输出不受影响）
+symtest run test_cases.json --html-report report.html
+
+# 额外落盘一份文本报告（控制台输出不受影响）
+symtest run test_cases.json --text-report test_report.txt
+
+# 本次运行忽略项目默认配置（.symtest/symtest.json）
+symtest run test_cases.json --no-config
 
 # 启用历史记录（智能调度 + 回归检测）
 symtest run test_cases.json --history-dir ./hist
@@ -806,6 +891,8 @@ symtest run config.json
 
 **信任模型**：`--resume` **不校验工作区产物**（输入文件、前置步骤生成的文件等）。使用 `--resume` 即表示用户确认输入文件未被修改。如果怀疑工作区被污染，应不带 `--resume` 全量重跑。
 
+**与 `outputs` 的交互**：声明了 `execution.outputs` 的用例在 resume 续跑时不会清理产物（case 级清理仅在从头执行时进行，被跳过 step 的 step 级 `outputs` 也不删除）；任何 step 的 `outputs` 变化会使配置哈希失效，触发全量重跑。
+
 ```bash
 # 首次全量运行，long_pipeline 的 step 4 失败（总耗时 72s）
 symtest run config.json
@@ -821,7 +908,7 @@ symtest run config.json
 
 **限制**：
 - 仅对序列步骤用例（`steps` 模式）生效，单命令模式忽略
-- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count 或 case 级 expected 变化而失效
+- 状态文件的配置哈希会因任何 step 的 command/args/expected/timeout/retry_count/outputs 或 case 级 expected 变化而失效
 - 缓存输出主要用于重建 `combined_output`，报告中的 `output` 字段仍只包含失败步骤的输出
 
 ### 自动更新基线文件（--update-baseline）
@@ -960,6 +1047,58 @@ for detail in runner.results["details"]:
 | `compare_failures` | list | 每个失败的文件比较的结构化信息（含 `diff_summary`、`differences`、`error_stats`、`actual`/`baseline` 路径、容差参数） |
 | `baseline_updated` | list | `--update-baseline` 覆盖的基线文件路径列表 |
 
+## 项目默认配置（.symtest/symtest.json）
+
+如果每次运行都重复同一组参数（如 `--parallel --workers 4 --error-analysis-all --html-report test_report.html`），可以在项目 workspace 放一个 `.symtest/symtest.json`，为 `symtest run` 保存项目级默认值：
+
+```json
+{
+  "run": {
+    "config_file": "test_cases.json",
+    "parallel": true,
+    "workers": 4,
+    "execution_mode": "thread",
+    "history_dir": ".symtest",
+    "regression_threshold": 1.5,
+    "with_deps": true,
+    "error_analysis": true,
+    "error_analysis_all": true
+  },
+  "report": {
+    "text": "test_report.txt",
+    "html": "test_report.html",
+    "junit": null
+  }
+}
+```
+
+### 键说明
+
+`run` 组的键与 CLI 选项一一对应（`config_file`、`parallel`、`workers`、`execution_mode`、`history_dir`、`regression_threshold`、`with_deps`、`error_analysis`、`error_analysis_all`）；`report` 组的 `text` / `html` / `junit` 分别对应 `--text-report`、`--html-report`、`--junit-xml` 的默认输出路径。过滤类选项（`-t`、`--tag`、`--last-failed` 等）与一次性动作（`--update-baseline` 等）不进配置，保持每次显式传入。
+
+### 优先级
+
+**命令行显式值 > 项目配置 > 程序内置默认**。
+
+- 省略配置文件名时：使用项目配置的 `run.config_file`，未配置则为 `test_cases.json`
+- 布尔项支持显式关闭：`--no-parallel`、`--no-with-deps`、`--no-error-analysis-all` 等（不传 = 交给配置，传了以命令行为准）
+- `--no-config`：本次运行完全忽略项目配置，只用内置默认
+
+### 路径解析
+
+项目配置从 `--workspace` 指定的目录读取（未指定则为当前目录）；`report` 中的报告相对路径也基于该目录解析（绝对路径原样使用）。
+
+### 容错语义
+
+未知 section/键、类型错误、JSON 损坏或文件缺失只打 warning，不阻断运行——未知键按忽略处理，便于发现拼写错误；配置文件是纯加分项，坏掉不会让测试跑不起来。
+
+配好之后，日常命令简化为：
+
+```bash
+symtest run                        # 全量运行
+symtest run -t case_1 --last-failed # 定向重跑
+```
+
 ## 项目入口脚本
 
 如果你的测试项目结构复杂（需要预设环境变量、定制报告路径等），直接使用 `symtest run` 命令行可能不够灵活。此时可以创建一个项目入口脚本（如 `test.py` 或 `run_tests.py`），在 Python 代码中调用框架 API。
@@ -977,8 +1116,8 @@ for detail in runner.results["details"]:
 | 场景 | 推荐方式 |
 |---|---|
 | 需要预设环境变量（如注入 venv PATH） | 入口脚本 |
-| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本 |
-| 团队共享固定运行参数（workers、history-dir 等） | 入口脚本 |
+| 需要同时输出多种格式报告（文本 + JUnit XML） | 入口脚本，或项目默认配置（见上文 `report` 组） |
+| 团队共享固定运行参数（workers、history-dir 等） | 项目默认配置 `.symtest/symtest.json`（可被命令行覆盖），或入口脚本 |
 | 需要根据配置文件扩展名自动选择 JSON/YAML runner | 入口脚本 |
 | Windows 下 console-script 命令（如 `compare-files`）找不到的问题 | 入口脚本（注入 venv Scripts 到 PATH） |
 
@@ -988,7 +1127,7 @@ for detail in runner.results["details"]:
 
 | 参数 | 说明 |
 |---|---|
-| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .yaml） |
+| `config`（位置参数） | 测试配置文件路径（自动识别 .json / .jsonc / .yaml） |
 | `--test-target` / `-t` | 按名称过滤用例 |
 | `--tag` | 按标签过滤用例（OR 关系） |
 | `--last-failed` | 只运行上次失败的用例 |
@@ -1347,7 +1486,7 @@ test_cases:
             return_code: 0
 ```
 
-每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count` 字段。
+每个 step 支持 `command`、`args`、`expected`、`timeout`、`retry_count`、`outputs` 字段。
 
 **失败输出瘦身**：当序列中某一步失败时，结果字典的 `output` 字段**仅包含失败步骤的输出**——不会拼接前面成功步骤的大量输出。这大幅减少了失败报告的体积，适合 AI 快速诊断失败的步骤。
 
@@ -1535,7 +1674,7 @@ symtest run config.json --history-dir ./hist --update-history
 symtest run test_cases.json --junit-xml report.xml
 ```
 
-`--junit-xml` 是补充输出，与 `--output-format`（text/json/html）并存，不影响控制台报告。
+`--junit-xml` 是补充输出，与 `--output-format` 并存。
 
 ### Python API
 
@@ -1548,9 +1687,47 @@ write_junit_xml(runner.results, "report.xml", suite_name="my_suite")
 
 状态映射：`passed` 记为通过；`failed` 记为 failure（断言失败）或 error（执行错误）；`timeout` 记为 error；`xfailed` 记为 **skipped**（预期失败，不影响构建）；`xpassed` 记为 **failure**（意外通过，视为构建失败）。每个 testcase 元素附带命令输出与失败原因。
 
+## HTML 报告
+
+symtest 可生成**自包含的可折叠 HTML 报告**：单文件、内联样式与脚本、零外部依赖，离线双击即可打开。信息按三层密度组织，默认视图一眼扫完，细节按需展开：
+
+| 层 | 内容 | 默认状态 |
+|---|---|---|
+| 顶部摘要 | Total / Passed / Failed / XFailed / XPassed / 通过率进度条 / 总时长 | 永远可见 |
+| 失败导航 | 失败用例列表，点击锚点直达 | 仅存在失败时出现 |
+| 工具栏 | 全部 / 仅失败 / 仅通过过滤，全部展开 / 收起按钮 | — |
+| 用例一览 | 每行 = 状态 + 名称 + **description** + tags + 耗时 | 全部收起 |
+| 用例详情 | command、expected 验收标准、step_results、误差统计（带文件对标签）、失败详情 | 点击展开 |
+| 命令输出 | Command Output / Comparator Output / Error Trace | 再嵌套折叠 |
+
+### CLI 用法
+
+```bash
+# 直接输出 HTML 到 stdout（可重定向落盘）
+symtest run test_cases.json --output-format html > report.html
+
+# 补充落盘输出：控制台报告不受影响，与 --junit-xml 可并存
+symtest run test_cases.json --html-report report.html
+symtest run test_cases.json --html-report report.html --junit-xml report.xml
+```
+
+相对路径按 `--workspace` 指定目录解析（未指定则为当前目录）。
+
+### 数据解释规则
+
+与文本报告严格同源：
+
+- `description` / `tags` / `expected` 展示来自 results detail；
+- `channels` 只从结构化 `channels` 列表渲染（数据泳道比较器），`error_stats` 为扁平 fallback；
+- 通过用例的误差统计仅在 `--error-analysis-all` 启用时展示，每个统计块标注所属文件对
+  （`baseline: X vs actual: Y`），多个并列的 `compare_files` 断言可区分；
+- 所有用户数据均经 HTML 转义，长输出自动折叠并限制滚动高度。
+
 ## 日志配置
 
 框架所有诊断与状态信息都通过 Python 标准 `logging` 模块输出，统一挂在 `symtest` 命名空间下。日志默认写入 **stderr**，因此 `stdout` 始终保持干净，可安全配合 `--output-format json` 做机器可读输出。
+
+控制台遵循 **log/report 通道分离**：stderr 只承载日志（运行中每个用例一行的进度、最终 pass/failed 摘要与警告），报告**不会**自动重放到终端。需要查看完整细节时，通过 `--output-format text/json/html` 将报告打印到 stdout（可重定向落盘），或经 `--text-report` / `--html-report` / `--junit-xml` 写入文件。
 
 ### 命令行控制日志级别
 
@@ -1710,7 +1887,7 @@ CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内�
 symtest run config.json --error-analysis-all
 ```
 
-启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline vs actual):` 的形式列出上述统计量（与失败用例的 `error_stats` 字段一致）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`，便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
+启用后，每个**通过**的用例会在 Detailed Results 区块中以 `error_stats (baseline: X vs actual: Y):` 的形式列出上述统计量（标注所属文件对，多个并列的 compare_files 断言可区分）。通过用例的统计也同时写入 `--output json` 的 `assertion_results[].error_stats`（各条目附带 `actual` / `baseline` 路径），便于程序化消费。仅当 `--error-analysis-all` 启用时才会对通过用例产生额外输出，未启用时行为不变。
 
 **CLI 用法**：
 

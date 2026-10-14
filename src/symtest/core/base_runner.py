@@ -17,6 +17,7 @@ class BaseRunner(ABC):
     def __init__(self, config_file: str, workspace: Optional[str] = None,
                  test_case_filter: Optional[List[str]] = None,
                  test_case_tag_filter: Optional[List[str]] = None,
+                 with_deps: bool = False,
                  history_dir: Optional[str] = None,
                  regression_threshold: float = 1.5,
                  update_baseline: bool = False,
@@ -38,6 +39,7 @@ class BaseRunner(ABC):
         self.test_cases: List[TestCase] = []
         self.test_case_filter: Optional[List[str]] = test_case_filter
         self.test_case_tag_filter: Optional[List[str]] = test_case_tag_filter
+        self.with_deps = with_deps
         if history_dir:
             self.history_dir = str((self.workspace / history_dir).resolve())
         else:
@@ -112,6 +114,29 @@ class BaseRunner(ABC):
             else:
                 logger.info("--last-failed: no previously failed cases found; running all.")
 
+        # ── --with-deps：按名称过滤时展开 depends_on 传递闭包 ──
+        if self.with_deps and self.test_case_filter:
+            name_to_case = {tc.name: tc for tc in self.test_cases}
+            selected = set(self.test_case_filter)
+            expanded = list(self.test_case_filter)
+            queue = deque(self.test_case_filter)
+            while queue:
+                case = name_to_case.get(queue.popleft())
+                if case is None:
+                    continue
+                for dep in case.depends_on:
+                    if dep not in selected:
+                        selected.add(dep)
+                        expanded.append(dep)
+                        queue.append(dep)
+            added = expanded[len(self.test_case_filter):]
+            if added:
+                logger.info(
+                    "--with-deps: auto-included %d dependency case(s): %s",
+                    len(added), ", ".join(added),
+                )
+            self.test_case_filter = expanded
+
         if self.test_case_filter or self.test_case_tag_filter:
             original_count = len(self.test_cases)
             self.test_cases = [
@@ -127,6 +152,21 @@ class BaseRunner(ABC):
             if not self.test_cases:
                 logger.warning("No matching test cases found for: names=%s, tags=%s",
                                self.test_case_filter, self.test_case_tag_filter)
+                return
+
+            # ── 依赖完整性检查：被选用例的 depends_on 指向未选用例时警告 ──
+            selected_names = {tc.name for tc in self.test_cases}
+            for tc in self.test_cases:
+                dropped = [d for d in tc.depends_on if d not in selected_names]
+                if dropped:
+                    logger.warning(
+                        "Test case '%s' depends on %s, which %s not in this run; "
+                        "the dependency will be IGNORED. Use --with-deps to "
+                        "auto-include dependencies.",
+                        tc.name,
+                        ", ".join("'%s'" % d for d in dropped),
+                        "is" if len(dropped) == 1 else "are",
+                    )
 
     def run_tests(self) -> bool:
         """Run all test cases and return whether all tests passed"""
@@ -366,6 +406,7 @@ class BaseRunner(ABC):
             case_expected=case.expected if case.expected else None,
             resume=self.resume,
             env=case.env,
+            case_outputs=case.outputs,
         )
 
     @abstractmethod
