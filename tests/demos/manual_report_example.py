@@ -20,7 +20,7 @@ def main():
 
     report_path = project_root / "tests" / "test_report.txt"
     report_generator = ReportGenerator(runner.results, str(report_path))
-    report_generator.print_report()
+    print(report_generator.generate_report())
     report_generator.save_report()
 
     print(f"\n报告已保存到: {report_path}")

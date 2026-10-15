@@ -62,11 +62,15 @@ legacy configs with `symtest migrate`.
 4. Add metadata: `tags` for filtering, `description` for context. Put
    `timeout` for long-running commands and `retry_count` for flaky tests
    inside `execution`; declare `depends_on`/`resources` in `scheduling`.
-5. Validate the configuration:
+5. Declare output artifacts with `execution.outputs` (list of paths, also
+   supported per-step in sequence mode). The framework deletes these files
+   before execution so stale artifacts from previous runs cannot cause
+   false passes. See "Declared outputs" in the Decision Guide.
+6. Validate the configuration:
    ```bash
    symtest validate test_cases.json
    ```
-6. Run:
+7. Run:
    ```bash
    symtest run test_cases.json
    ```
@@ -191,6 +195,24 @@ rendering): `references/user_manual.md` → "Custom File Comparator".
 - Define an `abstract: true` base case, then `extends` it.
 - Use `variables` for parameterization (`{placeholder}` substitution).
 
+### When to use `execution.outputs` (declared artifacts)
+
+- Declare files/directories the command produces
+  (`"outputs": ["result.h5", "logs/solver.log"]`); the framework deletes
+  them before the command starts (and before every retry attempt).
+- Use whenever a case writes output files in the workspace: it prevents
+  stale artifacts from a previous run causing false passes when the
+  solver crashes or the output path changes.
+- Paths resolve against the workspace and must stay inside it (escaping
+  paths fail loudly). Missing files are skipped silently; deletion failure
+  (e.g. file locked) fails the case with `execution_error`.
+- In sequence mode, case-level `outputs` are cleaned once before the first
+  executed step; step-level `outputs` right before that step. With
+  `--resume`, cleanup is skipped for resumed runs/step artifacts — the
+  trust model is preserved.
+- Avoid two concurrently running cases declaring the same output path
+  unless connected via `depends_on` (`symtest validate` warns).
+
 ### When to use `expected_failure` (xfail)
 - Use for a known defect that is intentionally not part of the current
   implementation scope—for example, a compatibility issue blocked on an
@@ -206,12 +228,32 @@ rendering): `references/user_manual.md` → "Custom File Comparator".
 ```bash
 symtest run test_cases.json
 symtest run test_cases.yaml
+
+# No config file argument: uses run.config_file from the project defaults
+# (.symtest/symtest.json), falling back to test_cases.json
+symtest run
 ```
+
+### Project defaults
+If a project always runs with the same options, place a
+`.symtest/symtest.json` in the workspace. The `run` group stores run
+options (`config_file`, `parallel`, `workers`, `execution_mode`,
+`history_dir`, `regression_threshold`, `with_deps`, `error_analysis`,
+`error_analysis_all`); the `report` group stores default output paths
+(`text`, `html`, `junit`). Precedence: **command line > project config >
+built-in defaults**; boolean flags support explicit opt-out via
+`--no-parallel` / `--no-with-deps` / `--no-error-analysis-all`, and
+`--no-config` ignores the file entirely for one run. Unknown keys are
+warned about and ignored; a missing or broken config never blocks a run.
+Report paths resolve against the `--workspace` directory.
 
 ### Filtering
 ```bash
 # By name (multiple allowed)
 symtest run test_cases.json -t case1 -t case2
+
+# By name + auto-include their depends_on dependencies (transitive closure)
+symtest run test_cases.json -t case1 --with-deps
 
 # By tag (OR relationship)
 symtest run test_cases.json --tag smoke --tag regression

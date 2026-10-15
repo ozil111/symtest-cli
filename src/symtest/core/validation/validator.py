@@ -118,6 +118,8 @@ def _dispatch_file_compare(
         return {
             "assertion": "compare_files",
             "passed": True,
+            "actual": actual_path,
+            "baseline": baseline_path,
             "error_stats": cf_result.get("error_stats"),
             "channels": cf_result.get("channels", []),
             "compare_failures": [],

@@ -169,7 +169,7 @@ def register_parser(subparsers):
     )
     migrate_parser.add_argument(
         'config_file',
-        help='Path to the v1 configuration file (JSON or YAML)',
+        help='Path to the v1 configuration file (JSON/JSONC or YAML)',
     )
     migrate_parser.add_argument(
         '--workspace', '-w', help='Working directory for path resolution',

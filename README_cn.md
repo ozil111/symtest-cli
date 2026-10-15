@@ -249,6 +249,10 @@ python -m pytest tests/unit tests/integration tests/e2e
 
 欢迎提交缺陷修复、比较器插件和文档改进，也欢迎分享真实项目中的测试需求与使用经验。
 
+文档维护规则见 [开发约定](AGENTS.md)。修改英文手册或官方 Python 入口示例后，
+运行 `python tools/sync_skill_assets.py` 更新 skill 中的副本。
+交付前运行 `python tools/sync_skill_assets.py --check`；CI 也会执行这项检查。
+
 ## 许可证
 
 MIT

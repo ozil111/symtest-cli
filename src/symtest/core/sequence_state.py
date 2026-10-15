@@ -68,6 +68,7 @@ def compute_config_hash(
                 "expected": field(step, "expected", {}),
                 "timeout": field(step, "timeout", None),
                 "retry_count": field(step, "retry_count", 0),
+                "outputs": field(step, "outputs", []),
             }
             for step in steps
         ],

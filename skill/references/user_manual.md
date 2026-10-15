@@ -5,11 +5,13 @@
 - [Installation](#installation)
 - [Test Case Definition](#test-case-definition)
 - [Case-Level Environment Variables](#case-level-environment-variables-env)
+- [Declared Outputs](#declared-outputs-outputs)
 - [Configuration Splitting](#configuration-splitting)
 - [Configuration Inheritance](#configuration-inheritance)
 - [Configuration Validation](#configuration-validation)
 - [Cross-File Case Search](#cross-file-case-search-find)
 - [Running Tests](#running-tests)
+- [Project Defaults](#project-defaults-symtestsymtestjson)
 - [Project Entry Script](#project-entry-script)
 - [Placeholders (Variable Substitution)](#placeholders-variable-substitution)
 - [Tag Filtering](#tag-filtering)
@@ -253,6 +255,18 @@ test_cases:
 - `depends_on` and `steps` are independent—`depends_on` is a case-level concept, `steps` is an intra-case step-level concept
 - Zero-overhead fast path when no dependencies are declared
 
+**Interaction with case filtering (`--with-deps`)**:
+
+When running by name (`-t` / `--test-case`), only the specified cases themselves run by default. If a selected case's dependency is not in the selection, that dependency is **ignored** (the downstream case runs immediately), and the framework emits a WARNING. Use `--with-deps` to automatically include the selected cases' dependencies (including transitive ones) in the run, scheduled in DAG topological order:
+
+```bash
+# Automatically runs C's dependency B, then B's dependency A, before running C
+symtest run test_cases.json -t C --with-deps
+```
+
+- Dependency expansion applies to name filtering only; tag filtering does not expand
+- `--last-failed` does not expand dependencies by default (keeps iteration re-runs lightweight); explicitly add `--with-deps` to re-run together with dependencies
+
 ### Field Descriptions
 
 | Field | Required | Description |
@@ -270,6 +284,7 @@ test_cases:
 | `xfail_quiet` | No | When `true`, suppress Command Output (stdout/stderr) for xfailed cases in the report; only command, return code, and failure reason metadata retained |
 | `scheduling.depends_on` | No | List of test case names this case depends on (e.g., `["A", "B"]`). The case will wait until all dependencies pass before executing. On dependency failure, the case and its downstream are auto-skipped. Works with both parallel and sequential runners |
 | `execution.env` | No | Case-level environment variable mapping (e.g. `{"MYAPP_SCALE": "1.0"}`), defined inside `execution`, injected into the subprocess only when this case runs (all steps in sequence mode). See [Case-Level Environment Variables](#case-level-environment-variables-env) |
+| `execution.outputs` | No | Declared output artifacts (list of paths, e.g. `["result.h5", "logs/solver.log"]`), deleted before execution (and before every retry attempt) so stale files from a previous run cannot cause false passes. See [Declared Outputs](#declared-outputs-outputs) |
 | `expected.return_code` | No | Expected return code |
 | `expected.output_contains` | No | List of strings the output must contain |
 | `expected.output_matches` | No | Regex pattern the output must match (single string) |
@@ -380,6 +395,55 @@ Use the `env` field inside `execution` (same level as `command` and `steps`) to 
 | Inheritance (extends) | Auto-supported; `env` is a dict, deep-merged with child keys overriding parent |
 | Value type | Strings; numeric/boolean values are coerced with `str()` at parse time |
 
+## Declared Outputs (outputs)
+
+A classic regression-testing trap: the solver crashes this round or the output path changed, so no result file was produced — but the stale file from the previous run is still in the workspace, and `compare_files` may then **false-pass** against the baseline. By declaring result artifacts with `execution.outputs`, the framework deletes these files/directories before execution (and before every retry attempt), guaranteeing comparisons always use artifacts from the current run.
+
+### JSON
+
+```json
+{
+    "name": "Solver regression",
+    "execution": {
+        "command": "{solver}",
+        "args": ["-i", "input.dat"],
+        "outputs": ["result.h5", "summary.csv", "logs/solver.log"]
+    },
+    "expected": { "return_code": 0 }
+}
+```
+
+### Sequence mode (case-level + step-level)
+
+```json
+{
+    "name": "Multi-step pipeline",
+    "execution": {
+        "outputs": ["final.h5"],
+        "steps": [
+            { "command": "python", "args": ["pre.py"], "outputs": ["mesh.dat"], "expected": { "return_code": 0 } },
+            { "command": "{solver}", "args": ["mesh.dat"], "expected": { "return_code": 0 } }
+        ]
+    }
+}
+```
+
+### Semantics
+
+| Decision point | Behavior |
+|---|---|
+| Cleanup timing | Before every attempt starts; retried attempts re-clean as well |
+| Missing file | Silently skipped, not an error |
+| Deletion failure (locked file etc.) | **Loud failure**: the case is marked `execution_error` and the command is not run (no silent false-pass channel) |
+| Path resolution | Relative paths resolve against the workspace; the resolved path must stay inside the workspace — absolute paths or `..` escapes are rejected at parse/validate time |
+| Directories | A whole output directory may be declared (deleted recursively before the run) |
+| Placeholders / inheritance | Automatic (`{var}` substitution; extends deep-merge with list replacement, same as `args`) |
+| Sequence step-level | Cleaned right before that step actually runs |
+| Sequence case-level | Cleaned once before the first executed step on full runs only |
+| Parallel conflicts | Two cases declaring the same output path may delete each other's artifacts; `symtest validate` warns. Pairs connected via `depends_on` are considered legitimate |
+
+> **Interaction with `--resume`**: artifacts of resumed runs are trusted and never cleaned — case-level `outputs` cleanup only happens on full runs, and step-level `outputs` of skipped steps are not deleted. Changing any step's `outputs` invalidates the resume config hash and triggers a full rerun.
+
 ## Configuration Splitting
 
 When a test project grows to dozens or even hundreds of test cases, a single config file becomes hard to maintain. The configuration splitting mechanism lets you break a large file into multiple sub-files by module/feature and assemble them via `import` references, which are merged at load time automatically.
@@ -469,7 +533,11 @@ When all cases in a sub-file share the same tags (e.g., `"text"`), there is no n
 
 ### Cross-Format Support
 
-A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.yaml` / `.yml`).
+A JSON main config can import YAML sub-files, and vice versa. The framework auto-selects the parser based on the sub-file extension (`.json` / `.jsonc` / `.yaml` / `.yml`).
+
+### JSONC Support
+
+`.jsonc` config files support VS Code JSONC syntax: `//` and `/* ... */` comments, plus trailing commas in objects and arrays. Comment markers inside string literals (URLs, escaped quotes) are never stripped. A `.jsonc` file can be used both as the main config and as an imported sub-file (the runner picks the JSONC parser by extension). Note that `symtest migrate` rewrites `.jsonc` as plain JSON (comments cannot survive a read/rewrite round-trip).
 
 ### Setup Merge Rules
 
@@ -714,6 +782,10 @@ Exit codes follow grep semantics: 0 = match found, 1 = no match,
 # Run JSON tests
 symtest run test_cases.json
 
+# Omit the config file name: uses the file from the project defaults
+# (.symtest/symtest.json), falling back to test_cases.json
+symtest run
+
 # Run YAML tests
 symtest run test_cases.yaml
 
@@ -745,8 +817,12 @@ symtest run test_cases.json --verbose
 # Debug mode
 symtest run test_cases.json --debug
 
-# Output format
-symtest run test_cases.json --output-format json|html|text
+# Output format: report channel control (default none, console shows logs only)
+#   none: no report output (recommended for daily use; the pass/failed summary
+#         appears in the log output)
+#   text/json/html: print the report to stdout, redirectable to a file
+#     e.g. symtest run test_cases.json --output-format text > report.txt
+symtest run test_cases.json --output-format none|text|json|html
 
 # Enable history (smart scheduling + regression detection)
 symtest run test_cases.json --history-dir ./hist
@@ -772,6 +848,12 @@ symtest run test_cases.json --update-baseline --yes
 
 # Enable error analysis (full stats output for numerical comparisons)
 symtest run test_cases.json --error-analysis
+
+# Additionally save a text report to file (console output unaffected)
+symtest run test_cases.json --text-report test_report.txt
+
+# Ignore project defaults (.symtest/symtest.json) for this run
+symtest run test_cases.json --no-config
 ```
 
 ### Run Only Last-Failed Cases (--last-failed)
@@ -811,6 +893,8 @@ symtest run config.json
 - Hash mismatch (config changed) → full rerun automatically, old state discarded
 
 **Trust model**: `--resume` does **not verify workspace artifacts** (input files, files generated by prior steps, etc.). Using `--resume` means the user confirms input files are unmodified. If workspace contamination is suspected, rerun fully without `--resume`.
+
+**Interaction with `outputs`**: cases declaring `execution.outputs` do not clean artifacts on resumed runs (case-level cleanup only happens on full runs; step-level `outputs` of skipped steps are not deleted). Changing any step's `outputs` invalidates the config hash and triggers a full rerun.
 
 ```bash
 # First full run, long_pipeline step 4 fails (total 72s)
@@ -966,6 +1050,74 @@ for detail in runner.results["details"]:
 | `compare_failures` | list | Structured info for each failed file comparison (includes `diff_summary`, `differences`, `error_stats`, `actual`/`baseline` paths, tolerance params) |
 | `baseline_updated` | list | Paths of baseline files overwritten by `--update-baseline` |
 
+## Project Defaults (.symtest/symtest.json)
+
+If every run repeats the same options (`--parallel --workers 4 --error-analysis-all`), place a `.symtest/symtest.json` in the project workspace to store per-project defaults for `symtest run`:
+
+```json
+{
+  "run": {
+    "config_file": "test_cases.json",
+    "parallel": true,
+    "workers": 4,
+    "execution_mode": "thread",
+    "history_dir": ".symtest",
+    "regression_threshold": 1.5,
+    "with_deps": true,
+    "error_analysis": true,
+    "error_analysis_all": true
+  },
+  "report": {
+    "text": "test_report.txt",
+    "html": "test_report.html",
+    "junit": null
+  }
+}
+```
+
+### Keys
+
+Keys in the `run` group map one-to-one to CLI options (`config_file`,
+`parallel`, `workers`, `execution_mode`, `history_dir`,
+`regression_threshold`, `with_deps`, `error_analysis`,
+`error_analysis_all`); the `report` group's `text` / `html` / `junit`
+keys hold default output paths for `--text-report`, `--html-report` and
+`--junit-xml`. Filtering options (`-t`, `--tag`, `--last-failed`, ...) and
+one-shot actions (`--update-baseline`, ...) are not part of the config and
+stay explicit on the command line.
+
+### Precedence
+
+**Explicit command line > project config > built-in defaults.**
+
+- Omitting the config file argument uses `run.config_file` from the project
+  config, falling back to `test_cases.json`
+- Boolean options support explicit opt-out: `--no-parallel`,
+  `--no-with-deps`, `--no-error-analysis-all`, etc. (omitted = leave it to
+  the config; passed = command line wins)
+- `--no-config`: ignore the project config entirely for this run and use
+  built-in defaults only
+
+### Path Resolution
+
+The project config is read from the directory given by `--workspace`
+(the current directory otherwise); relative report paths in the `report`
+group resolve against the same directory (absolute paths used as-is).
+
+### Tolerance Semantics
+
+Unknown sections/keys, wrong-typed values, broken JSON or a missing file
+only produce a warning and never abort the run — unknown keys are ignored
+(which surfaces typos); the config file is a pure bonus, a broken one never
+prevents tests from running.
+
+With the defaults in place, everyday commands simplify to:
+
+```bash
+symtest run                         # full run
+symtest run -t case_1 --last-failed # targeted rerun
+```
+
 ## Project Entry Script
 
 If your test project has a complex structure (requiring preset environment variables, customized report paths, etc.), using `symtest run` directly may not be flexible enough. You can create a project entry script (e.g., `test.py` or `run_tests.py`) that calls the framework API from Python code.
@@ -983,8 +1135,8 @@ If your test project has a complex structure (requiring preset environment varia
 | Scenario | Recommendation |
 |---|---|
 | Need to set environment variables (e.g., inject venv PATH) | Entry script |
-| Need to output multiple report formats simultaneously (text + JUnit XML) | Entry script |
-| Team-shared fixed run parameters (workers, history-dir, etc.) | Entry script |
+| Need to output multiple report formats simultaneously (text + JUnit XML) | Entry script, or project defaults (see `report` group above) |
+| Team-shared fixed run parameters (workers, history-dir, etc.) | Project defaults `.symtest/symtest.json` (overridable per run), or entry script |
 | Need to auto-select JSON/YAML runner by config file extension | Entry script |
 | Windows console-script commands (e.g., `compare-files`) not found | Entry script (inject venv Scripts into PATH) |
 
@@ -1539,7 +1691,7 @@ Use `--junit-xml` to output a JUnit-format XML report alongside test execution, 
 symtest run test_cases.json --junit-xml report.xml
 ```
 
-`--junit-xml` is a supplementary output, coexisting with `--output-format` (text/json/html) without affecting the console report.
+`--junit-xml` is a supplementary output, coexisting with `--output-format`.
 
 ### Python API
 
@@ -1555,6 +1707,8 @@ Status mapping: `passed` → pass; `failed` → failure (assertion failure) or e
 ## Logging Configuration
 
 All framework diagnostic and status information is output through Python's standard `logging` module, unified under the `symtest` namespace. Logs are written to **stderr** by default, keeping `stdout` clean for safe use with `--output-format json` for machine-readable output.
+
+The console follows **log/report channel separation**: stderr carries logs only (one progress line per case, the final pass/failed summary, and warnings); reports are **not** replayed to the terminal automatically. To inspect full details, print the report to stdout via `--output-format text/json/html` (redirectable to a file), or write it to disk via `--text-report` / `--html-report` / `--junit-xml`.
 
 ### CLI Log Level Control
 
