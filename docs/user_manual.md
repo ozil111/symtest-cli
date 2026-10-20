@@ -1813,6 +1813,7 @@ symtest compare <file1> <file2> [选项]
 | `--verbose` / `-v` | 详细输出 |
 | `--debug` | 调试模式 |
 | `--num-threads` | 并行线程数，默认 4 |
+| `--error-analysis` | 启用流式全量误差统计，仅对数值型比较器（CSV、HDF5）生效 |
 
 ### 文本文件比较
 
@@ -1901,6 +1902,15 @@ symtest run config.json --error-analysis-all
 # 与比较参数组合使用
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
+
+独立比较入口 `compare-files` / `symtest compare` 同样支持该选项（两者参数一致）：
+
+```bash
+compare-files data1.csv data2.csv --error-analysis
+symtest compare data1.csv data2.csv --error-analysis
+```
+
+CLI 比较入口的统计展示：`--output-format text` 在输出中以 `Error Analysis:` 区块列出全部统计量，`--output-format json` 写入结果的 `error_stats` 字段。与 `symtest run` 一致，统计仅在比较失败时输出。
 
 **Python API**：
 

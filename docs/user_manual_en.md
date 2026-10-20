@@ -1794,6 +1794,7 @@ symtest compare <file1> <file2> [options]
 | `--verbose` / `-v` | Verbose output |
 | `--debug` | Debug mode |
 | `--num-threads` | Number of parallel threads, default 4 |
+| `--error-analysis` | Enable streaming full-population error statistics; effective for numeric comparators (CSV, HDF5) only |
 
 ### Text File Comparison
 
@@ -1882,6 +1883,15 @@ symtest run config.json --error-analysis-all
 # Combine with comparison parameters
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
+
+The standalone comparison entry points `compare-files` / `symtest compare` support the same option (identical parameters):
+
+```bash
+compare-files data1.csv data2.csv --error-analysis
+symtest compare data1.csv data2.csv --error-analysis
+```
+
+In the CLI comparison entry points, statistics are shown as an `Error Analysis:` block with `--output-format text`, or written to the `error_stats` field with `--output-format json`. Consistent with `symtest run`, statistics are only output when the comparison fails.
 
 **Python API**:
 

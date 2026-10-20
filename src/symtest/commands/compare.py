@@ -39,6 +39,9 @@ def add_compare_arguments(parser):
     parser.add_argument("--similarity", action="store_true",
                         help="When comparing binary files, compute and show similarity index")
     parser.add_argument("--num-threads", type=int, default=4, help="Number of threads for parallel processing")
+    parser.add_argument("--error-analysis", action="store_true",
+                        help="Enable streaming error statistics over ALL numeric cells "
+                             "(effective for CSV/HDF5 comparisons only)")
 
     # CSV comparison options
     csv_group = parser.add_argument_group('CSV comparison options')
@@ -203,8 +206,11 @@ def run_comparison(args, logger=None):
             comparator_kwargs["data_filter"] = args.h5_data_filter
         comparator_kwargs["expand_path"] = args.h5_expand_path
 
-    # Create comparator and perform comparison
-    comparator = ComparatorFactory.create_comparator(file_type, **comparator_kwargs)
+    # Create comparator and perform comparison.  'error_analysis' is a
+    # framework-owned knob like 'verbose': the factory forwards it only to
+    # comparators that declare the parameter (numeric comparators).
+    comparator = ComparatorFactory.create_comparator(
+        file_type, error_analysis=args.error_analysis, **comparator_kwargs)
     # CLI semantics: file1 = first file (baseline slot), file2 = second (actual slot)
     ctx = CompareContext(
         actual=str(file2_path),

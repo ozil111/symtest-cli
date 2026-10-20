@@ -59,6 +59,7 @@
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
+| `compare-files` | `symtest.commands.compare:main`（独立入口，与 `symtest compare` 共享参数装配与执行逻辑，为旧版用户与 Windows console-script 用法保留） |
 
 ## 3. 配置管线
 
