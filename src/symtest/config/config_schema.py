@@ -200,8 +200,10 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                     "description": (
                         "Declared output artifacts of this step, deleted "
                         "before the step runs (not run when resumed by "
-                        "--resume). Relative paths resolve against the "
-                        "workspace and must stay inside it."
+                        "--resume). Only files may be declared (directories "
+                        "and the workspace root are rejected). Relative "
+                        "paths resolve against the workspace and must stay "
+                        "inside it."
                     ),
                 },
             },
@@ -265,9 +267,11 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                         "Declared output artifacts of this execution unit. "
                         "Deleted before the command starts (and before every "
                         "retry attempt) so stale files cannot cause false "
-                        "passes. Relative paths resolve against the workspace "
-                        "and must stay inside it; missing files are skipped "
-                        "silently; deletion failure fails the case loudly."
+                        "passes. Only files may be declared (directories and "
+                        "the workspace root are rejected). Relative paths "
+                        "resolve against the workspace and must stay inside "
+                        "it; missing files are skipped silently; deletion "
+                        "failure fails the case loudly."
                     ),
                 },
             },
@@ -310,9 +314,11 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                     "items": {"type": "string"},
                     "description": (
                         "Case-level declared output artifacts, deleted once "
-                        "before the first executed step on full runs. Skipped "
-                        "when --resume starts from a resumed step (artifacts "
-                        "of skipped steps are trusted)."
+                        "before the first executed step on full runs. Only "
+                        "files may be declared (directories and the workspace "
+                        "root are rejected). Skipped when --resume starts "
+                        "from a resumed step (artifacts of skipped steps are "
+                        "trusted)."
                     ),
                 },
             },
