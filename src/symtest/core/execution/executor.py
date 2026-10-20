@@ -72,9 +72,11 @@ def clean_outputs(
       否则拒绝（防逃逸）；声明了 outputs 但 workspace 未设置 → 报错
       （禁止静默回落到 CWD，并行/process 模式下 CWD 不可靠）；
     - 只允许声明文件：resolve 后等于 workspace 根（如声明 ``"."``）、
-      或实际存在的是目录（非符号链接）→ 返回错误大声失败，
+      或声明路径实际是目录（非符号链接）→ 返回错误大声失败，
       不做任何删除（防止单条声明抹掉整个工作目录或目录子树）；
-    - 文件 / 符号链接：存在则删除（符号链接只删链接本身），不存在
+    - 文件 / 符号链接：存在则删除（符号链接只删链接本身，不跟随；
+      目录与 workspace 根判定使用未 resolve 的声明路径，因为
+      ``Path.resolve()`` 会跟随链接导致平台行为不一致），不存在
       则静默跳过；
     - 删除失败（占用 / 权限）返回错误消息，由调用方大声失败——
       静默继续会保留"陈旧产物假通过"的通道。
@@ -91,26 +93,31 @@ def clean_outputs(
     ws_root = Path(workspace).resolve()
     for raw in outputs:
         p = Path(str(raw))
-        candidate = p.resolve() if p.is_absolute() else (ws_root / p).resolve()
+        resolved = p.resolve() if p.is_absolute() else (ws_root / p).resolve()
         try:
-            candidate.relative_to(ws_root)
+            resolved.relative_to(ws_root)
         except ValueError:
             return f"output path escapes workspace: '{raw}'"
-        if candidate == ws_root:
+        if resolved == ws_root:
             return (
                 f"output path resolves to the workspace root: '{raw}'; "
                 f"only files may be declared as outputs"
             )
-        if not candidate.exists() and not candidate.is_symlink():
+        # Type/existence checks and deletion use the declared path without
+        # resolving the final component: Path.resolve() follows symlinks,
+        # so a link to a directory would be misclassified as a directory
+        # and the link itself could never be unlinked.
+        declared = p if p.is_absolute() else ws_root / p
+        if not declared.exists() and not declared.is_symlink():
             continue
-        if candidate.is_dir() and not candidate.is_symlink():
+        if declared.is_dir() and not declared.is_symlink():
             return (
                 f"declared output is a directory: '{raw}'; "
                 f"only files may be declared as outputs"
             )
         try:
-            candidate.unlink()
-            logger.info("Cleaned declared output: %s", candidate)
+            declared.unlink()
+            logger.info("Cleaned declared output: %s", declared)
         except OSError as exc:
             return f"failed to delete declared output '{raw}': {exc}"
     return None
