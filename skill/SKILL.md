@@ -197,9 +197,11 @@ rendering): `references/user_manual.md` → "Custom File Comparator".
 
 ### When to use `execution.outputs` (declared artifacts)
 
-- Declare files/directories the command produces
+- Declare the files the command produces
   (`"outputs": ["result.h5", "logs/solver.log"]`); the framework deletes
-  them before the command starts (and before every retry attempt).
+  them before the command starts (and before every retry attempt). Only
+  files may be declared — directories (and the workspace root) are
+  rejected loudly at validation/run time, never deleted recursively.
 - Use whenever a case writes output files in the workspace: it prevents
   stale artifacts from a previous run causing false passes when the
   solver crashes or the output path changes.

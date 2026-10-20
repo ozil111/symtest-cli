@@ -3,8 +3,9 @@
 Covers:
 - parsing (case-level + step-level ``outputs`` into TestCase/TestStep);
 - wire-dict round-trip (``to_dict`` + ``_spec_from_v2``);
-- pre-execution deletion (file / directory / missing file) on every attempt;
-- loud failure on workspace escape and locked files;
+- pre-execution deletion (file / symlink / missing file) on every attempt;
+- loud failure on directory/workspace-root declarations, workspace escape
+  and locked files;
 - sequence semantics: case-level cleanup once on full runs, skipped on resume;
 - resume config hash sensitivity to step ``outputs``;
 - ``validate_config`` outputs checks (escape error, conflict warning).
@@ -145,7 +146,7 @@ class TestCleanOutputsExecution:
         assert result["status"] == "passed"
         assert not stale.exists()
 
-    def test_stale_directory_deleted_before_run(self, tmp_path):
+    def test_directory_output_is_loud_failure(self, tmp_path):
         outdir = tmp_path / "results"
         outdir.mkdir()
         (outdir / "old.txt").write_text("stale")
@@ -154,8 +155,24 @@ class TestCleanOutputsExecution:
             outputs=["results"],
         )
         result = _run(spec, str(tmp_path))
-        assert result["status"] == "passed"
-        assert not outdir.exists()
+        assert result["status"] == "failed"
+        assert result["failure_kind"] == "execution_error"
+        assert "only files may be declared" in result["message"]
+        assert outdir.exists(), "directory must not be deleted"
+        assert (outdir / "old.txt").exists()
+
+    def test_workspace_root_output_is_loud_failure(self, tmp_path):
+        sentinel = tmp_path / "keep_me.txt"
+        sentinel.write_text("workspace content")
+        spec = ExecutionSpec(
+            name="t", command=sys.executable, args=["-c", "pass"],
+            outputs=["."],
+        )
+        result = _run(spec, str(tmp_path))
+        assert result["status"] == "failed"
+        assert result["failure_kind"] == "execution_error"
+        assert "workspace root" in result["message"]
+        assert sentinel.exists(), "workspace must survive"
 
     def test_missing_outputs_skipped_silently(self, tmp_path):
         spec = ExecutionSpec(
@@ -389,6 +406,27 @@ class TestValidateOutputs:
         assert report["valid"]
         assert not any("out.h5" in w for w in report["warnings"])
 
+    def test_workspace_root_output_is_error(self, tmp_path):
+        cfg = self._write_config(tmp_path, [{
+            "name": "t",
+            "execution": {"command": "solver", "args": [], "outputs": ["."]},
+            "expected": {"return_code": 0},
+        }])
+        report = validate_config(cfg, workspace=str(tmp_path))
+        assert not report["valid"]
+        assert any("workspace root" in e for e in report["errors"])
+
+    def test_existing_directory_output_is_error(self, tmp_path):
+        (tmp_path / "results").mkdir()
+        cfg = self._write_config(tmp_path, [{
+            "name": "t",
+            "execution": {"command": "solver", "args": [], "outputs": ["results"]},
+            "expected": {"return_code": 0},
+        }])
+        report = validate_config(cfg, workspace=str(tmp_path))
+        assert not report["valid"]
+        assert any("is a directory" in e for e in report["errors"])
+
     def test_placeholder_outputs_skipped(self, tmp_path):
         cfg = self._write_config(tmp_path, [{
             "name": "t",
@@ -420,3 +458,28 @@ class TestCleanOutputsHelper:
         err = clean_outputs(["sub/out.txt"], str(tmp_path))
         assert err is None
         assert not target.exists()
+
+    def test_workspace_root_returns_error(self, tmp_path):
+        err = clean_outputs(["."], str(tmp_path))
+        assert err is not None and "workspace root" in err
+
+    def test_directory_returns_error_without_deleting(self, tmp_path):
+        outdir = tmp_path / "results"
+        outdir.mkdir()
+        (outdir / "old.txt").write_text("stale")
+        err = clean_outputs(["results"], str(tmp_path))
+        assert err is not None and "only files may be declared" in err
+        assert outdir.exists()
+
+    @pytest.mark.skipif(os.name == "nt",
+                        reason="symlink creation needs privileges on Windows")
+    def test_symlink_to_directory_unlinks_link_only(self, tmp_path):
+        target = tmp_path / "real_dir"
+        target.mkdir()
+        (target / "data.txt").write_text("data")
+        link = tmp_path / "link_dir"
+        link.symlink_to(target, target_is_directory=True)
+        err = clean_outputs(["link_dir"], str(tmp_path))
+        assert err is None
+        assert not link.exists()
+        assert target.exists() and (target / "data.txt").exists()

@@ -159,8 +159,9 @@ JSON Schema; it is not restated here.
 ### 4.5 Single Test Execution
 
 PathResolver resolves (system commands pass-through, shell builtins wrapped for
-the platform, compound commands split) → declared-output cleanup (files/directories
-declared via `execution.outputs` are deleted before the subprocess starts; resolved
+the platform, compound commands split) → declared-output cleanup (files declared via `execution.outputs` are deleted
+before the subprocess starts; only files may be declared — directories and the
+workspace root are always rejected; resolved
 paths must stay inside the workspace, deletion failure fails loudly as an execution
 error; runs on every attempt, and steps skipped by `--resume` are naturally not
 cleaned) → subprocess-isolated execution (captures
@@ -259,7 +260,7 @@ no interactive UI maintenance burden.
 | --update-baseline | Automatically overwrites baseline files with actual output on comparison failure; ideal for batch baseline updates |
 | next_action_hint structured suggestions | Failed results include actionable suggestions (update_baseline / update_expected / increase_timeout / investigate), convenient for AI consumption |
 | TUI removed; replaced by official skill + `symtest find` | Both TUI responsibilities have lighter replacements: case authoring/editing is done by AI assistants via the official skill; cross-file search is covered by the `find` command reusing the same parsing pipeline; removes the heavy textual dependency and interactive-UI maintenance burden |
-| `execution.outputs` artifact cleanup hooked at the execute_command entry | Declare artifacts and delete them before the run, eliminating stale-artifact false passes. Cleanup is execution-environment preparation (same category as env injection) and belongs to the execution layer; `execute_command` is the single convergence point of all execution paths, so hooking there makes retry re-clean and resume skip (skipped steps never enter the function) hold automatically with zero orchestration-layer changes. Failures are loud (`execution_error`) so no silent false-pass channel remains |
+| `execution.outputs` artifact cleanup hooked at the execute_command entry | Declare artifacts and delete them before the run, eliminating stale-artifact false passes. Cleanup is execution-environment preparation (same category as env injection) and belongs to the execution layer; `execute_command` is the single convergence point of all execution paths, so hooking there makes retry re-clean and resume skip (skipped steps never enter the function) hold automatically with zero orchestration-layer changes. Failures are loud (`execution_error`) so no silent false-pass channel remains. **Only files may be declared**: declaring a directory (e.g. an output tree) or the workspace root (`"."`) would recursively wipe unrelated files or even the entire workspace, so validation and runtime both reject it |
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Project-level default configuration (`.symtest/symtest.json`) | Frequently used run options (parallel, error analysis, dependency expansion, report paths) are stored per project so `symtest run` needs no repeated input. Three-level precedence (CLI > project config > built-in defaults) is implemented with tri-state booleans (argparse defaults to `None`; `--no-xxx` turns a flag off explicitly); unknown keys and bad JSON are handled tolerantly with a warning only — the config is a pure bonus and never blocks a run. Replaces per-repo entry scripts whose only job was storing default arguments |
 | Console log/report channel separation | The console (stderr logging) carries progress and summary logs only. Reports reach stdout solely via an explicit `--output-format text/json/html` (redirectable to a file), with full details written to disk via `--text-report`/`--html-report`/`--junit-xml`. Fixes the channel confusion where the former `print_report` replayed the whole text report through `logger.info` — with `--error-analysis-all` the per-case error_stats flooded the terminal and buried the pass/failed summary |

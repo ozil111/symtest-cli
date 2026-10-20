@@ -398,7 +398,7 @@ symtest run test_cases.json -t C --with-deps
 
 ## 结果产物声明（outputs）
 
-回归测试的一个经典陷阱：被测程序本轮崩溃或输出路径改变，根本没有生成结果文件，但上一轮运行遗留的旧文件还在 workspace 里——`compare_files` 拿旧文件去比 baseline，可能**假通过**。通过 `execution.outputs` 声明结果产物，框架会在执行前（以及每次重试 attempt 前）把这些文件/目录删掉，保证比较的一定是本轮产物。
+回归测试的一个经典陷阱：被测程序本轮崩溃或输出路径改变，根本没有生成结果文件，但上一轮运行遗留的旧文件还在 workspace 里——`compare_files` 拿旧文件去比 baseline，可能**假通过**。通过 `execution.outputs` 声明结果产物，框架会在执行前（以及每次重试 attempt 前）把这些文件删掉，保证比较的一定是本轮产物。
 
 ### JSON
 
@@ -437,7 +437,7 @@ symtest run test_cases.json -t C --with-deps
 | 文件不存在 | 静默跳过，不构成错误 |
 | 删除失败（文件被占用锁定等） | **大声失败**：用例判为 `execution_error`，不执行命令（避免静默保留假通过通道） |
 | 路径解析 | 相对路径按 workspace 解析；resolve 后必须位于 workspace 内，绝对路径或 `..` 逃逸在解析/校验阶段即报错 |
-| 目录 | 支持声明整个输出目录（运行前整体删除） |
+| 目录 | **不支持**声明目录：只允许声明文件，声明目录（含 workspace 根，如 `.`）会在校验/运行时报错（防止误删整个目录子树） |
 | 占位符 / 继承 | 自动支持（`{var}` 替换；extends 深合并，list 字段整体替换，与 `args` 一致） |
 | 序列模式 step 级 | 在该 step 实际执行前清理 |
 | 序列模式 case 级 | 仅在从头执行（非 resume 续跑）时、第一个执行的 step 之前清理一次 |
