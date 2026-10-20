@@ -149,7 +149,7 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 ### 4.5 单测试执行
 
 PathResolver 解析（系统命令直通、shell builtin 平台包装、复合命令拆分解析）
-→ 声明产物清理（`execution.outputs` 声明的文件/目录在 subprocess 启动前删除；路径 resolve 后必须在 workspace 内，删除失败大声失败记为执行错误；每次 attempt 都执行，`--resume` 跳过的 step 天然不清理）
+→ 声明产物清理（`execution.outputs` 声明的文件在 subprocess 启动前删除；只允许声明文件，声明目录或 workspace 根一律拒绝；路径 resolve 后必须在 workspace 内，删除失败大声失败记为执行错误；每次 attempt 都执行，`--resume` 跳过的 step 天然不清理）
 → subprocess 隔离执行（捕获 stdout / stderr / returncode / duration）
 → 断言校验（return_code / contains / matches / compare_files）
 → 失败按 `retry_count` 重试
@@ -275,7 +275,7 @@ JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 | --update-baseline | 比较失败时自动将实际输出覆盖 baseline，适合批量更新基准 |
 | next_action_hint 结构化建议 | 失败结果附带下一步操作建议（update_baseline / update_expected / increase_timeout / investigate），便于 AI 消费 |
 | 移除 TUI，由官方 skill + `symtest find` 替代 | TUI 的两大职责均有更轻替代：定义/修改用例由 AI 编程助手按官方 skill 完成，跨文件搜索由复用同一解析管线的 `find` 命令覆盖；移除后砍掉 textual 重依赖与交互界面维护负担 |
-| `execution.outputs` 产物清理挂在 execute_command 入口 | 声明产物、运行前删除，消除"陈旧产物假通过"。清理是执行环境准备（与 env 注入同类），归属 execution 层；`execute_command` 是所有执行路径的唯一汇聚点，挂在该处使 retry 重清与 resume 不删（被跳过 step 不进入该函数）两个语义自动成立，编排层零改动。失败大声报 `execution_error`，防止静默保留假通过通道 |
+| `execution.outputs` 产物清理挂在 execute_command 入口 | 声明产物、运行前删除，消除"陈旧产物假通过"。清理是执行环境准备（与 env 注入同类），归属 execution 层；`execute_command` 是所有执行路径的唯一汇聚点，挂在该处使 retry 重清与 resume 不删（被跳过 step 不进入该函数）两个语义自动成立，编排层零改动。失败大声报 `execution_error`，防止静默保留假通过通道。**只允许声明文件**：声明目录（如输出目录树）或 workspace 根（`"."`）会递归抹掉大量无关文件甚至整个工作区，故 validate 与运行时双层拒绝 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | 项目级默认配置（`.symtest/symtest.json`） | 常用运行参数（并行、误差分析、依赖展开、报告路径）项目内固化，`symtest run` 免重复输入。三级优先级（CLI > 项目配置 > 内置默认）靠 tri-state 布尔项实现（argparse 默认 `None`，`--no-xxx` 显式关闭）；未知键/坏 JSON 宽容处理只警告——配置是纯加分项，不阻断运行。替代各仓库自建入口脚本保存默认参数的用法 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |

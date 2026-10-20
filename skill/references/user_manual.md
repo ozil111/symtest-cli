@@ -397,7 +397,7 @@ Use the `env` field inside `execution` (same level as `command` and `steps`) to 
 
 ## Declared Outputs (outputs)
 
-A classic regression-testing trap: the solver crashes this round or the output path changed, so no result file was produced — but the stale file from the previous run is still in the workspace, and `compare_files` may then **false-pass** against the baseline. By declaring result artifacts with `execution.outputs`, the framework deletes these files/directories before execution (and before every retry attempt), guaranteeing comparisons always use artifacts from the current run.
+A classic regression-testing trap: the solver crashes this round or the output path changed, so no result file was produced — but the stale file from the previous run is still in the workspace, and `compare_files` may then **false-pass** against the baseline. By declaring result artifacts with `execution.outputs`, the framework deletes these files before execution (and before every retry attempt), guaranteeing comparisons always use artifacts from the current run.
 
 ### JSON
 
@@ -436,7 +436,7 @@ A classic regression-testing trap: the solver crashes this round or the output p
 | Missing file | Silently skipped, not an error |
 | Deletion failure (locked file etc.) | **Loud failure**: the case is marked `execution_error` and the command is not run (no silent false-pass channel) |
 | Path resolution | Relative paths resolve against the workspace; the resolved path must stay inside the workspace — absolute paths or `..` escapes are rejected at parse/validate time |
-| Directories | A whole output directory may be declared (deleted recursively before the run) |
+| Directories | **Not supported** — only files may be declared; declaring a directory (including the workspace root, e.g. `.`) fails loudly at validation/run time (prevents wiping an entire directory subtree) |
 | Placeholders / inheritance | Automatic (`{var}` substitution; extends deep-merge with list replacement, same as `args`) |
 | Sequence step-level | Cleaned right before that step actually runs |
 | Sequence case-level | Cleaned once before the first executed step on full runs only |

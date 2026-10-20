@@ -217,7 +217,10 @@ def _outputs_errors(test_case: Dict[str, Any], prefix: str, workspace: Path) -> 
 
     - must be an array of strings;
     - ``{placeholder}`` entries are skipped (cannot resolve statically);
-    - resolved path must stay inside the workspace (no escape).
+    - resolved path must stay inside the workspace (no escape);
+    - resolved path must not be the workspace root itself (e.g. ``"."``)
+      and must not already exist as a directory — only files may be
+      declared as outputs.
     """
     errors: List[str] = []
     execution = _get_execution(test_case)
@@ -245,6 +248,18 @@ def _outputs_errors(test_case: Dict[str, Any], prefix: str, workspace: Path) -> 
         except ValueError:
             errors.append(
                 f"{prefix}: output path escapes workspace: '{raw}'"
+            )
+            continue
+        if candidate == workspace:
+            errors.append(
+                f"{prefix}: output path resolves to the workspace root "
+                f"(only files may be declared): '{raw}'"
+            )
+            continue
+        if candidate.exists() and candidate.is_dir() and not candidate.is_symlink():
+            errors.append(
+                f"{prefix}: output path is a directory "
+                f"(only files may be declared as outputs): '{raw}'"
             )
     return errors
 
