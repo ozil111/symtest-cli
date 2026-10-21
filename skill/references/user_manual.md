@@ -854,6 +854,10 @@ symtest run test_cases.json --text-report test_report.txt
 
 # Ignore project defaults (.symtest/symtest.json) for this run
 symtest run test_cases.json --no-config
+
+# Use an explicit defaults file (e.g., a validation setup) instead of
+# .symtest/symtest.json
+symtest run --defaults .symtest/validation.json
 ```
 
 ### Run Only Last-Failed Cases (--last-failed)
@@ -1097,6 +1101,39 @@ stay explicit on the command line.
   the config; passed = command line wins)
 - `--no-config`: ignore the project config entirely for this run and use
   built-in defaults only
+- `--defaults FILE`: use an explicit defaults file instead of
+  `.symtest/symtest.json` for this run (see below)
+
+### Explicit Defaults File (--defaults)
+
+When one workspace needs more than one set of defaults (e.g., daily
+regression vs. a validation run), point `--defaults` at an alternative file
+with the same format as `.symtest/symtest.json`:
+
+```bash
+# Validation run driven by .symtest/validation.json
+symtest run --defaults .symtest/validation.json
+
+# Filtering and one-shot flags combine as usual
+symtest run --defaults .symtest/validation.json -t c3d8r_im_t01 --workers 1
+```
+
+Rules:
+
+- The explicit file **replaces** `.symtest/symtest.json` for this run —
+  the default file is not read and nothing is merged from it, so a missing
+  key in the validation file can never silently inherit the regression
+  settings
+- Precedence stays three-level: **command line > selected defaults file >
+  built-in defaults**
+- Paths resolve against `--workspace`: the defaults file path itself, the
+  test config file inside it (`run.config_file`) and report paths in the
+  `report` group. Moving the file does not change where tests execute
+- **Strict validation**: a missing file, broken JSON, a non-object top
+  level, unknown sections/keys or wrong-typed values abort the run with an
+  error — unlike `.symtest/symtest.json`, nothing is silently ignored, so a
+  typo can never make the run execute with a different set of settings
+- `--defaults` and `--no-config` are mutually exclusive
 
 ### Path Resolution
 
@@ -1109,7 +1146,9 @@ group resolve against the same directory (absolute paths used as-is).
 Unknown sections/keys, wrong-typed values, broken JSON or a missing file
 only produce a warning and never abort the run — unknown keys are ignored
 (which surfaces typos); the config file is a pure bonus, a broken one never
-prevents tests from running.
+prevents tests from running. This lenient behaviour applies to the default
+`.symtest/symtest.json` only; an explicit `--defaults` file is validated
+strictly and aborts the run on any problem (see above).
 
 With the defaults in place, everyday commands simplify to:
 
