@@ -16,6 +16,7 @@ from pathlib import Path
 from ..reporting.diagnosis import attach_next_action_hints
 from ..runners import JSONRunner, ParallelJSONRunner, ParallelYAMLRunner, YAMLRunner
 from ..utils.project_config import (
+    ProjectConfigError,
     load_project_config,
     merge_project_config,
     resolve_path,
@@ -78,14 +79,25 @@ def run_tests(args):
     # This matches BaseRunner's resolution (workspace / config_file).
     workspace_path = Path(args.workspace) if args.workspace else Path.cwd()
 
-    # Project-level defaults (.symtest/symtest.json): command line values
-    # win, then project config, then built-in defaults. --no-config skips
-    # the file and applies built-in defaults only.
+    # Project-level defaults: CLI values win, then the selected defaults
+    # file (.symtest/symtest.json by default, replaced entirely by an
+    # explicit --defaults FILE), then built-in defaults. --no-config skips
+    # any defaults file and applies built-in defaults only. An explicit
+    # --defaults file is validated strictly and aborts the run on problems,
+    # so it can never silently fall back to another set of settings.
     if getattr(args, 'no_config', False):
         logger.info("--no-config: ignoring project configuration")
         merge_project_config(args, {}, workspace_path)
     else:
-        merge_project_config(args, load_project_config(workspace_path), workspace_path)
+        try:
+            project_config = load_project_config(
+                workspace_path,
+                explicit_path=getattr(args, 'defaults', None),
+            )
+        except ProjectConfigError as exc:
+            logger.error("%s", exc)
+            return False
+        merge_project_config(args, project_config, workspace_path)
 
     config_file = (workspace_path / args.config_file).resolve()
 
@@ -321,9 +333,17 @@ def register_parser(subparsers):
                                  'specified file path (supplementary, console output '
                                  'is unaffected; default: from project config; relative '
                                  'paths are resolved against --workspace)')
-    run_parser.add_argument('--no-config', dest='no_config', action='store_true',
-                            help='Ignore the project configuration (.symtest/symtest.json) '
-                                 'for this run and use built-in defaults')
+    config_group = run_parser.add_mutually_exclusive_group()
+    config_group.add_argument('--defaults', default=None, metavar='FILE',
+                              help='Use an explicit defaults file (same format as '
+                                   '.symtest/symtest.json) instead of the default project '
+                                   'config; the file replaces .symtest/symtest.json entirely '
+                                   'for this run. Relative paths resolve against --workspace. '
+                                   'A missing file, broken JSON or unknown/invalid keys abort '
+                                   'the run (no silent fallback)')
+    config_group.add_argument('--no-config', dest='no_config', action='store_true',
+                              help='Ignore the project configuration (.symtest/symtest.json) '
+                                   'for this run and use built-in defaults')
     run_parser.add_argument('--var', action='append', default=[],
                            metavar='KEY=VALUE',
                            help='Set a variable for config placeholder substitution, '
