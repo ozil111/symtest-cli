@@ -249,6 +249,16 @@ built-in defaults**; boolean flags support explicit opt-out via
 warned about and ignored; a missing or broken config never blocks a run.
 Report paths resolve against the `--workspace` directory.
 
+When one workspace needs multiple sets of defaults (e.g., regression vs.
+validation), use an explicit defaults file instead:
+
+```bash
+# Replaces .symtest/symtest.json entirely for this run (no merging);
+# same format. Strict validation: a missing file, broken JSON or unknown
+# keys abort the run. Mutually exclusive with --no-config.
+symtest run --defaults .symtest/validation.json
+```
+
 ### Filtering
 ```bash
 # By name (multiple allowed)

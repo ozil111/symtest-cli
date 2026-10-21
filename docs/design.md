@@ -59,6 +59,7 @@
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
+| `compare-files` | `symtest.commands.compare:main`（独立入口，与 `symtest compare` 共享参数装配与执行逻辑，为旧版用户与 Windows console-script 用法保留） |
 
 ## 3. 配置管线
 
@@ -166,7 +167,7 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 
 | 状态 | 内容 | 更新时机 / 语义 |
 |---|---|---|
-| 项目默认配置 `symtest.json` | `run` 组运行选项 + `report` 组报告路径 | 运行启动时读取（CLI > 项目配置 > 内置默认）；只读，运行中不更新 |
+| 项目默认配置 `symtest.json` | `run` 组运行选项 + `report` 组报告路径 | 运行启动时读取（CLI > 选中的参数文件 > 内置默认）；默认入口 `.symtest/symtest.json`（宽容校验，问题只警告），`--defaults FILE` 显式替代入口（严格校验，问题报错退出，不与默认文件叠加）；只读，运行中不更新 |
 | 历史记录 | per-case `avg_duration` / `last_duration` / `run_count` | 运行后累计平均更新；先回归检测后写入 |
 | `last_run.json` | case → 上次状态 | 覆写参与执行的用例；未执行的保留旧状态 |
 | `sequence_state/<case>.json` | steps + case expected 的 SHA-256 配置哈希、已通过的 step 集 | 每步 pass 后保存；全部通过后清理 |
@@ -278,6 +279,7 @@ JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 | `execution.outputs` 产物清理挂在 execute_command 入口 | 声明产物、运行前删除，消除"陈旧产物假通过"。清理是执行环境准备（与 env 注入同类），归属 execution 层；`execute_command` 是所有执行路径的唯一汇聚点，挂在该处使 retry 重清与 resume 不删（被跳过 step 不进入该函数）两个语义自动成立，编排层零改动。失败大声报 `execution_error`，防止静默保留假通过通道。**只允许声明文件**：声明目录（如输出目录树）或 workspace 根（`"."`）会递归抹掉大量无关文件甚至整个工作区，故 validate 与运行时双层拒绝 |
 | JUnit XML 输出 | 兼容 GitLab CI / Jenkins / CircleCI 等主流 CI 系统的测试报告格式 |
 | 项目级默认配置（`.symtest/symtest.json`） | 常用运行参数（并行、误差分析、依赖展开、报告路径）项目内固化，`symtest run` 免重复输入。三级优先级（CLI > 项目配置 > 内置默认）靠 tri-state 布尔项实现（argparse 默认 `None`，`--no-xxx` 显式关闭）；未知键/坏 JSON 宽容处理只警告——配置是纯加分项，不阻断运行。替代各仓库自建入口脚本保存默认参数的用法 |
+| `--defaults FILE` 显式默认参数文件 | 同一 workspace 需要多套默认参数（如回归 vs 验证）时免建项目 runner。显式文件**完全替代** `.symtest/symtest.json`（不叠加合并，防止验证配置漏写键时静默继承回归设置），并切换为**严格校验**（缺失/坏 JSON/未知键/类型错报错退出）——显式指定即用户意图，静默回退到另一套设置比报错更危险。默认入口保持宽容语义不变，与 `--no-config` 互斥 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
 | 控制台 log/report 通道分离 | 控制台（stderr logging）只承载进度与摘要日志；报告仅在显式 `--output-format text/json/html` 时走 stdout（可重定向落盘），细节经 `--text-report`/`--html-report`/`--junit-xml` 写文件。修复原 `print_report` 把整份文本报告经 `logger.info` 重放到终端的通道混流——`--error-analysis-all` 下逐用例 error_stats 会淹没 pass/failed 摘要 |
 

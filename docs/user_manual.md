@@ -827,6 +827,9 @@ symtest run test_cases.json --text-report test_report.txt
 # 本次运行忽略项目默认配置（.symtest/symtest.json）
 symtest run test_cases.json --no-config
 
+# 使用显式默认参数文件（如验证场景配置）替代 .symtest/symtest.json
+symtest run --defaults .symtest/validation.json
+
 # 启用历史记录（智能调度 + 回归检测）
 symtest run test_cases.json --history-dir ./hist
 
@@ -1083,6 +1086,45 @@ for detail in runner.results["details"]:
 - 省略配置文件名时：使用项目配置的 `run.config_file`，未配置则为 `test_cases.json`
 - 布尔项支持显式关闭：`--no-parallel`、`--no-with-deps`、`--no-error-analysis-all` 等（不传 = 交给配置，传了以命令行为准）
 - `--no-config`：本次运行完全忽略项目配置，只用内置默认
+- `--defaults FILE`：本次运行使用显式默认参数文件替代 `.symtest/symtest.json`（见下文）
+
+### 显式默认参数文件（--defaults）
+
+当一个 workspace 需要多套默认参数（如日常回归 vs 验证运行）时，可以用 `--defaults` 指定一个与 `.symtest/symtest.json` 同格式的替代文件：
+
+```bash
+# 使用验证参数文件运行
+symtest run --defaults .symtest/validation.json
+
+# 筛选与临时覆盖仍照常使用
+symtest run --defaults .symtest/validation.json -t c3d8r_im_t01 --workers 1
+```
+
+对应的文件结构与 `.symtest/symtest.json` 完全一致：
+
+```json
+{
+  "run": {
+    "config_file": "validation_cases.json",
+    "parallel": true,
+    "workers": 1,
+    "history_dir": ".symtest/validation",
+    "error_analysis_all": true
+  },
+  "report": {
+    "text": "reports/validation/test_report.txt",
+    "html": "reports/validation/test_report.html"
+  }
+}
+```
+
+规则：
+
+- **显式参数文件替代默认参数文件**：本次运行不读取 `.symtest/symtest.json`，也不从中合并任何字段，验证配置漏写的键不会意外继承回归设置
+- 优先级保持三层：**命令行 > 选中的参数文件 > 内置默认**
+- 路径统一相对 `--workspace` 解析：参数文件路径本身、文件内的 `run.config_file` 及 `report` 组报告路径（绝对路径原样使用），移动参数文件不改变测试执行位置
+- **严格校验**：文件不存在、JSON 损坏、顶层非对象、未知 section/键或类型错误都会报错退出——与 `.symtest/symtest.json` 的宽容语义不同，不会静默忽略，避免实际跑了另一套设置
+- `--defaults` 与 `--no-config` 互斥
 
 ### 路径解析
 
@@ -1090,7 +1132,7 @@ for detail in runner.results["details"]:
 
 ### 容错语义
 
-未知 section/键、类型错误、JSON 损坏或文件缺失只打 warning，不阻断运行——未知键按忽略处理，便于发现拼写错误；配置文件是纯加分项，坏掉不会让测试跑不起来。
+未知 section/键、类型错误、JSON 损坏或文件缺失只打 warning，不阻断运行——未知键按忽略处理，便于发现拼写错误；配置文件是纯加分项，坏掉不会让测试跑不起来。该宽容语义仅适用于默认的 `.symtest/symtest.json`；显式指定的 `--defaults` 文件采用严格校验，任何问题都会报错退出（见上文）。
 
 配好之后，日常命令简化为：
 
@@ -1813,6 +1855,7 @@ symtest compare <file1> <file2> [选项]
 | `--verbose` / `-v` | 详细输出 |
 | `--debug` | 调试模式 |
 | `--num-threads` | 并行线程数，默认 4 |
+| `--error-analysis` | 启用流式全量误差统计，仅对数值型比较器（CSV、HDF5）生效 |
 
 ### 文本文件比较
 
@@ -1901,6 +1944,15 @@ symtest run config.json --error-analysis-all
 # 与比较参数组合使用
 symtest run config.json --error-analysis --csv-rtol 1e-4 --csv-data-filter '>0'
 ```
+
+独立比较入口 `compare-files` / `symtest compare` 同样支持该选项（两者参数一致）：
+
+```bash
+compare-files data1.csv data2.csv --error-analysis
+symtest compare data1.csv data2.csv --error-analysis
+```
+
+CLI 比较入口的统计展示：`--output-format text` 在输出中以 `Error Analysis:` 区块列出全部统计量，`--output-format json` 写入结果的 `error_stats` 字段。与 `symtest run` 一致，统计仅在比较失败时输出。
 
 **Python API**：
 

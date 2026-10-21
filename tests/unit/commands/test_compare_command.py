@@ -71,3 +71,59 @@ def test_compare_main_missing_file_exits_nonzero(tmp_path, monkeypatch):
 
     assert exit_code == 1
 
+
+def test_compare_main_error_analysis_json_output(tmp_path, monkeypatch, capsys):
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("v\n1.0\n2.0\n", encoding="utf-8")
+    file2.write_text("v\n1.0\n2.5\n", encoding="utf-8")
+
+    exit_code = run_compare(
+        monkeypatch,
+        [str(file1), str(file2), "--file-type", "csv",
+         "--error-analysis", "--output-format", "json"],
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    stats = payload["error_stats"]
+    assert stats is not None
+    assert stats["total_numeric_cells"] == 2
+    assert stats["mismatched_cells"] == 1
+    assert stats["max_abs_error"] == pytest.approx(0.5)
+
+
+def test_compare_main_error_analysis_text_output(tmp_path, monkeypatch, capsys):
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("v\n1.0\n2.0\n", encoding="utf-8")
+    file2.write_text("v\n1.0\n2.5\n", encoding="utf-8")
+
+    exit_code = run_compare(
+        monkeypatch,
+        [str(file1), str(file2), "--file-type", "csv", "--error-analysis"],
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Error Analysis:" in out
+    assert "total_numeric_cells: 2" in out
+    assert "max_abs_error:" in out
+
+
+def test_compare_main_error_analysis_ignored_for_text(tmp_path, monkeypatch, capsys):
+    file1 = tmp_path / "a.txt"
+    file2 = tmp_path / "b.txt"
+    file1.write_text("same\n", encoding="utf-8")
+    file2.write_text("same\n", encoding="utf-8")
+
+    exit_code = run_compare(
+        monkeypatch,
+        [str(file1), str(file2), "--file-type", "text", "--error-analysis"],
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Files are identical" in out
+    assert "Error Analysis:" not in out
+

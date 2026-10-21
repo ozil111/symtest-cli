@@ -67,6 +67,7 @@ Responsibilities by package (file-level details and public APIs live in source):
 | `symtest validate` | `symtest.cli:run_validate` |
 | `symtest schema` | `symtest.cli:run_schema` |
 | `symtest compare` | `symtest.cli:run_compare` |
+| `compare-files` | `symtest.commands.compare:main` (standalone entry, shares argument assembly and execution logic with `symtest compare`; kept for legacy users and Windows console-script usage) |
 
 ## 3. Config Pipeline
 

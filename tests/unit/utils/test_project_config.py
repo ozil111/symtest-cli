@@ -15,6 +15,7 @@ from symtest import cli
 from symtest.utils.project_config import (
     DEFAULT_CONFIG_FILE,
     PROJECT_CONFIG_RELATIVE_PATH,
+    ProjectConfigError,
     load_project_config,
     merge_project_config,
     resolve_path,
@@ -108,6 +109,115 @@ class TestLoadProjectConfig:
 
         assert load_project_config(tmp_path) == {}
         assert "'run' section must be an object" in caplog.text
+
+
+# =========================================================================
+# load_project_config(explicit_path=...) — strict mode for --defaults
+# =========================================================================
+
+
+def write_explicit_defaults(workspace, data, name=".symtest/validation.json"):
+    path = workspace / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+class TestLoadProjectConfigExplicit:
+    def test_valid_explicit_file_is_loaded(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "validation_cases.json", "workers": 1},
+            "report": {"text": "reports/validation.txt"},
+        })
+
+        config = load_project_config(tmp_path, explicit_path=str(path))
+
+        assert config == {
+            "run": {"config_file": "validation_cases.json", "workers": 1},
+            "report": {"text": "reports/validation.txt"},
+        }
+
+    def test_relative_path_resolved_against_workspace(self, tmp_path):
+        write_explicit_defaults(tmp_path, {"run": {"config_file": "cases.json"}})
+
+        config = load_project_config(tmp_path, explicit_path=".symtest/validation.json")
+
+        assert config["run"]["config_file"] == "cases.json"
+
+    def test_absolute_path_used_as_is(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {"run": {"config_file": "cases.json"}})
+
+        config = load_project_config(tmp_path, explicit_path=str(path.resolve()))
+
+        assert config["run"]["config_file"] == "cases.json"
+
+    def test_explicit_file_replaces_default_file(self, tmp_path):
+        # Conflicting values: the explicit file must win and the default
+        # .symtest/symtest.json must NOT be merged in.
+        write_project_config(tmp_path, {
+            "run": {"config_file": "cases.json", "workers": 8, "parallel": True},
+        })
+        write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "validation_cases.json", "workers": 1},
+        })
+
+        config = load_project_config(tmp_path, explicit_path=".symtest/validation.json")
+
+        assert config["run"] == {"config_file": "validation_cases.json", "workers": 1}
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(ProjectConfigError, match="not found"):
+            load_project_config(tmp_path, explicit_path=".symtest/absent.json")
+
+    def test_broken_json_raises(self, tmp_path):
+        path = tmp_path / ".symtest" / "broken.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{ not json", encoding="utf-8")
+
+        with pytest.raises(ProjectConfigError, match="cannot read"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_non_object_top_level_raises(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, ["run"])
+
+        with pytest.raises(ProjectConfigError, match="top level must be a JSON object"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_unknown_section_raises(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {"run": {}, "report": {}, "extra": {}})
+
+        with pytest.raises(ProjectConfigError, match="unknown section"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_unknown_key_raises(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {
+            "run": {"with_deps": True, "wiht_deps": True},
+        })
+
+        with pytest.raises(ProjectConfigError, match="unknown key 'run.wiht_deps'"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_wrong_typed_key_raises(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {"run": {"workers": "four"}})
+
+        with pytest.raises(ProjectConfigError, match="'run.workers' expects int"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_non_object_section_raises(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {"run": True})
+
+        with pytest.raises(ProjectConfigError, match="'run' section must be an object"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_default_file_keeps_lenient_behaviour(self, tmp_path, caplog):
+        # Without explicit_path the default file stays lenient (broken file
+        # → warning + empty dict, no exception).
+        path = tmp_path / PROJECT_CONFIG_RELATIVE_PATH
+        path.parent.mkdir()
+        path.write_text("{ not json", encoding="utf-8")
+
+        assert load_project_config(tmp_path) == {}
+        assert "Ignoring unreadable project config" in caplog.text
 
 
 # =========================================================================
@@ -228,6 +338,19 @@ class TestRunParser:
         args = self._parse(["cases.json", "--text-report", "out.txt", "--no-config"])
         assert args.text_report == "out.txt"
         assert args.no_config is True
+
+    def test_defaults_flag_parses(self):
+        args = self._parse(["--defaults", ".symtest/validation.json"])
+        assert args.defaults == ".symtest/validation.json"
+        assert args.no_config is False
+
+    def test_defaults_defaults_to_none(self):
+        args = self._parse(["cases.json"])
+        assert args.defaults is None
+
+    def test_defaults_and_no_config_are_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            self._parse(["--defaults", ".symtest/validation.json", "--no-config"])
 
 
 # =========================================================================
@@ -383,6 +506,107 @@ class TestRunTestsProjectConfig:
 
         assert result
         assert captured["config_file"] == str((workspace / "cases.json").resolve())
+
+
+class TestRunTestsDefaults:
+    """``--defaults FILE``: explicit defaults file replaces the default one."""
+
+    def _run(self, tmp_path, monkeypatch, **arg_overrides):
+        config = tmp_path / "cases.json"
+        config.write_text('{"test_cases": []}', encoding="utf-8")
+        captured = {}
+
+        class CapturingRunner(DummyRunner):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured.update(kwargs)
+
+        monkeypatch.setattr("symtest.commands.run.JSONRunner", CapturingRunner)
+        result = cli.run_tests(make_args(workspace=str(tmp_path), **arg_overrides))
+        return result, captured
+
+    def test_defaults_file_options_reach_runner(self, tmp_path, monkeypatch):
+        (tmp_path / "validation_cases.json").write_text(
+            '{"test_cases": []}', encoding="utf-8")
+        write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "validation_cases.json", "workers": 1,
+                    "error_analysis_all": True},
+        })
+
+        result, captured = self._run(tmp_path, monkeypatch,
+                                     defaults=".symtest/validation.json", parallel=False)
+
+        assert result
+        assert captured["config_file"] == str(
+            (tmp_path / "validation_cases.json").resolve())
+        assert captured["error_analysis_all"] is True
+
+    def test_defaults_file_replaces_default_project_config(self, tmp_path, monkeypatch):
+        # Both files exist with conflicting values: only the explicit one counts.
+        write_project_config(tmp_path, {
+            "run": {"config_file": "cases.json", "error_analysis_all": True},
+        })
+        write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "cases.json", "error_analysis_all": False},
+        })
+
+        result, captured = self._run(tmp_path, monkeypatch,
+                                     defaults=".symtest/validation.json")
+
+        assert result
+        assert captured["error_analysis_all"] is False
+
+    def test_cli_overrides_defaults_file(self, tmp_path, monkeypatch):
+        write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "cases.json", "error_analysis_all": True},
+        })
+
+        result, captured = self._run(tmp_path, monkeypatch,
+                                     defaults=".symtest/validation.json",
+                                     error_analysis_all=False)
+
+        assert result
+        assert captured["error_analysis_all"] is False
+
+    def test_missing_defaults_file_aborts_run(self, tmp_path, monkeypatch, caplog):
+        captured = {}
+
+        class CapturingRunner(DummyRunner):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured.update(kwargs)
+
+        monkeypatch.setattr("symtest.commands.run.JSONRunner", CapturingRunner)
+        result = cli.run_tests(make_args(
+            workspace=str(tmp_path), defaults=".symtest/absent.json"))
+
+        assert not result
+        assert "not found" in caplog.text
+        assert not captured  # runner never constructed
+
+    def test_broken_defaults_file_aborts_run(self, tmp_path, monkeypatch, caplog):
+        path = tmp_path / ".symtest" / "broken.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{ not json", encoding="utf-8")
+
+        result, _ = self._run(tmp_path, monkeypatch, defaults=".symtest/broken.json")
+
+        assert not result
+        assert "cannot read defaults file" in caplog.text
+
+    def test_defaults_file_report_paths_resolve_against_workspace(
+            self, tmp_path, monkeypatch):
+        write_explicit_defaults(tmp_path, {
+            "run": {"config_file": "cases.json"},
+            "report": {"text": "reports/validation/test_report.txt"},
+        })
+
+        result, _ = self._run(tmp_path, monkeypatch,
+                              defaults=".symtest/validation.json")
+
+        assert result
+        report = tmp_path / "reports" / "validation" / "test_report.txt"
+        assert report.exists()
 
 
 # =========================================================================

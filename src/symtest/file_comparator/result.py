@@ -175,6 +175,10 @@ class ComparisonResult:
                 lines.append("... more differences not shown")
             if self.similarity is not None:
                 lines.append(f"Similarity Index: {self.similarity:.2f}")
+            if self.error_stats:
+                lines.append("Error Analysis:")
+                for key, value in self.error_stats.items():
+                    lines.append(f"  {key}: {value}")
             if self.channels:
                 lines.append("Channels:")
                 for ch in self.channels:

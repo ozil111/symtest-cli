@@ -6,9 +6,23 @@ config file, parallel settings, history dir, error analysis, dependency
 expansion and report paths).
 
 Option precedence is: command line > project config > built-in defaults.
-Loading never raises: missing, unreadable, unknown or wrong-typed entries
-are warned about and ignored so a bad config file never blocks a run.
+
+Two loading modes exist for ``load_project_config``:
+
+- Default (no *explicit_path*): read ``.symtest/symtest.json`` leniently —
+  a missing, unreadable, unknown or wrong-typed entry is warned about and
+  ignored so a bad config file never blocks a run.
+- Explicit (``--defaults FILE`` on the CLI): *explicit_path* replaces the
+  default file entirely (no stacking with ``.symtest/symtest.json``) and
+  loading is strict — a missing file, broken JSON, a non-object top level,
+  unknown sections/keys or wrong-typed values raise :class:`ProjectConfigError`
+  so the run aborts instead of silently running with different settings.
 """
+
+
+class ProjectConfigError(Exception):
+    """Raised when an explicitly specified defaults file cannot be used."""
+
 
 import json
 import logging
@@ -56,29 +70,58 @@ def _type_matches(value, expected):
     return isinstance(value, expected)
 
 
-def load_project_config(workspace_path):
-    """Load ``.symtest/symtest.json`` from *workspace_path*.
+def load_project_config(workspace_path, explicit_path=None):
+    """Load project defaults from ``.symtest/symtest.json``, or from *explicit_path*.
 
-    Returns a cleaned dict (empty when the file is missing, unreadable or
-    not an object). Unknown sections/keys and wrong-typed values are warned
-    about and ignored; unknown keys do not abort the run.
+    Without *explicit_path* the default file is read leniently: missing,
+    unreadable, unknown or wrong-typed entries are warned about and ignored
+    (an empty dict is returned), never blocking a run.
+
+    With *explicit_path* the given file replaces the default file entirely
+    and loading is strict: any problem (missing file, broken JSON, non-object
+    top level, unknown section/key, wrong-typed value) raises
+    :class:`ProjectConfigError`. Relative *explicit_path* values are resolved
+    against *workspace_path*; absolute paths are used as-is.
+
+    Returns a cleaned dict with ``run`` / ``report`` sections.
     """
-    path = Path(workspace_path) / PROJECT_CONFIG_RELATIVE_PATH
+    if explicit_path is not None:
+        path = Path(explicit_path)
+        if not path.is_absolute():
+            path = Path(workspace_path) / path
+        strict = True
+    else:
+        path = Path(workspace_path) / PROJECT_CONFIG_RELATIVE_PATH
+        strict = False
+
     if not path.is_file():
+        if strict:
+            raise ProjectConfigError(f"defaults file not found: {path}")
         return {}
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
+        if strict:
+            raise ProjectConfigError(f"cannot read defaults file {path}: {exc}") from exc
         logger.warning("Ignoring unreadable project config %s: %s", path, exc)
         return {}
 
     if not isinstance(raw, dict):
+        if strict:
+            raise ProjectConfigError(
+                f"defaults file {path}: top level must be a JSON object")
         logger.warning("Ignoring project config %s: top level must be a JSON object", path)
         return {}
 
-    for key in sorted(set(raw) - set(_GROUP_KEYS)):
-        logger.warning("Unknown section '%s' in project config %s (ignored)", key, path)
+    unknown_sections = sorted(set(raw) - set(_GROUP_KEYS))
+    if unknown_sections:
+        listed = ", ".join(repr(s) for s in unknown_sections)
+        if strict:
+            raise ProjectConfigError(
+                f"defaults file {path}: unknown section(s) {listed}")
+        for key in unknown_sections:
+            logger.warning("Unknown section '%s' in project config %s (ignored)", key, path)
 
     cleaned = {}
     for group, keys in _GROUP_KEYS.items():
@@ -86,14 +129,24 @@ def load_project_config(workspace_path):
         if section is None:
             continue
         if not isinstance(section, dict):
+            if strict:
+                raise ProjectConfigError(
+                    f"defaults file {path}: '{group}' section must be an object")
             logger.warning("Ignoring project config %s: '%s' section must be an object", path, group)
             continue
         cleaned_section = {}
         for key, value in section.items():
             expected = keys.get(key)
             if expected is None:
+                if strict:
+                    raise ProjectConfigError(
+                        f"defaults file {path}: unknown key '{group}.{key}'")
                 logger.warning("Unknown key '%s.%s' in project config %s (ignored)", group, key, path)
             elif not _type_matches(value, expected):
+                if strict:
+                    raise ProjectConfigError(
+                        f"defaults file {path}: '{group}.{key}' expects "
+                        f"{expected.__name__}, got {type(value).__name__}")
                 logger.warning("Ignoring '%s.%s' in project config %s: expected %s",
                                group, key, path, expected.__name__)
             else:
