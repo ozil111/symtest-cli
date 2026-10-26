@@ -83,6 +83,39 @@ class FileComparator(ComparatorBase):
                 method_params[key] = params.pop(key)
         return self.compare_files(ctx.baseline, ctx.actual, **method_params)
 
+    @staticmethod
+    def _offset_difference_positions(differences, start_line, start_column):
+        """
+        @brief Offset window-relative difference positions to original file coordinates.
+        @details compare_content reports positions relative to the sliced content
+                 (1-based), but they must reflect positions in the original file:
+                 "line N" shifts by start_line; CSV cell positions
+                 "row N, column M" shift by both start_line and start_column;
+                 CSV per-row positions "row N" shift by start_line.
+        """
+        if start_line > 0 or start_column > 0:
+            import re
+            for diff in differences:
+                if diff.position and isinstance(diff.position, str):
+                    # Position format is "line N"
+                    match = re.match(r'^line (\d+)$', diff.position)
+                    if match:
+                        original_line = int(match.group(1)) + start_line
+                        diff.position = f"line {original_line}"
+                        continue
+                    # CSV cell positions: "row N, column M" (both offsets apply)
+                    match = re.match(r'^row (\d+), column (\d+)$', diff.position)
+                    if match:
+                        original_row = int(match.group(1)) + start_line
+                        original_col = int(match.group(2)) + start_column
+                        diff.position = f"row {original_row}, column {original_col}"
+                        continue
+                    # CSV per-row positions: "row N"
+                    match = re.match(r'^row (\d+)$', diff.position)
+                    if match:
+                        original_row = int(match.group(1)) + start_line
+                        diff.position = f"row {original_row}"
+
     def compare_files(self, file1, file2, start_line=0, end_line=None, start_column=0, end_column=None):
         """
         @brief Compare two files with the specified parameters
@@ -121,31 +154,8 @@ class FileComparator(ComparatorBase):
             self.logger.debug(f"Comparing content")
             identical, differences, truncated = self.compare_content(content1, content2)
 
-            # Adjust line numbers in differences to reflect original file line numbers
-            # compare_content reports positions relative to the sliced content (1-based),
-            # but we need to offset by start_line to reflect positions in the original file
-            if start_line > 0 or start_column > 0:
-                import re
-                for diff in differences:
-                    if diff.position and isinstance(diff.position, str):
-                        # Position format is "line N"
-                        match = re.match(r'^line (\d+)$', diff.position)
-                        if match:
-                            original_line = int(match.group(1)) + start_line
-                            diff.position = f"line {original_line}"
-                            continue
-                        # CSV cell positions: "row N, column M" (both offsets apply)
-                        match = re.match(r'^row (\d+), column (\d+)$', diff.position)
-                        if match:
-                            original_row = int(match.group(1)) + start_line
-                            original_col = int(match.group(2)) + start_column
-                            diff.position = f"row {original_row}, column {original_col}"
-                            continue
-                        # CSV per-row positions: "row N"
-                        match = re.match(r'^row (\d+)$', diff.position)
-                        if match:
-                            original_row = int(match.group(1)) + start_line
-                            diff.position = f"row {original_row}"
+            # Adjust positions in differences to reflect original file coordinates
+            self._offset_difference_positions(differences, start_line, start_column)
 
             # Update result
             result.identical = identical
