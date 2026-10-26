@@ -9,6 +9,9 @@
 """
 
 import re
+import math
+from fractions import Fraction
+from numbers import Integral, Real
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,9 +38,31 @@ class NumericComparisonStats:
     sum_sq_abs_error: float
 
 
-def _as_float_array(values):
-    """Coerce scalar / sequence / ndarray input into a float64 ndarray."""
-    return np.asarray(values, dtype=np.float64).ravel()
+def _as_compare_array(values):
+    """Preserve integers before NumPy can promote a mixed sequence to float.
+
+    Object arrays hold Python integers, including the full int64/uint64 range.
+    Pure floating inputs retain the vectorized float64 path. Precision already
+    lost in a caller-created floating array cannot be recovered here.
+    """
+    if isinstance(values, np.ndarray) and values.dtype.kind in "fc":
+        return np.asarray(values, dtype=np.float64).ravel()
+    arr = np.array(values, dtype=object, copy=True).ravel()
+    has_integer = False
+    for i, value in enumerate(arr):
+        if isinstance(value, Integral):
+            arr[i] = int(value)
+            has_integer = True
+        else:
+            arr[i] = float(value)
+    return arr if has_integer else arr.astype(np.float64)
+
+
+def _finite(values):
+    if values.dtype != object:
+        return np.isfinite(values)
+    return np.fromiter((isinstance(v, int) or math.isfinite(v) for v in values),
+                       dtype=bool, count=values.size)
 
 
 def _symmetric_close(expected, actual, rtol, atol):
@@ -47,6 +72,32 @@ def _symmetric_close(expected, actual, rtol, atol):
     @note NaN == NaN is treated as equal (equal_nan=True semantics).
           +Inf == +Inf and -Inf == -Inf are treated as equal.
     """
+    if expected.dtype == object or actual.dtype == object:
+        close = np.zeros(expected.size, dtype=bool)
+        abs_err = np.empty(expected.size, dtype=np.float64)
+        for i, (a, b) in enumerate(zip(expected, actual)):
+            # Convert NumPy integer scalars too: fixed-width subtraction can
+            # overflow, including when signed and unsigned arrays are mixed.
+            a = int(a) if isinstance(a, Integral) else float(a)
+            b = int(b) if isinstance(b, Integral) else float(b)
+            if ((isinstance(a, int) or math.isfinite(a)) and
+                    (isinstance(b, int) or math.isfinite(b))):
+                if isinstance(a, int) and isinstance(b, int):
+                    error = abs(b - a)
+                elif isinstance(a, int) or isinstance(b, int):
+                    # Preserve the exact represented float when paired with an
+                    # integer; int-float subtraction would round the integer.
+                    error = abs(Fraction(b) - Fraction(a))
+                else:
+                    error = abs(b - a)
+                tolerance = max(rtol * max(abs(a), abs(b)), atol)
+                close[i] = error <= tolerance
+                abs_err[i] = float(error)
+            else:
+                close[i] = (a == b) or (math.isnan(a) and math.isnan(b))
+                abs_err[i] = np.nan if close[i] else np.inf
+        return close, abs_err
+
     with np.errstate(invalid="ignore"):
         abs_err = np.abs(actual - expected)
     tol = np.maximum(rtol * np.maximum(np.abs(expected), np.abs(actual)), atol)
@@ -76,9 +127,12 @@ def compare_numeric(expected, actual, rtol=1e-5, atol=1e-8,
                         only positions where BOTH values satisfy the filter are compared.
     @param collect_stats bool: If False, skip error statistics (only closeness/mask).
     @return NumericComparisonStats
+    @note Integers are preserved per element, including mixed sequences and
+          full int64/uint64 ranges. Verdict uses unrounded differences;
+          reported magnitude statistics use float64.
     """
-    expected = _as_float_array(expected)
-    actual = _as_float_array(actual)
+    expected = _as_compare_array(expected)
+    actual = _as_compare_array(actual)
 
     if expected.size != actual.size:
         raise ValueError(
@@ -146,10 +200,11 @@ def compare_numeric(expected, actual, rtol=1e-5, atol=1e-8,
     # ── Error statistics (over ALL kept numeric cells, matching ones included) ──
     # Non-finite cells (NaN / inf) are excluded from magnitude statistics;
     # identical NaN / inf pairs contribute zero error by definition.
-    finite = np.isfinite(exp_keep) & np.isfinite(act_keep)
+    finite = _finite(exp_keep) & _finite(act_keep)
     stat_idx = keep_idx[finite]
-    stat_abs_err = abs_err[finite]
-    stat_expected = exp_keep[finite]
+    # Magnitude statistics use float64 after exact verdict calculation.
+    stat_abs_err = abs_err[finite].astype(np.float64)
+    stat_expected = np.asarray(exp_keep[finite], dtype=np.float64)
     n_stat = int(np.sum(finite))
 
     if n_stat > 0:
@@ -229,7 +284,10 @@ def parse_data_filter(filter_str, logger=None):
             return None
 
         use_abs, op, value_str = match.groups()
-        value = float(value_str)
+        try:
+            value = int(value_str)
+        except ValueError:
+            value = float(value_str)
 
         op_map = {
             ">": np.greater,
@@ -243,9 +301,15 @@ def parse_data_filter(filter_str, logger=None):
 
         def filter_func(data):
             arr = np.asarray(data)
-            if not np.issubdtype(arr.dtype, np.number):
+            if arr.dtype == object:
+                if not all(isinstance(v, Real) for v in arr.flat):
+                    return np.ones_like(arr, dtype=bool)
+            elif not np.issubdtype(arr.dtype, np.number):
                 # For non-numeric types, do not filter.
                 return np.ones_like(arr, dtype=bool)
+            if np.issubdtype(arr.dtype, np.integer):
+                # abs(int64.min) overflows in a fixed-width array.
+                arr = arr.astype(object)
             target = np.abs(arr) if use_abs else arr
             return op_func(target, value)
 

@@ -124,7 +124,7 @@ class FileComparator(ComparatorBase):
             # Adjust line numbers in differences to reflect original file line numbers
             # compare_content reports positions relative to the sliced content (1-based),
             # but we need to offset by start_line to reflect positions in the original file
-            if start_line > 0:
+            if start_line > 0 or start_column > 0:
                 import re
                 for diff in differences:
                     if diff.position and isinstance(diff.position, str):
@@ -133,6 +133,19 @@ class FileComparator(ComparatorBase):
                         if match:
                             original_line = int(match.group(1)) + start_line
                             diff.position = f"line {original_line}"
+                            continue
+                        # CSV cell positions: "row N, column M" (both offsets apply)
+                        match = re.match(r'^row (\d+), column (\d+)$', diff.position)
+                        if match:
+                            original_row = int(match.group(1)) + start_line
+                            original_col = int(match.group(2)) + start_column
+                            diff.position = f"row {original_row}, column {original_col}"
+                            continue
+                        # CSV per-row positions: "row N"
+                        match = re.match(r'^row (\d+)$', diff.position)
+                        if match:
+                            original_row = int(match.group(1)) + start_line
+                            diff.position = f"row {original_row}"
 
             # Update result
             result.identical = identical

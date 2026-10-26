@@ -108,6 +108,11 @@ starting point.
    exists and its class imports succeed (use `from symtest.file_comparator...`,
    not other package names). To author a new one, see Workflow 3.
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
+   Preserve integer values when preparing numeric data, especially IDs above
+   2**53: the numeric core supports mixed integer/float sequences and full
+   int64/uint64 ranges, but cannot recover precision already lost by converting
+   integers into a floating array. Use zero tolerances when exact equality is
+   required; reported error magnitudes remain floating-point statistics.
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
 5. When results intentionally change and new output is correct, update baselines:

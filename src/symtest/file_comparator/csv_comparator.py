@@ -16,6 +16,26 @@ from .text_comparator import TextComparator
 from .result import Difference
 from .numeric_compare import compare_numeric, parse_data_filter
 
+
+def _parse_cell_number(cell):
+    """
+    @brief Parse a CSV cell into int (exact) or float, or None if non-numeric.
+    @details Integer text keeps Python int so the shared numeric core can use
+             exact integer comparisons (avoids float64 rounding loss for large
+             integers, e.g. 2**53 vs 2**53+1); float text falls back to float.
+    """
+    if not isinstance(cell, str):
+        return None
+    try:
+        return int(cell)
+    except ValueError:
+        pass
+    try:
+        return float(cell)
+    except ValueError:
+        return None
+
+
 class CsvComparator(TextComparator):
     """
     @brief Comparator for CSV files with row and column comparison
@@ -62,8 +82,11 @@ class CsvComparator(TextComparator):
         @details Reads CSV content and parses it into a structured format,
                  supporting line and column range selection
         """
-        # First read the file as text
-        text_content = super().read_content(file_path, start_line, end_line, start_column, end_column)
+        # Line ranges apply at the text layer (one CSV record per text line).
+        # Column ranges are CSV FIELD indices, applied after parsing below —
+        # passing them to the text layer would slice characters and destroy
+        # the CSV field structure before parsing.
+        text_content = super().read_content(file_path, start_line, end_line, 0, None)
         
         # Join the lines to create a CSV string
         csv_text = ''.join(text_content)
@@ -110,11 +133,11 @@ class CsvComparator(TextComparator):
         max_diffs = 10
 
         # ── Numeric core accumulators ──
-        # error_analysis mode collects ALL filtered numeric cells (matching or not)
-        # and delegates statistics to the shared numeric core.
-        stats_exp = []
-        stats_act = []
-        stats_pos = []  # (row, col) 0-based, aligned with stats_exp/stats_act
+        # Aggregate the SAME per-row comparisons that determine the verdict.
+        total = mismatched = 0
+        sum_abs = sum_sq = 0.0
+        max_abs_error = max_rel_error = None
+        max_abs_error_at = max_rel_error_at = None
 
         # Check row count
         if len(content1) != len(content2):
@@ -144,30 +167,15 @@ class CsvComparator(TextComparator):
             row_act = []
             row_pos = []  # (row, col) 0-based
             for j, (cell1, cell2) in enumerate(zip(row1, row2)):
-                num1 = num2 = None
-                try:
-                    num1 = float(cell1)
-                    num2 = float(cell2)
-                except (ValueError, TypeError):
-                    pass  # Non-numeric
+                num1 = _parse_cell_number(cell1)
+                num2 = _parse_cell_number(cell2)
 
                 is_numeric = num1 is not None and num2 is not None
-                passes_filter = True
-                if is_numeric and self.filter_func:
-                    # vectorized filter applied element-wise on scalar input
-                    if not (bool(self.filter_func(np.asarray(num1))) and
-                            bool(self.filter_func(np.asarray(num2)))):
-                        passes_filter = False
-
-                if is_numeric and passes_filter:
+                if is_numeric:
                     # Counted as a numeric cell (regardless of text equality)
                     row_exp.append(num1)
                     row_act.append(num2)
                     row_pos.append((i, j))
-                    if self.error_analysis:
-                        stats_exp.append(num1)
-                        stats_act.append(num2)
-                        stats_pos.append((i, j))
 
                 if cell1 == cell2:
                     continue
@@ -189,8 +197,23 @@ class CsvComparator(TextComparator):
             if row_exp:
                 row_res = compare_numeric(
                     row_exp, row_act, rtol=self.rtol, atol=self.atol,
-                    filter_func=self.filter_func, collect_stats=False,
+                    filter_func=self.filter_func, collect_stats=self.error_analysis,
                 )
+                if self.error_analysis:
+                    total += row_res.total
+                    mismatched += row_res.mismatched
+                    sum_abs += row_res.sum_abs_error
+                    sum_sq += row_res.sum_sq_abs_error
+                    if row_res.max_abs_error is not None and (
+                            max_abs_error is None or row_res.max_abs_error > max_abs_error):
+                        max_abs_error = row_res.max_abs_error
+                        ri, cj = row_pos[row_res.max_abs_error_index]
+                        max_abs_error_at = f"row {ri+1}, column {cj+1}"
+                    if row_res.max_rel_error is not None and (
+                            max_rel_error is None or row_res.max_rel_error > max_rel_error):
+                        max_rel_error = row_res.max_rel_error
+                        ri, cj = row_pos[row_res.max_rel_error_index]
+                        max_rel_error_at = f"row {ri+1}, column {cj+1}"
                 for k, is_mismatch in enumerate(row_res.mismatch_mask):
                     if is_mismatch and len(differences) < max_diffs:
                         ri, cj = row_pos[k]
@@ -206,31 +229,17 @@ class CsvComparator(TextComparator):
 
         truncated = len(differences) >= max_diffs
 
-        # ── Store error stats via the shared numeric core ──
-        if self.error_analysis and stats_exp:
-            res = compare_numeric(
-                stats_exp, stats_act, rtol=self.rtol, atol=self.atol,
-                filter_func=self.filter_func, collect_stats=True,
-            )
-            max_abs_error = res.max_abs_error
-            max_rel_error = res.max_rel_error
-            max_abs_error_at = None
-            max_rel_error_at = None
-            if max_abs_error is not None:
-                ri, cj = stats_pos[res.max_abs_error_index]
-                max_abs_error_at = f"row {ri+1}, column {cj+1}"
-            if max_rel_error is not None:
-                ri, cj = stats_pos[res.max_rel_error_index]
-                max_rel_error_at = f"row {ri+1}, column {cj+1}"
+        # ── Store accumulated statistics without a second comparison ──
+        if self.error_analysis and total:
             self._error_stats = {
-                "total_numeric_cells": res.total,
-                "mismatched_cells": res.mismatched,
+                "total_numeric_cells": total,
+                "mismatched_cells": mismatched,
                 "max_abs_error": max_abs_error,
                 "max_abs_error_at": max_abs_error_at,
                 "max_rel_error": max_rel_error,
                 "max_rel_error_at": max_rel_error_at,
-                "mean_abs_error": res.mean_abs_error,
-                "rms_abs_error": res.rms_abs_error,
+                "mean_abs_error": sum_abs / total,
+                "rms_abs_error": float(np.sqrt(sum_sq / total)),
             }
 
         if not differences:

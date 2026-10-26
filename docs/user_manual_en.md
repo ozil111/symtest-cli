@@ -309,9 +309,9 @@ Fields for each comparison rule:
 | `baseline` | Yes | Path to the baseline/reference file (relative paths resolved against workspace) |
 | `type` | No | Comparator type: `text`, `json`, `csv`, `xml`, `h5`, `binary`; auto-detected by extension if omitted |
 | `start_line` | No | Starting line number (1-based), compare from this line onward |
-| `end_line` | No | Ending line number (1-based), compare up to this line |
-| `start_column` | No | Starting column number (1-based), compare from this column onward |
-| `end_column` | No | Ending column number (1-based), compare up to this column |
+| `end_line` | No | Ending line number (1-based), compare up to and including this line |
+| `start_column` | No | Starting column number (1-based), compare from this column onward; CSV/H5 select data columns (CSV fields / matrix columns), the text comparator selects character columns |
+| `end_column` | No | Ending column number (1-based), compare up to and including this column; CSV/H5 select data columns, the text comparator selects character columns |
 | Others | No | Passed through to the corresponding comparator, e.g., `rtol`, `atol`, `encoding`, `tables`, `data_filter` |
 
 ```json
@@ -1882,7 +1882,7 @@ compare-files data1.csv data2.csv --csv-data-filter '<=0.01'
 | `--csv-quotechar` | Quote character, default `"` |
 | `--csv-data-filter` | Data filter expression: `>`, `>=`, `<`, `<=`, `==`; supports `abs` prefix. Only compares numeric cells that **both files** satisfy the condition for |
 
-CSV comparison compares cell by cell in row-column structure; numeric cells within tolerance are considered equal. After `--csv-data-filter` filtering, numeric cell pairs that don't satisfy the condition won't report differences. The difference report includes row/column count mismatches and cell inconsistencies, listing up to 10 entries.
+CSV comparison compares cell by cell in row-column structure; numeric cells within tolerance are considered equal. After `--csv-data-filter` filtering, numeric cell pairs that don't satisfy the condition won't report differences. The difference report includes row/column count mismatches and cell inconsistencies, listing up to 10 entries. Integer cells retain exact integer semantics (e.g., `9007199254740992` vs `9007199254740993` differ under zero tolerance), including mixed integer/float cells and the full int64 / uint64 ranges; unrelated cells cannot force a floating conversion that loses integer differences. CSV error statistics accumulate the per-row verdict calculations directly, keeping statistics consistent with the verdict; error magnitudes are still reported as floating-point numbers. H5 and the data lane share these integer comparison rules. Python callers should preserve original integer types: the framework cannot recover precision already lost in floating input arrays. CSV file reads still load the full content; per-row statistics only reduce additional statistics memory.
 
 #### Error Analysis (--error-analysis)
 

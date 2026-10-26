@@ -155,7 +155,8 @@ class TestReadContentRange:
         create_h5(f1, {"ds": np.arange(10, dtype=float)})
         comp = H5Comparator()
         content = comp.read_content(f1, start_line=2, end_line=5)
-        np.testing.assert_array_equal(content["ds"]["data"], [2.0, 3.0, 4.0])
+        # end_line is 0-based inclusive (file-lane contract): rows 2..5
+        np.testing.assert_array_equal(content["ds"]["data"], [2.0, 3.0, 4.0, 5.0])
 
     def test_2d_range_slicing(self, tmp_path):
         f1 = tmp_path / "a.h5"
@@ -163,7 +164,8 @@ class TestReadContentRange:
         create_h5(f1, {"ds": data})
         comp = H5Comparator()
         content = comp.read_content(f1, start_line=1, end_line=3, start_column=1, end_column=4)
-        expected = data[1:3, 1:4]
+        # end_line/end_column are 0-based inclusive: rows 1..3, columns 1..4
+        expected = data[1:4, 1:5]
         np.testing.assert_array_equal(content["ds"]["data"], expected)
 
     def test_end_line_beyond_shape(self, tmp_path):
@@ -172,6 +174,16 @@ class TestReadContentRange:
         comp = H5Comparator()
         content = comp.read_content(f1, end_line=100)
         np.testing.assert_array_equal(content["ds"]["data"], [1.0, 2.0])
+
+    def test_scalar_dataset_read_without_window_error(self, tmp_path):
+        """Scalar (0-d) datasets must be read without window errors."""
+        f1 = tmp_path / "a.h5"
+        create_h5(f1, {"s": np.array(1)})
+        comp = H5Comparator()
+        content = comp.read_content(f1)
+        assert content["s"]["shape"] == ()
+        assert "read_error" not in content["s"]
+        assert content["s"]["data"] == 1
 
 
 # ===========================================================================
@@ -400,6 +412,23 @@ class TestCompareAttributes:
 class TestCompareContentNumericData:
     """Test numeric data comparison including NaN and tolerance."""
 
+    @pytest.mark.parametrize("size", [2, 1_000_000])
+    @pytest.mark.parametrize("dtype,value", [(np.int64, -2**63), (np.uint64, 2**64 - 2)])
+    def test_integer_extremes_in_memory_and_chunks(self, tmp_path, size, dtype, value):
+        baseline = np.zeros(size, dtype=dtype)
+        actual = baseline.copy()
+        baseline[-1] = value
+        actual[-1] = value + 1
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        create_h5(f1, {"ds": baseline})
+        create_h5(f2, {"ds": actual})
+        result = H5Comparator(rtol=0, atol=0, error_analysis=True).compare_files(f1, f2)
+        assert not result.identical
+        assert result.error is None
+        assert result.error_stats["total_numeric_cells"] == size
+        assert result.error_stats["mismatched_cells"] == 1
+        assert result.error_stats["max_abs_error"] == 1
+
     def test_nan_values_equal_with_equal_nan(self):
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
@@ -420,6 +449,52 @@ class TestCompareContentNumericData:
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.01, 2.0])}}
         identical, diffs, _ = comp.compare_content(c1, c2)
         assert not identical
+
+    def test_scalar_dataset_difference_detected(self):
+        """Regression: scalar (0-d) datasets 1 vs 99 must NOT silently pass."""
+        comp = H5Comparator()
+        c1 = {"ds": {"type": "dataset", "shape": (), "dtype": "int64", "attrs": {}, "data": np.int64(1)}}
+        c2 = {"ds": {"type": "dataset", "shape": (), "dtype": "int64", "attrs": {}, "data": np.int64(99)}}
+        identical, diffs, _ = comp.compare_content(c1, c2)
+        assert not identical
+
+    def test_scalar_dataset_identical(self):
+        comp = H5Comparator()
+        c1 = {"ds": {"type": "dataset", "shape": (), "dtype": "float64", "attrs": {}, "data": np.float64(1.5)}}
+        c2 = {"ds": {"type": "dataset", "shape": (), "dtype": "float64", "attrs": {}, "data": np.float64(1.5)}}
+        identical, _, _ = comp.compare_content(c1, c2)
+        assert identical
+
+    def test_read_error_fails_comparison(self):
+        """Regression: a dataset whose data failed to read must fail loudly."""
+        comp = H5Comparator()
+        c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {},
+                     "read_error": "simulated read failure"}}
+        c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {},
+                     "data": np.array([1.0, 2.0])}}
+        identical, diffs, _ = comp.compare_content(c1, c2)
+        assert not identical
+        assert any(d.diff_type == "error" for d in diffs)
+
+    def test_large_integer_precision_no_float_collapse(self):
+        """Regression: 2**53 vs 2**53+1 must not collapse onto the same float64."""
+        comp = H5Comparator(rtol=0.0, atol=0.0)
+        c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "int64", "attrs": {},
+                     "data": np.array([2**53, 10], dtype=np.int64)}}
+        c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "int64", "attrs": {},
+                     "data": np.array([2**53 + 1, 10], dtype=np.int64)}}
+        identical, diffs, _ = comp.compare_content(c1, c2)
+        assert not identical
+
+    def test_large_integer_within_rtol(self):
+        """Large integers differing within rtol still pass on the int lane."""
+        comp = H5Comparator(rtol=1e-5, atol=0.0)
+        c1 = {"ds": {"type": "dataset", "shape": (1,), "dtype": "int64", "attrs": {},
+                     "data": np.array([2**53], dtype=np.int64)}}
+        c2 = {"ds": {"type": "dataset", "shape": (1,), "dtype": "int64", "attrs": {},
+                     "data": np.array([2**53 + 2], dtype=np.int64)}}
+        identical, _, _ = comp.compare_content(c1, c2)
+        assert identical
 
 
 # ===========================================================================
@@ -645,6 +720,118 @@ class TestCompareContentChunked:
         self._create_large_h5(f1, data1)
         self._create_large_h5(f2, data2)
         result = compare(f1, f2)
+        assert not result.identical
+
+    def test_large_window_excludes_tail_difference(self, tmp_path):
+        """Regression: the chunked lane must honor the line window.
+
+        A tail difference outside the comparison window must NOT fail the
+        comparison; the same difference inside the window must fail it.
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[-1] = 1.0  # tail difference
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+
+        # Full comparison detects the tail difference
+        result = compare(f1, f2)
+        assert not result.identical
+
+        # Window limited to the first 10 rows excludes the tail difference
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_line=0, end_line=9)
+        assert result.identical
+
+        # Window covering the tail must detect it (end inclusive)
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_line=1_099_000, end_line=1_099_999)
+        assert not result.identical
+
+    def test_large_2d_window_excludes_column_difference(self, tmp_path):
+        """The chunked lane must honor the column window on axis 1."""
+        data1 = np.zeros((1100, 1000))
+        data2 = np.zeros((1100, 1000))
+        data2[0, 999] = 1.0  # difference in the last column
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+
+        # Column window limited to the first two columns excludes the diff
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_line=0, end_line=9,
+                                    start_column=0, end_column=1)
+        assert result.identical
+
+    def test_large_error_analysis_produces_stats(self, tmp_path):
+        """Regression: error_analysis on the chunked lane must yield stats.
+
+        Previously the chunked branch always passed collect_stats=False, so
+        requesting error analysis on a large dataset produced empty stats.
+        """
+        data1 = np.ones(1_100_000)
+        data2 = np.ones(1_100_000)
+        data2[5000] = 2.0  # one differing cell
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+
+        comp = H5Comparator(error_analysis=True)
+        result = comp.compare_files(f1, f2)
+        assert not result.identical
+        assert result.error_stats is not None
+        assert result.error_stats["total_numeric_cells"] == 1_100_000
+        assert result.error_stats["mismatched_cells"] == 1
+        assert result.error_stats["max_abs_error"] == 1.0
+
+    def test_large_error_analysis_stats_cover_window_only(self, tmp_path):
+        """Chunked error-analysis stats cover the windowed cells, not the whole dataset."""
+        data1 = np.ones(1_100_000)
+        data2 = np.ones(1_100_000)
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+
+        comp = H5Comparator(error_analysis=True)
+        result = comp.compare_files(f1, f2, start_line=0, end_line=99)
+        assert result.identical
+        assert result.error_stats is not None
+        assert result.error_stats["total_numeric_cells"] == 100
+
+
+# ===========================================================================
+# compare_files - line/column window semantics (end inclusive)
+# ===========================================================================
+
+class TestCompareFilesWindow:
+    """End-to-end window semantics: end_line/end_column are 0-based inclusive."""
+
+    def test_end_line_includes_last_window_row(self, tmp_path):
+        """Regression: end_line=1 means rows 0..1; a difference on row 1 must be caught.
+
+        Previously the small-dataset branch sliced exclusively, so the last
+        row of the window was silently skipped.
+        """
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        create_h5(f1, {"ds": np.array([1.0, 10.0, 3.0])})
+        create_h5(f2, {"ds": np.array([1.0, 99.0, 3.0])})
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_line=0, end_line=1)
+        assert not result.identical
+
+    def test_end_column_includes_last_window_column(self, tmp_path):
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        create_h5(f1, {"ds": np.array([[1.0, 10.0], [3.0, 4.0]])})
+        create_h5(f2, {"ds": np.array([[1.0, 99.0], [3.0, 4.0]])})
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_column=0, end_column=1)
         assert not result.identical
 
 

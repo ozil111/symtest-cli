@@ -105,24 +105,34 @@ class H5Comparator(FileComparator):
                     try:
                         # Threshold for chunk-based reading (1 million elements = ~8MB for float64)
                         # For datasets smaller than this, read entire dataset for efficiency
-                        if obj.size < 1000000:
+                        if obj.shape == ():
+                            # Scalar / 0-d dataset: the line/column window has
+                            # no axis to apply; read the scalar as-is.
+                            data = obj[()]
+                            dataset_info['data'] = data
+                            self.logger.debug(f"Collected scalar dataset: {name}")
+                        elif obj.size < 1000000:
                             # Small dataset: read entire dataset into memory
                             data = obj[:]
                             if isinstance(data, np.ndarray):
+                                # Window semantics (0-based, end inclusive) match
+                                # the file-lane base contract: start_line/end_line
+                                # select rows, start_column/end_column select
+                                # columns (axis 1, 2D+ only).
                                 if end_line is None:
                                     end_line_actual = data.shape[0]
                                 else:
-                                    end_line_actual = min(end_line, data.shape[0])
-                                    
+                                    end_line_actual = min(end_line + 1, data.shape[0])
+
                                 if len(data.shape) == 1:
                                     data = data[start_line:end_line_actual]
                                 elif len(data.shape) > 1:
                                     if end_column is None:
                                         end_column_actual = data.shape[1]
                                     else:
-                                        end_column_actual = min(end_column, data.shape[1])
+                                        end_column_actual = min(end_column + 1, data.shape[1])
                                     data = data[start_line:end_line_actual, start_column:end_column_actual]
-                            
+
                             dataset_info['data'] = data
                             self.logger.debug(f"Collected full data for small dataset: {name} (size: {obj.size})")
                         else:
@@ -132,9 +142,12 @@ class H5Comparator(FileComparator):
                             dataset_info['dataset_path'] = name  # Store dataset path for later chunked reading
                             dataset_info['needs_chunked_reading'] = True
                             self.logger.debug(f"Marked large dataset for chunked reading: {name} (size: {obj.size})")
-                        
+
                     except Exception as e:
                         self.logger.error(f"Error reading data from {name}: {str(e)}")
+                        # Record the failure so comparison can fail loudly
+                        # instead of silently skipping this dataset's data.
+                        dataset_info['read_error'] = str(e)
                     
                     content[name] = dataset_info
                     processed_paths.add(name)
@@ -363,9 +376,22 @@ class H5Comparator(FileComparator):
                     identical = False
                 
                 # Compare data content
-                if 'data' in table1 and 'data' in table2:
-                    data1 = table1['data']
-                    data2 = table2['data']
+                # A read error on either side must fail the comparison loudly;
+                # a dataset whose data could not be read must never silently pass.
+                read_error = table1.get('read_error') or table2.get('read_error')
+                if read_error:
+                    differences.append(self._create_difference(
+                        position=table_name,
+                        expected="Data read successfully",
+                        actual=f"Data read failed: {read_error}",
+                        diff_type="error"
+                    ))
+                    identical = False
+                elif 'data' in table1 and 'data' in table2:
+                    # np.asarray normalizes scalars / 0-d values into arrays so
+                    # they flow through the same comparison as array data.
+                    data1 = np.asarray(table1['data'])
+                    data2 = np.asarray(table2['data'])
                     
                     # Check if this is a large dataset that needs chunked comparison
                     if table1.get('needs_chunked_reading') or table2.get('needs_chunked_reading'):
@@ -385,13 +411,33 @@ class H5Comparator(FileComparator):
                             ))
                             identical = False
                         else:
-                            dataset_diff = self._compare_dataset_chunked(
-                                table1, table2, table_name, file1_path, file2_path
+                            # Both files share the same comparison window
+                            # (read_content stored it in the content metadata).
+                            dataset_diff, ea = self._compare_dataset_chunked(
+                                table1, table2, table_name, file1_path, file2_path,
+                                start_line=content1.get('_start_line', 0),
+                                end_line=content1.get('_end_line'),
+                                start_column=content1.get('_start_column', 0),
+                                end_column=content1.get('_end_column'),
                             )
                             if dataset_diff:
                                 differences.extend(dataset_diff)
                                 identical = False
-                    elif isinstance(data1, np.ndarray) and isinstance(data2, np.ndarray):
+                            # ── Error analysis: merge chunked statistics ──
+                            if self.error_analysis and ea:
+                                _ea_total += ea["total"]
+                                _ea_mismatched += ea["mismatched"]
+                                _ea_sum_abs += ea["sum_abs"]
+                                _ea_sum_sq += ea["sum_sq"]
+                                if ea["max_abs"] is not None:
+                                    if _ea_max_abs is None or ea["max_abs"] > _ea_max_abs:
+                                        _ea_max_abs = ea["max_abs"]
+                                        _ea_max_abs_at = ea["max_abs_at"]
+                                if ea["max_rel"] is not None:
+                                    if _ea_max_rel is None or ea["max_rel"] > _ea_max_rel:
+                                        _ea_max_rel = ea["max_rel"]
+                                        _ea_max_rel_at = ea["max_rel_at"]
+                    else:
                         # Small dataset: already in memory, compare directly
                         try:
                             # 应用过滤器
@@ -567,7 +613,8 @@ class H5Comparator(FileComparator):
         """Parse data filter string and return a vectorized filter function (delegates to numeric core)"""
         return parse_data_filter(self.data_filter, logger=self.logger)
     
-    def _compare_dataset_chunked(self, table1, table2, table_name, file1_path, file2_path):
+    def _compare_dataset_chunked(self, table1, table2, table_name, file1_path, file2_path,
+                                 start_line=0, end_line=None, start_column=0, end_column=None):
         """
         Compare large datasets using chunked reading to avoid loading entire dataset into memory
         @param table1 dict: Dataset info from first file
@@ -575,9 +622,26 @@ class H5Comparator(FileComparator):
         @param table_name str: Name/path of the dataset
         @param file1_path str: Path to first HDF5 file
         @param file2_path str: Path to second HDF5 file
-        @return list: List of Difference objects, empty if datasets are identical
+        @param start_line int: Window start row (0-based, inclusive)
+        @param end_line int: Window end row (0-based, inclusive; None for last row)
+        @param start_column int: Window start column (0-based, inclusive; axis 1 for 2D+)
+        @param end_column int: Window end column (0-based, inclusive; None for last column)
+        @return tuple: (differences, error_stats or None) - list of Difference objects
+               and, when error_analysis is enabled, accumulated statistics
+               {"total", "mismatched", "sum_abs", "sum_sq", "max_abs", "max_abs_at",
+               "max_rel", "max_rel_at"} (None otherwise)
+        @details The line/column window uses the same 0-based, end-inclusive
+                 semantics as the in-memory small-dataset branch. With
+                 error_analysis enabled the whole window is traversed (no
+                 early return on first difference) so statistics cover ALL
+                 numeric cells.
         """
         differences = []
+        ea = None
+        if self.error_analysis:
+            ea = {"total": 0, "mismatched": 0, "sum_abs": 0.0, "sum_sq": 0.0,
+                  "max_abs": None, "max_abs_at": None,
+                  "max_rel": None, "max_rel_at": None}
         dataset_path = table1.get('dataset_path') or table2.get('dataset_path') or table_name
         
         try:
@@ -593,137 +657,97 @@ class H5Comparator(FileComparator):
                         actual=str(ds2.shape),
                         diff_type="structure"
                     ))
-                    return differences
+                    return differences, ea
                 
                 # Determine chunk size (1000 rows at a time, adjustable based on memory constraints)
                 chunk_size = 1000
                 total_rows = ds1.shape[0]
                 
-                # Handle different dimensionalities
-                if len(ds1.shape) == 1:
-                    # 1D array: simple chunking
-                    for start_idx in range(0, total_rows, chunk_size):
-                        end_idx = min(start_idx + chunk_size, total_rows)
-                        
-                        # Read only this slice
-                        slice1 = ds1[start_idx:end_idx]
-                        slice2 = ds2[start_idx:end_idx]
-                        
-                        # Apply filter if specified
-                        if self.filter_func:
-                            mask1 = self.filter_func(slice1)
-                            mask2 = self.filter_func(slice2)
-                            combined_mask = mask1 & mask2
-                            slice1 = slice1[combined_mask]
-                            slice2 = slice2[combined_mask]
-                        
+                ndim = len(ds1.shape)
+
+                # Window bounds (0-based, end inclusive) -> exclusive slice
+                # bounds, capped at the dataset extent like the small-dataset
+                # branch. The chunked lane previously ignored the window
+                # entirely and always compared the full dataset.
+                win_row_start = max(start_line, 0)
+                win_row_end = total_rows if end_line is None else min(end_line + 1, total_rows)
+                win_row_end = max(win_row_end, win_row_start)
+                if ndim >= 2:
+                    total_cols = ds1.shape[1]
+                    win_col_start = max(start_column, 0)
+                    win_col_end = total_cols if end_column is None else min(end_column + 1, total_cols)
+                    win_col_end = max(win_col_end, win_col_start)
+
+                is_numeric = np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number)
+                mismatch_reported = False
+
+                # Chunk along the first dimension; the column window applies
+                # to axis 1 for 2D+ datasets, remaining axes are compared in full.
+                for row_start in range(win_row_start, win_row_end, chunk_size):
+                    row_end = min(row_start + chunk_size, win_row_end)
+
+                    if ndim == 1:
+                        slice1 = ds1[row_start:row_end]
+                        slice2 = ds2[row_start:row_end]
+                        position = f"{table_name}[{row_start}:{row_end}]"
+                    elif ndim == 2:
+                        slice1 = ds1[row_start:row_end, win_col_start:win_col_end]
+                        slice2 = ds2[row_start:row_end, win_col_start:win_col_end]
+                        position = f"{table_name}[{row_start}:{row_end},:]"
+                    else:
+                        slice_key = (slice(row_start, row_end), slice(win_col_start, win_col_end)) + (slice(None),) * (ndim - 2)
+                        slice1 = ds1[slice_key]
+                        slice2 = ds2[slice_key]
+                        position = f"{table_name}[{row_start}:{row_end},...]"
+
+                    # Apply filter if specified (flatten for element-wise masking)
+                    if self.filter_func:
+                        flat1 = slice1.ravel()
+                        flat2 = slice2.ravel()
+                        combined_mask = self.filter_func(flat1) & self.filter_func(flat2)
+                        slice1 = flat1[combined_mask]
+                        slice2 = flat2[combined_mask]
+
+                    if is_numeric:
                         # Compare slices via shared numeric core
-                        if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
-                            if res.mismatched > 0:
+                        res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol,
+                                              collect_stats=self.error_analysis)
+                        if ea is not None:
+                            ea["total"] += res.total
+                            ea["mismatched"] += res.mismatched
+                            ea["sum_abs"] += res.sum_abs_error
+                            ea["sum_sq"] += res.sum_sq_abs_error
+                            if res.max_abs_error is not None:
+                                if ea["max_abs"] is None or res.max_abs_error > ea["max_abs"]:
+                                    ea["max_abs"] = res.max_abs_error
+                                    ea["max_abs_at"] = table_name
+                            if res.max_rel_error is not None:
+                                if ea["max_rel"] is None or res.max_rel_error > ea["max_rel"]:
+                                    ea["max_rel"] = res.max_rel_error
+                                    ea["max_rel_at"] = table_name
+                        if res.mismatched > 0:
+                            if not mismatch_reported:
                                 differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx}]",
+                                    position=position,
                                     expected="Content matches",
                                     actual="Content differs",
                                     diff_type="content"
                                 ))
-                                # Early return on first difference to save time
-                                return differences
-                        else:
-                            if not np.array_equal(slice1, slice2):
-                                differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx}]",
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
-                                return differences
-                
-                elif len(ds1.shape) == 2:
-                    # 2D array: chunk along first dimension
-                    for start_idx in range(0, total_rows, chunk_size):
-                        end_idx = min(start_idx + chunk_size, total_rows)
-                        
-                        # Read slice along first dimension
-                        slice1 = ds1[start_idx:end_idx, :]
-                        slice2 = ds2[start_idx:end_idx, :]
-                        
-                        # Apply filter if specified
-                        if self.filter_func:
-                            mask1 = self.filter_func(slice1)
-                            mask2 = self.filter_func(slice2)
-                            combined_mask = mask1 & mask2
-                            # Flatten for filtering, then reshape
-                            flat1 = slice1.flatten()
-                            flat2 = slice2.flatten()
-                            slice1 = flat1[combined_mask.flatten()]
-                            slice2 = flat2[combined_mask.flatten()]
-                        
-                        # Compare slices via shared numeric core
-                        if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
-                            if res.mismatched > 0:
-                                differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx},:]",
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
-                                return differences
-                        else:
-                            if not np.array_equal(slice1, slice2):
-                                differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx},:]",
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
-                                return differences
-                
-                else:
-                    # Higher dimensional arrays: chunk along first dimension
-                    # This is a simplified approach; for very high-dimensional arrays,
-                    # you might want more sophisticated chunking
-                    for start_idx in range(0, total_rows, chunk_size):
-                        end_idx = min(start_idx + chunk_size, total_rows)
-                        
-                        # Create slice tuple
-                        slice_tuple1 = (slice(start_idx, end_idx),) + (slice(None),) * (len(ds1.shape) - 1)
-                        slice_tuple2 = (slice(start_idx, end_idx),) + (slice(None),) * (len(ds2.shape) - 1)
-                        
-                        slice1 = ds1[slice_tuple1]
-                        slice2 = ds2[slice_tuple2]
-                        
-                        # Apply filter if specified (flatten for filtering)
-                        if self.filter_func:
-                            flat1 = slice1.flatten()
-                            flat2 = slice2.flatten()
-                            mask1 = self.filter_func(flat1)
-                            mask2 = self.filter_func(flat2)
-                            combined_mask = mask1 & mask2
-                            slice1 = flat1[combined_mask]
-                            slice2 = flat2[combined_mask]
-                        
-                        # Compare slices via shared numeric core
-                        if np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number):
-                            res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol, collect_stats=False)
-                            if res.mismatched > 0:
-                                differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx},...]",
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
-                                return differences
-                        else:
-                            if not np.array_equal(slice1, slice2):
-                                differences.append(self._create_difference(
-                                    position=f"{table_name}[{start_idx}:{end_idx},...]",
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
-                                return differences
+                                mismatch_reported = True
+                            # Early return on first difference to save time,
+                            # but only when full-window statistics are not
+                            # requested.
+                            if ea is None:
+                                return differences, ea
+                    else:
+                        if not np.array_equal(slice1, slice2):
+                            differences.append(self._create_difference(
+                                position=position,
+                                expected="Content matches",
+                                actual="Content differs",
+                                diff_type="content"
+                            ))
+                            return differences, ea
                 
         except Exception as e:
             self.logger.error(f"Error in chunked comparison of {table_name}: {str(e)}")
@@ -734,4 +758,4 @@ class H5Comparator(FileComparator):
                 diff_type="error"
             ))
         
-        return differences
+        return differences, ea

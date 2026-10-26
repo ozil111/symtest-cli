@@ -197,6 +197,14 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 - 统一返回 `ComparisonResult`（identical / differences / error / error_stats / command_output / channels），支持 text / json / html 渲染
 - 数据泳道插件可通过 `ChannelData.extra_stats` 附带自定义误差指标，存放在独立命名空间（`ChannelResult.extra_stats`），不可覆盖框架规范指标；但 verdict 仍由框架容差持有——需要自定 verdict 的走自主泳道
 
+#### 6.1.1 窗口与数值比较语义（文件泳道）
+
+- 行列窗口统一 **0-based 闭区间**（`start_line`/`end_line`/`start_column`/`end_column`，end 含端点），断言层负责把用户 1-based 输入转换；CSV 的列窗口按 **CSV 字段**裁剪（不是字符列），H5 的大数据集分块分支同样应用窗口，与内存分支语义一致。差异 position（`line N` / `row N, column M` / `row N`）由泳道基类统一偏移回原始文件坐标
+- H5 标量（0 维）数据集参与数值比较；数据集读取失败记为 `diff_type="error"` 差异并判失败，绝不静默通过
+- 共享数值核心 `compare_numeric` 逐元素保留整数类型，覆盖完整 int64 / uint64 范围及整数、浮点混合序列；整数差值使用 Python 整数避免溢出，整数与浮点数配对时按该浮点数实际表示的值计算差值。判定前不把整数转成 float64，也不因其他单元格的类型或幅值回退浮点通路。纯浮点数组仍走 NumPy 向量化比较。容差与报告中的误差幅值统计使用浮点数；调用者已转成浮点数组而丢失的精度无法恢复。CSV 数值单元格整数优先解析，H5 / 数据泳道可直接传整数数组
+- CSV 误差统计累计用于 verdict 的逐行数值比较结果，不汇总原始数值后重新比较；统计额外内存只与单行数值数量相关（文件读取仍为全量读取）
+- `--error-analysis` 误差统计覆盖参与比较的全部数值单元格，含 H5 分块大数据集（启用统计时不因首个差异提前返回）
+
 ### 6.2 通道协议（数据泳道）
 
 - 通道判定：`identical = all(channels.passed)`；差异 position 带通道前缀（`channel S33`）；`error_stats` 按通道名嵌套

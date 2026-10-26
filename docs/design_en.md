@@ -199,6 +199,14 @@ guarantees they are unmodified.
 - h5 targets scientific datasets; binary uses stream chunking + LCS similarity; script delegates to an external program
 - All return a ComparisonResult (identical / differences / error / script command_output), renderable as text / json / html; supports row/column windowing before comparison
 
+#### 6.1.1 Window and numeric comparison semantics (file lane)
+
+- Row/column windows are uniformly **0-based, end-inclusive** (`start_line`/`end_line`/`start_column`/`end_column`); the assertion layer converts the user's 1-based input. CSV column windows select **CSV fields** (not character columns); the H5 chunked large-dataset branch applies the same window as the in-memory branch. Difference positions (`line N` / `row N, column M` / `row N`) are offset back to original file coordinates by the lane base class
+- H5 scalar (0-d) datasets participate in numeric comparison; a dataset read failure is recorded as a `diff_type="error"` difference and fails the comparison — never a silent pass
+- The shared numeric core `compare_numeric` preserves integer types per element, including the full int64 / uint64 ranges and mixed integer/float sequences. Integer differences use Python integers to avoid overflow; integer/float pairs use the float's actual represented value when computing the difference. Integers are not converted to float64 before verdict calculation, and unrelated cells cannot force a floating fallback. Pure floating arrays retain NumPy vectorized comparison. Tolerances and reported error magnitudes use floating-point numbers; precision already lost in caller-created floating arrays cannot be recovered. CSV cells parse integers first; H5 / the data lane can supply integer arrays directly
+- CSV error statistics accumulate the same per-row numeric comparisons used for the verdict, without collecting and recomparing raw numeric values. Additional statistics memory scales only with one row's numeric cells (file reads still load the full content)
+- `--error-analysis` statistics cover all compared numeric cells, including H5 chunked large datasets (no early return on the first difference when stats are requested)
+
 ### 6.2 Factory and Plugin Discovery
 
 - `file_type` values: `text` / `json` / `csv` / `xml` / `h5` / `binary` / `script`; factory dispatches by type, supports dynamic registration and global reset (for tests)

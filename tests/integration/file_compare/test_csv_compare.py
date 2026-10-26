@@ -1,4 +1,5 @@
 from symtest.file_comparator.factory import ComparatorFactory
+import pytest
 
 
 def compare_csv(file1, file2, **kwargs):
@@ -164,3 +165,92 @@ def test_csv_data_filter_skips_non_numeric(tmp_path):
     assert diff.diff_type == "cell_mismatch"
     assert diff.expected == "Bob"
     assert diff.actual == "Charlie"
+
+
+def test_csv_column_range_detects_difference_in_selected_column(tmp_path):
+    """Regression: column ranges select CSV FIELDS, not characters.
+
+    Previously the column window was applied twice: once as a character
+    slice on each text line (destroying the CSV field structure) and once
+    as a field slice, so a difference in the selected column could be
+    silently trimmed away.
+    """
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("id,value\n1,10\n2,20\n", encoding="utf-8")
+    file2.write_text("id,value\n1,99\n2,20\n", encoding="utf-8")
+
+    # Select only the second column (0-based inclusive: columns 1..1)
+    result = compare_csv(file1, file2, start_column=1, end_column=1)
+    assert not result.identical
+    diff = result.differences[0]
+    assert diff.diff_type == "cell_mismatch"
+    assert diff.expected == "10"
+    assert diff.actual == "99"
+    assert diff.position == "row 2, column 2"
+
+
+def test_csv_column_range_start_only_detects_difference(tmp_path):
+    """start_column without end_column must still select the field tail."""
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("id,value,extra\n1,10,x\n", encoding="utf-8")
+    file2.write_text("id,value,extra\n1,99,x\n", encoding="utf-8")
+
+    result = compare_csv(file1, file2, start_column=1)
+    assert not result.identical
+
+
+def test_csv_column_range_excludes_difference_outside_scope(tmp_path):
+    """Differences outside the selected column window are ignored."""
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("id,value,status\n1,10,old\n", encoding="utf-8")
+    file2.write_text("id,value,status\n1,10,new\n", encoding="utf-8")
+
+    # Window covers only column 1 ("value"); the "status" difference is outside
+    result = compare_csv(file1, file2, start_column=1, end_column=1)
+    assert result.identical
+
+
+def test_csv_large_integer_no_float_precision_collapse(tmp_path):
+    """Regression: 2**53 vs 2**53+1 must not collapse onto the same float64.
+
+    Previously every numeric cell was parsed with float(), so distinct
+    large integers compared equal under zero tolerance.
+    """
+    file1 = tmp_path / "a.csv"
+    file2 = tmp_path / "b.csv"
+    file1.write_text("value\n9007199254740992\n", encoding="utf-8")  # 2**53
+    file2.write_text("value\n9007199254740993\n", encoding="utf-8")  # 2**53 + 1
+
+    result = compare_csv(file1, file2, rtol=0.0, atol=0.0)
+    assert not result.identical
+    diff = result.differences[0]
+    assert diff.diff_type == "cell_mismatch"
+    assert diff.expected == "9007199254740992"
+    assert diff.actual == "9007199254740993"
+
+
+@pytest.mark.parametrize("error_analysis", [False, True])
+@pytest.mark.parametrize("baseline,actual,total", [
+    ("9007199254740992,1.0\n", "9007199254740993,1.0\n", 2),
+    ("9007199254740992\n1.0\n", "9007199254740993\n1.0\n", 2),
+    (f"{2**64 - 2}\n", f"{2**64 - 1}\n", 1),
+    (f"{-2**63}\n", f"{-2**63 + 1}\n", 1),
+])
+def test_csv_integer_verdict_and_stats_agree(tmp_path, error_analysis, baseline, actual, total):
+    file1, file2 = tmp_path / "a.csv", tmp_path / "b.csv"
+    file1.write_text(baseline, encoding="utf-8")
+    file2.write_text(actual, encoding="utf-8")
+    result = compare_csv(file1, file2, rtol=0, atol=0, error_analysis=error_analysis)
+    assert not result.identical
+    assert result.error is None
+    if error_analysis:
+        stats = result.error_stats
+        assert stats["total_numeric_cells"] == total
+        assert stats["mismatched_cells"] == 1
+        assert stats["max_abs_error"] == 1
+        assert stats["mean_abs_error"] == 1 / total
+        assert stats["rms_abs_error"] == pytest.approx((1 / total)**0.5)
+        assert stats["max_abs_error_at"] == "row 1, column 1"
