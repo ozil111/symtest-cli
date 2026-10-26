@@ -14,6 +14,10 @@ one of three modes:
 
 An empty pattern lists all cases in every mode (consistent semantics).
 
+Output focuses on locating each case: the table shows the defining
+``file:line`` by re-walking the raw import tree (best-effort; degrades
+to file-only or ``-`` when the origin cannot be resolved).
+
 Exit codes (grep semantics): 0 = matches found, 1 = no match, 2 = error
 (config unreadable / unparseable).
 """
@@ -28,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
 from ..config.config_io import load_config
+from ..config.import_expander import _load_raw_config
 from ..core.config_loader import parse_test_cases
 from ..core.test_case import TestCase
 
@@ -153,9 +158,94 @@ def search_cases(
 # CLI handler
 # ---------------------------------------------------------------------------
 
+# Locate the ``name: "<case_name>"`` entry of a case in raw file text.
+# Handles JSON ("name": "x"), YAML (name: x) and single-quote variants;
+# the trailing word boundary prevents 't01' matching 't010'.
+_NAME_LINE_RE_TEMPLATE = r'["\']?name["\']?\s*:\s*["\']?{}\b'
 
-def _case_summary(index: int, tc: TestCase) -> Dict[str, Any]:
+
+def _find_name_line(text: str, name: str) -> Optional[int]:
+    """Return the 1-based line where case *name*'s ``name`` key appears.
+
+    Best-effort heuristic: case names are globally unique (enforced by
+    ``symtest validate``), so the first match is the defining location.
+    Returns ``None`` when the name cannot be located in *text*.
+    """
+    if not text:
+        return None
+    match = re.search(_NAME_LINE_RE_TEMPLATE.format(re.escape(name)), text)
+    if match is None:
+        return None
+    return text.count("\n", 0, match.start()) + 1
+
+
+def _build_provenance(config_file: Path) -> Dict[str, Tuple[str, Optional[int]]]:
+    """Walk the raw import tree and map ``name → (file, 1-based line)``.
+
+    Re-reads the raw files (before import expansion / inheritance
+    resolution) so every case can report where it is defined.  Failures
+    degrade gracefully: an unreadable file is skipped entirely, a
+    name missing from the text simply gets no line number.
+    """
+    provenance: Dict[str, Tuple[str, Optional[int]]] = {}
+    visited: set = set()
+
+    def walk(path: Path) -> None:
+        canonical = str(path.resolve())
+        if canonical in visited:
+            return
+        visited.add(canonical)
+
+        try:
+            config = _load_raw_config(path)
+        except Exception as e:
+            logger.debug("Provenance: skipping unreadable file %s: %s", path, e)
+            return
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            text = ""
+
+        for item in config.get("test_cases", []):
+            if not isinstance(item, dict):
+                continue
+            if "import" in item:
+                sub_path = (path.parent / item["import"]).resolve()
+                if sub_path.exists():
+                    walk(sub_path)
+            else:
+                name = item.get("name")
+                if name and name not in provenance:
+                    provenance[name] = (str(path), _find_name_line(text, name))
+
+    walk(config_file)
+    return provenance
+
+
+def _format_source(
+    entry: Optional[Tuple[str, Optional[int]]],
+    base: Path,
+) -> str:
+    """Format a provenance entry as a short ``file:line`` display string."""
+    if entry is None:
+        return "-"
+    file_str, line = entry
+    try:
+        file_str = Path(file_str).relative_to(base).as_posix()
+    except ValueError:
+        pass  # keep absolute path when not under *base*
+    return f"{file_str}:{line}" if line is not None else file_str
+
+
+def _case_summary(
+    index: int,
+    tc: TestCase,
+    provenance: Dict[str, Tuple[str, Optional[int]]],
+    base: Path,
+) -> Dict[str, Any]:
     """Build the display/JSON summary dict for one matched case."""
+    entry = provenance.get(tc.name)
     return {
         "index": index + 1,
         "name": tc.name,
@@ -165,6 +255,9 @@ def _case_summary(index: int, tc: TestCase) -> Dict[str, Any]:
         "description": tc.description or "",
         "timeout": tc.timeout,
         "mode": "steps" if tc.steps else "single",
+        "source": _format_source(entry, base),
+        "source_file": entry[0] if entry else None,
+        "source_line": entry[1] if entry else None,
     }
 
 
@@ -174,17 +267,19 @@ def _display_width(text: str) -> int:
 
 
 def _print_table(rows: List[Dict[str, Any]]) -> None:
-    """Print matched cases as aligned columns (the retired TUI table layout)."""
-    headers = ["#", "Name", "Command", "Tags", "Timeout", "Mode"]
+    """Print matched cases as aligned columns, one row per case.
+
+    Columns focus on locating the case: ``#`` (run index), name, source
+    ``file:line`` (clickable in VS Code / modern terminals) and tags.
+    """
+    headers = ["#", "Name", "Source", "Tags"]
 
     def fmt(row: Dict[str, Any]) -> List[str]:
         return [
             str(row["index"]),
             row["name"],
-            row["command"],
+            row["source"],
             ",".join(row["tags"]),
-            "-" if row["timeout"] is None else str(row["timeout"]),
-            row["mode"],
         ]
 
     cells = [headers] + [fmt(r) for r in rows]
@@ -231,7 +326,8 @@ def run_find(args) -> int:
         print(f"No test cases match pattern '{args.pattern}'.")
         return 1
 
-    rows = [_case_summary(i, cases[i]) for i in matched]
+    provenance = _build_provenance(config_file)
+    rows = [_case_summary(i, cases[i], provenance, workspace_path) for i in matched]
 
     if getattr(args, "output_format", "text") == "json":
         print(json.dumps(rows, indent=2, ensure_ascii=False))
