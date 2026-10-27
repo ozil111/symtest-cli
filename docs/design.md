@@ -45,7 +45,7 @@
 |---|---|
 | `cli.py` / `commands/` | 子命令入口、参数装配与日志激活 |
 | `core/` | TestCase 数据模型、断言引擎、单测试执行、Runner 基类（顺序 / 并行 / DAG）、`.symtest` 状态存储、Setup 插件体系 |
-| `config/` | 配置 IO、JSON Schema 校验（draft 2020-12）、import 展开、extends 继承、变量与占位符替换 |
+| `config/` | 配置 IO、公共准备流程（`prepared.py`）、双形态 JSON Schema 契约与校验（draft 2020-12，`config_schema.py`）、import 展开、extends 继承、变量与占位符替换 |
 | `runners/` | Config/JSON/YAML × 顺序/并行 的薄封装运行器 |
 | `file_comparator/` | 比较器家族 + 工厂 + workspace 插件发现（详见 §6） |
 | `utils/` | 路径解析、报告生成（文本 / 结构化 HTML）、JUnit XML 输出、项目级默认配置（`.symtest/symtest.json`） |
@@ -63,26 +63,51 @@
 
 ## 3. 配置管线
 
-配置文件在加载时经过五步管线处理：
+配置契约的唯一定义是 `config/config_schema.py`（JSON Schema draft 2020-12，双形态）：
+
+- **raw 形态**（`CONFIG_SCHEMA`）：用户/AI 编写的原始配置文件；`abstract` 模板与 `extends` 继承用例允许缺少必填执行字段，完整性在展开后检查；`symtest schema` 导出该形态
+- **展开形态**（`EXPANDED_CONFIG_SCHEMA`）：import / extends / variables 全部解析后的有效配置；每个可执行用例必须完整
+
+`validate` / `run` / `find` 三个入口共用公共流程 `config/prepared.py:prepare_config()`，结构检查失败即停止处理对应输入（后续代码不会见到畸形 dict）：
 
 ```
 raw JSON/JSONC/YAML 文件（.jsonc 由 config/jsonc.py 剥离注释与尾逗号）
     │
     ▼
-expand_imports()          # 递归展开 import 引用（合并 setup、注入 tags）
+raw 形态 schema 校验        # 每个加载的文件（含 import 子文件）：
+                           # 字段名/类型/取值范围/执行形态互斥/未知字段
     │
     ▼
-resolve_inheritance()     # 解析 extends 继承链（deep-merge、去重 abstract）
+expand_imports()           # 递归展开 import 引用（合并 setup、注入 tags）
     │
     ▼
-apply_variables()         # 注入 --var 全局变量 + case-level variables
+重名用例检查                 # extends 引用必须无歧义
     │
     ▼
-substitute_placeholders() # 递归替换 {placeholder} 占位符
+resolve_inheritance()      # 解析 extends 继承链（deep-merge、去重 abstract）
     │
     ▼
-parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
+apply_variables()          # 注入 --var 全局变量 + case-level variables，
+                           # 递归替换 {placeholder} 占位符
+    │
+    ▼
+展开形态 schema 校验         # 展开后每个可执行用例必须完整
+    │
+    ▼
+语义检查                    # error 级：depends_on 图（存在性/自引用/环）、
+                           # outputs 路径边界；warning 级：命令可执行性、
+                           # baseline 存在性、outputs 冲突
+    │
+    ▼
+parse_test_cases()         # 转换为 List[TestCase]（命令路径解析）
 ```
+
+以后新增普通配置字段只需：在 schema 中定义其合法性、在解析器中实现其转换，`validate` 即自动获得相应检查——不再维护独立的字段规则清单。
+
+raw 形态的模板和继承用例允许局部 `execution` 字典，复用完整执行定义的字段约束，
+仅延迟检查 `command/args` 必填项；`steps` 按整体替换语义仍要求所提供的 step 完整。
+`load_config(..., workspace=...)` 将工作区传入公共流程，`find` 显式转交 CLI 工作区。
+导入文件的读取异常在文件边界统一为带文件和引用来源的诊断，包含 YAML 解析异常。
 
 ### 3.1 Import 展开 (`import_expander.py`)
 
@@ -104,12 +129,21 @@ parse_test_cases()        # 转换为 List[TestCase]（命令路径解析）
 - extends 链上的 `variables` 收集后统一替换
 - 循环继承检测
 
-### 3.3 配置验证 (`config_io.py`)
+### 3.3 配置校验与公共准备流程 (`prepared.py` / `config_io.py`)
 
-`symtest validate` 子命令在不执行测试的情况下校验配置：
+`validate_config()` 内部委托 `prepare_config()`；`run` 的配置加载阶段与
+`find`（经 `load_config()`）走同一流程。同一份非法配置在 `validate` 与
+`run` 中产生一致的错误，且 `run` 在执行任何命令之前退出。诊断信息带
+文件路径与字段路径（jsonschema `json_path`），import 子文件中的错误能
+定位到具体文件和字段。
 
-- Error 级（影响 valid）：JSON/YAML 语法、必填字段、import 目标存在性、循环引用、extends 目标存在性、循环继承
-- Warning 级（不影响 valid）：命令可执行性（PATH 查找）、`compare_files` baseline 文件存在性
+- Error 级（影响 valid）：JSON/YAML 语法、raw/展开双形态 schema 检查
+  （必填字段、类型、取值范围、执行形态互斥、未知字段）、import 目标存在性、
+  循环 import、用例重名、extends 目标存在性、循环继承、展开后用例完整性、
+  `outputs` 路径边界、depends_on 目标存在性/自引用/环
+- Warning 级（不影响 valid）：`command` 可执行性（PATH 查找）、
+  `compare_files` baseline 文件存在性、多用例声明相同 outputs 且无
+  depends_on
 
 ## 4. 执行语义
 
@@ -196,6 +230,16 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 - 文本系共享 difflib 行级基底，json / csv / xml 为其结构化特化；h5 面向科学数据集；binary 流式分块 + LCS 相似度
 - 统一返回 `ComparisonResult`（identical / differences / error / error_stats / command_output / channels），支持 text / json / html 渲染
 - 数据泳道插件可通过 `ChannelData.extra_stats` 附带自定义误差指标，存放在独立命名空间（`ChannelResult.extra_stats`），不可覆盖框架规范指标；但 verdict 仍由框架容差持有——需要自定 verdict 的走自主泳道
+
+#### 6.1.1 窗口与数值比较语义（文件泳道）
+
+- 行列窗口统一 **0-based 闭区间**（`start_line`/`end_line`/`start_column`/`end_column`，end 含端点），断言层负责把用户 1-based 输入转换；CSV 的列窗口按 **CSV 字段**裁剪（不是字符列），H5 的大数据集分块分支同样应用窗口，与内存分支语义一致。差异 position（`line N` / `row N, column M` / `row N`）由泳道基类统一偏移回原始文件坐标
+- H5 标量（0 维）数据集参与数值比较；数据集读取失败记为 `diff_type="error"` 差异并判失败，绝不静默通过
+- `allow_nonfinite` 的布尔类型约束在原始/展开配置 schema 中复用同一定义，比较器构造及共享数值核心也检查 Python API 输入，禁止依赖真值转换。CSV 文本快速路径对所有含指数、NaN/Inf 提示或长度不少于 309 的单元格实际解析，以覆盖长尾数和带下划线的溢出写法；是否启用误差统计不影响判定。数据泳道（含 `script_extract`）的覆盖顺序为逐通道 → `default_channel` → 比较器参数 → `false`。
+- 共享数值核心 `compare_numeric` 逐元素保留整数类型，覆盖完整 int64 / uint64 范围及整数、浮点混合序列；整数差值使用 Python 整数避免溢出，整数与浮点数配对时按该浮点数实际表示的值计算差值。判定前不把整数转成 float64，也不因其他单元格的类型或幅值回退浮点通路。纯浮点数组仍走 NumPy 向量化比较。容差与报告中的误差幅值统计使用浮点数；调用者已转成浮点数组而丢失的精度无法恢复。CSV 数值单元格整数优先解析，H5 / 数据泳道可直接传整数数组
+- **非有限值默认拒绝**：任意一侧为 NaN 或 ±Inf 的单元格判为不匹配（差异 `diff_type="non_finite_value"`）——求解器输出出现 NaN/Inf 通常意味着求解失败，"结果与基准一致"不能推出"结果有效"。需要接受非有限值时显式设置 `allow_nonfinite=true`（CSV/H5 比较器参数、数据泳道比较器参数及 per-channel 覆盖），仅恢复 `NaN==NaN`、同号 `±Inf` 相等的旧语义；反号 Inf 仍然是不匹配。该规则在共享数值核心实施，CSV（含流式/内存文本快速路径与 `1e999` 溢出文本）、H5（含大数据集分块分支）、数据泳道三路一致；`data_filter` 不能提前排除非有限单元格，被过滤条件排除的 NaN 仍会被强制纳入比较并判失败
+- CSV 误差统计累计用于 verdict 的逐行数值比较结果，不汇总原始数值后重新比较；比较走流式逐行路径（覆写 `compare_files`），行窗口按记录索引施加，行数不匹配在两侧流读取耗尽后按窗口内记录数判定和报告，窗口外的增删行不影响结果；起始记录索引大于等于任一文件的总记录数时返回越界错误（包括空文件）。内存与文件大小无关（O(单行)）；直接调用 `read_content`/`compare_content` 的 Python API 保留全量内存路径，两者共享逐行判定逻辑
+- `--error-analysis` 误差统计覆盖参与比较的全部数值单元格，含 H5 分块大数据集（启用统计时不因首个差异提前返回）
 
 ### 6.2 通道协议（数据泳道）
 

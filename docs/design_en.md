@@ -53,7 +53,7 @@ Responsibilities by package (file-level details and public APIs live in source):
 |---|---|
 | `cli.py` / `commands/` | Sub-command entry points, argument assembly, logging activation |
 | `core/` | TestCase model, assertion engine, single-test execution, Runner bases (sequential / parallel / DAG), `.symtest` state stores, Setup plugin system |
-| `config/` | Config IO, JSON Schema validation (draft 2020-12), import expansion, extends inheritance, variable & placeholder substitution |
+| `config/` | Config IO, shared preparation pipeline (`prepared.py`), dual-form JSON Schema contract & validation (draft 2020-12, `config_schema.py`), import expansion, extends inheritance, variable & placeholder substitution |
 | `runners/` | Thin wrapper runners: Config/JSON/YAML × sequential/parallel |
 | `file_comparator/` | Comparator family + factory + workspace plugin discovery (see §6) |
 | `utils/` | Path resolution, report generation, JUnit XML output, project-level default configuration (`.symtest/symtest.json`) |
@@ -71,26 +71,65 @@ Responsibilities by package (file-level details and public APIs live in source):
 
 ## 3. Config Pipeline
 
-Configuration files go through a five-step pipeline during loading:
+Raw templates and heirs may provide partial `execution` dictionaries. Their
+schema reuses the complete execution field constraints and defers only the
+required `command/args` checks. Supplied steps remain complete because lists
+are replaced as a whole. `load_config(..., workspace=...)` forwards the workspace
+to preparation, and `find` passes its CLI workspace explicitly. Imported file
+read errors, including YAML parser errors, are normalized at the file boundary
+into diagnostics carrying the failing file and its referring file.
+
+The single source of truth for the configuration contract is
+`config/config_schema.py` (JSON Schema draft 2020-12, two variants):
+
+- **Raw form** (`CONFIG_SCHEMA`): original config files as written by
+  users / AI agents. `abstract` templates and `extends` heirs may omit
+  required execution fields — completeness is enforced after expansion.
+  `symtest schema` exports this variant.
+- **Expanded form** (`EXPANDED_CONFIG_SCHEMA`): the effective config after
+  import / extends / variables have all been resolved. Every executable
+  case must be complete.
+
+The three entry points (`validate` / `run` / `find`) share one preparation
+pipeline, `config/prepared.py:prepare_config()`; structural failures stop
+processing of the affected input (later stages never see malformed dicts):
 
 ```
 raw JSON/JSONC/YAML file (.jsonc is preprocessed by config/jsonc.py: comments and trailing commas are stripped)
     │
     ▼
-expand_imports()          # Recursively expand import references (merge setup, inject tags)
+raw-form schema validation  # every loaded file (incl. imported sub-files):
+                           # field names / types / value ranges /
+                           # execution-form exclusivity / unknown fields
     │
     ▼
-resolve_inheritance()     # Resolve extends chains (deep-merge, remove abstract)
+expand_imports()           # Recursively expand import references (merge setup, inject tags)
     │
     ▼
-apply_variables()         # Inject --var global variables + case-level variables
+duplicate-name check       # extends references must be unambiguous
     │
     ▼
-substitute_placeholders() # Recursively replace {placeholder} tokens
+resolve_inheritance()      # Resolve extends chains (deep-merge, remove abstract)
     │
     ▼
-parse_test_cases()        # Convert to List[TestCase] (command path resolution)
+apply_variables()          # Inject --var global variables + case-level variables,
+                           # recursively replace {placeholder} tokens
+    │
+    ▼
+expanded-form validation   # every executable case must be complete after expansion
+    │
+    ▼
+semantic checks            # error-level: depends_on graph (existence / self-ref /
+                           # cycles), outputs path boundaries; warning-level:
+                           # command executability, baseline existence, outputs conflicts
+    │
+    ▼
+parse_test_cases()         # Convert to List[TestCase] (command path resolution)
 ```
+
+Adding a new ordinary config field now only requires defining its validity in
+the schema and implementing its conversion in the parser — `validate` picks up
+the check automatically; no separate field-rule list is maintained.
 
 ### 3.1 Import Expansion (`import_expander.py`)
 
@@ -112,12 +151,24 @@ The `extends` field enables test-case template inheritance:
 - `variables` collected along the extends chain are substituted at resolve time
 - Circular extends detection
 
-### 3.3 Config Validation (`config_io.py`)
+### 3.3 Config Validation & Shared Preparation Pipeline (`prepared.py` / `config_io.py`)
 
-The `symtest validate` subcommand checks configuration without running tests:
+`validate_config()` delegates to `prepare_config()`; the `run` loading stage
+and `find` (via `load_config()`) go through the same pipeline. An invalid
+config yields identical errors from `validate` and `run`, and `run` exits
+before executing any command. Diagnostics carry the file path and field path
+(jsonschema `json_path`); errors inside imported sub-files are localized to
+the exact file and field.
 
-- Error-level (affects `valid`): JSON/YAML syntax, required fields, import target existence, circular imports, extends target existence, circular extends
-- Warning-level (does not affect `valid`): command executability (PATH lookup), `compare_files` baseline file existence
+- Error-level (affects `valid`): JSON/YAML syntax; raw/expanded schema checks
+  (required fields, types, value ranges, execution-form exclusivity, unknown
+  fields); import target existence; circular imports; duplicate case names;
+  extends target existence; circular inheritance; post-expansion case
+  completeness; `outputs` path boundaries; depends_on target existence /
+  self-reference / cycles
+- Warning-level (does not affect `valid`): `command` executability (PATH
+  lookup), `compare_files` baseline file existence, multiple cases declaring
+  the same outputs path without depends_on
 
 ## 4. Execution Semantics
 
@@ -198,6 +249,16 @@ guarantees they are unmodified.
 - Text-family comparators share a difflib line-level base; json / csv / xml are structured specializations (key alignment / column structure / DOM alignment)
 - h5 targets scientific datasets; binary uses stream chunking + LCS similarity; script delegates to an external program
 - All return a ComparisonResult (identical / differences / error / script command_output), renderable as text / json / html; supports row/column windowing before comparison
+
+#### 6.1.1 Window and numeric comparison semantics (file lane)
+
+- Row/column windows are uniformly **0-based, end-inclusive** (`start_line`/`end_line`/`start_column`/`end_column`); the assertion layer converts the user's 1-based input. CSV column windows select **CSV fields** (not character columns); the H5 chunked large-dataset branch applies the same window as the in-memory branch. Difference positions (`line N` / `row N, column M` / `row N`) are offset back to original file coordinates by the lane base class
+- H5 scalar (0-d) datasets participate in numeric comparison; a dataset read failure is recorded as a `diff_type="error"` difference and fails the comparison — never a silent pass
+- The raw and expanded schemas share the boolean constraint for `allow_nonfinite`; comparator constructors and the shared numeric core also check Python API inputs without truthiness conversion. The CSV text fast path parses every cell containing an exponent or NaN/Inf hint, or at least 309 characters, covering overflow from long mantissas and underscore spellings; enabling error statistics does not change the verdict. Data-lane precedence, including `script_extract`, is per-channel → `default_channel` → comparator parameter → `false`.
+- The shared numeric core `compare_numeric` preserves integer types per element, including the full int64 / uint64 ranges and mixed integer/float sequences. Integer differences use Python integers to avoid overflow; integer/float pairs use the float's actual represented value when computing the difference. Integers are not converted to float64 before verdict calculation, and unrelated cells cannot force a floating fallback. Pure floating arrays retain NumPy vectorized comparison. Tolerances and reported error magnitudes use floating-point numbers; precision already lost in caller-created floating arrays cannot be recovered. CSV cells parse integers first; H5 / the data lane can supply integer arrays directly
+- **Non-finite values are rejected by default**: any cell where either side is NaN or ±Inf is a mismatch (difference `diff_type="non_finite_value"`) — NaN/Inf in solver output usually indicates a failed solve, and "matches the baseline" must not be conflated with "is a valid result". Set `allow_nonfinite=true` explicitly (CSV/H5 comparator parameter, data-lane comparator parameter with per-channel override) to restore the legacy semantics where `NaN == NaN` and same-sign `±Inf` count as equal; opposite-sign infinities remain mismatches. The rule lives in the shared numeric core and applies uniformly across CSV (including the streaming/in-memory text fast paths and `1e999` overflow text), H5 (including the chunked large-dataset branch), and the data lane; a `data_filter` can never pre-exclude non-finite cells — NaN dropped by a filter condition is still force-compared and fails
+- CSV error statistics accumulate the same per-row numeric comparisons used for the verdict, without collecting and recomparing raw numeric values. Comparison streams record by record (compare_files override): the row window applies by record index, and row-count mismatches are determined and reported using record counts inside the window once both streams are drained. Added or removed records outside the window do not affect the verdict. A starting record index greater than or equal to either file's total record count returns an out-of-range error (including empty files). Memory is independent of file size (O(one row)). The Python API (read_content/compare_content) keeps the in-memory path for direct callers; both paths share the same per-row verdict logic
+- `--error-analysis` statistics cover all compared numeric cells, including H5 chunked large datasets (no early return on the first difference when stats are requested)
 
 ### 6.2 Factory and Plugin Discovery
 

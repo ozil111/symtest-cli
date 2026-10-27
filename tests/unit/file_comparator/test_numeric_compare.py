@@ -5,6 +5,18 @@ import pytest
 from symtest.file_comparator.numeric_compare import compare_numeric, parse_data_filter
 
 
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}])
+def test_nonfinite_policy_rejects_non_boolean_in_python_api(value):
+    from symtest.file_comparator.csv_comparator import CsvComparator
+    from symtest.file_comparator.h5_comparator import H5Comparator
+
+    for constructor in (CsvComparator, H5Comparator):
+        with pytest.raises(TypeError, match="allow_nonfinite.*bool"):
+            constructor(allow_nonfinite=value)
+    with pytest.raises(TypeError, match="allow_nonfinite.*bool"):
+        compare_numeric([np.nan], [np.nan], allow_nonfinite=value)
+
+
 # ── Basic closeness ──
 
 def test_exact_equality():
@@ -58,24 +70,82 @@ def test_very_small_values_within_atol():
     assert res.mismatched == 0
 
 
-def test_nan_equal_nan():
+def test_nan_equal_nan_rejected_by_default():
+    # NaN output usually means a solver failure: must NOT silently pass.
     res = compare_numeric([np.nan], [np.nan])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert np.all(res.mismatch_mask)
+
+
+def test_nan_equal_nan_allowed_with_explicit_opt_in():
+    res = compare_numeric([np.nan], [np.nan], allow_nonfinite=True)
     assert res.mismatched == 0
+    assert res.nonfinite_mismatched == 0
 
 
 def test_nan_vs_number_mismatch():
     res = compare_numeric([np.nan], [1.0])
     assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
 
 
-def test_inf_matching():
+def test_nan_object_lane_rejected_by_default():
+    # Mixed sequence takes the object lane; NaN must be rejected there too.
+    res = compare_numeric([np.nan, 2**53], [np.nan, 2**53])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert res.mismatch_mask.tolist() == [True, False]
+
+
+def test_inf_matching_rejected_by_default():
     res = compare_numeric([np.inf], [np.inf])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+
+
+def test_inf_matching_allowed_with_explicit_opt_in():
+    res = compare_numeric([np.inf], [np.inf], allow_nonfinite=True)
     assert res.mismatched == 0
 
 
-def test_neg_inf_matching():
+def test_neg_inf_matching_rejected_by_default():
     res = compare_numeric([-np.inf], [-np.inf])
+    assert res.mismatched == 1
+
+
+def test_neg_inf_matching_allowed_with_explicit_opt_in():
+    res = compare_numeric([-np.inf], [-np.inf], allow_nonfinite=True)
     assert res.mismatched == 0
+
+
+def test_opposite_sign_inf_rejected_even_when_allowed():
+    res = compare_numeric([np.inf], [-np.inf], allow_nonfinite=True)
+    assert res.mismatched == 1
+
+
+def test_data_filter_cannot_exclude_nan():
+    # Regression: NaN fails '>1e-6' so the filter used to silently drop it.
+    res = compare_numeric([np.nan, 3.0], [np.nan, 3.0],
+                          filter_func=parse_data_filter(">1e-6"))
+    assert res.total == 2
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert res.mismatch_mask.tolist() == [True, False]
+
+
+def test_data_filter_can_exclude_nan_when_allowed():
+    res = compare_numeric([np.nan, 3.0], [np.nan, 3.0],
+                          filter_func=parse_data_filter(">1e-6"),
+                          allow_nonfinite=True)
+    assert res.total == 1
+    assert res.mismatched == 0
+
+
+def test_collect_stats_false_nan_rejected_by_default():
+    res = compare_numeric([np.nan], [np.nan], collect_stats=False)
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
 
 
 def test_inf_vs_finite_mismatch():
@@ -233,3 +303,102 @@ def test_multidimensional_ndarray():
 def test_size_mismatch_raises():
     with pytest.raises(ValueError):
         compare_numeric([1.0, 2.0], [1.0])
+
+
+# ── Integer exact lane ──
+
+def test_large_integers_do_not_collapse_onto_float64():
+    """Regression: 2**53 vs 2**53+1 are distinct under zero tolerance."""
+    res = compare_numeric([2**53], [2**53 + 1], rtol=0.0, atol=0.0)
+    assert res.mismatched == 1
+    assert res.max_abs_error == pytest.approx(1.0)
+
+
+def test_large_integers_within_rtol_pass_on_int_lane():
+    # diff 2 / ref 2**53 ~ 2.2e-16 < rtol 1e-15
+    res = compare_numeric([2**53], [2**53 + 2], rtol=1e-15, atol=0.0)
+    assert res.mismatched == 0
+
+
+def test_small_integer_difference_respects_atol():
+    res = compare_numeric([1], [2], rtol=0.0, atol=1.0)
+    assert res.mismatched == 0
+    res = compare_numeric([1], [2], rtol=0.0, atol=0.5)
+    assert res.mismatched == 1
+
+
+def test_integer_stats_use_exact_differences():
+    res = compare_numeric([2**53, 10], [2**53 + 1, 10], rtol=0.0, atol=0.0)
+    assert res.mismatched == 1
+    assert res.max_abs_error == pytest.approx(1.0)
+    assert res.max_abs_error_index == 0
+    # mean over ALL compared cells: (1 + 0) / 2
+    assert res.mean_abs_error == pytest.approx(0.5)
+
+
+def test_mixed_int_and_float_inputs_fall_back_to_float_lane():
+    # One side int, one side float: still compares equal (float lane promotion)
+    res = compare_numeric([10], [10.0])
+    assert res.mismatched == 0
+
+
+@pytest.mark.parametrize("collect_stats", [False, True])
+@pytest.mark.parametrize("expected,actual", [
+    ([2**53, 1.0], [2**53 + 1, 1.0]),
+    ([2**53, 2**62], [2**53 + 1, 2**62]),
+    ([2**62], [2**62 + 1]),
+    ([2**63 - 2], [2**63 - 1]),
+    ([-2**63], [-2**63 + 1]),
+    (np.array([2**64 - 2], dtype=np.uint64),
+     np.array([2**64 - 1], dtype=np.uint64)),
+    (np.array([-2**63], dtype=np.int64),
+     np.array([2**64 - 1], dtype=np.uint64)),
+    ([2**53 + 1], [float(2**53)]),
+    ([float(2**53)], [2**53 + 1]),
+])
+def test_integer_precision_independent_of_neighbors_and_dtype(expected, actual, collect_stats):
+    res = compare_numeric(expected, actual, rtol=0.0, atol=0.0,
+                          collect_stats=collect_stats)
+    assert res.mismatched == 1
+    assert res.mismatch_mask[0]
+    if collect_stats:
+        assert res.max_abs_error > 0
+
+
+def test_integer_extreme_difference_does_not_overflow():
+    res = compare_numeric([-2**63], [2**64 - 1], rtol=0, atol=0)
+    assert res.max_abs_error == float(3 * 2**63 - 1)
+    assert res.rms_abs_error == res.max_abs_error
+
+
+def test_integer_boundary_tolerance_does_not_round_difference():
+    # float(2**53 + 1) rounds down to the tolerance: verdict must use the int.
+    res = compare_numeric([0], [2**53 + 1], rtol=0, atol=float(2**53))
+    assert res.mismatched == 1
+
+
+def test_integer_filter_preserves_mixed_values_and_minimum_int64():
+    res = compare_numeric([-2**63, 2**53, 1.0],
+                          [-2**63 + 1, 2**53 + 1, 2.0],
+                          rtol=0, atol=0, filter_func=parse_data_filter("abs>1000"))
+    assert res.total == 2
+    assert res.mismatched == 2
+    assert res.max_abs_error == 1
+
+
+def test_object_input_is_not_modified_by_normalization():
+    values = np.array([np.int64(2**53), "1.0"], dtype=object)
+    res = compare_numeric(values, [2**53 + 1, 1.0], rtol=0, atol=0)
+    assert res.mismatched == 1
+    assert isinstance(values[0], np.int64)
+    assert values[1] == "1.0"
+
+
+def test_integer_lane_with_filter():
+    res = compare_numeric([0, 2**53], [1, 2**53 + 1],
+                          filter_func=parse_data_filter(">1000"),
+                          rtol=0.0, atol=0.0)
+    # cell 0 excluded by filter; cell 1 kept and mismatched
+    assert res.total == 1
+    assert res.mismatched == 1
+    assert res.mismatch_mask.tolist() == [False, True]

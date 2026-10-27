@@ -100,17 +100,34 @@ def test_parity_very_small_values():
     _assert_parity([1e-20, 1e-19], [2e-20, 1e-19], rtol=1e-5, atol=1e-8)
 
 
-def test_parity_nan():
-    # NaN == NaN equal on both comparators
+def test_parity_nan_rejected_by_default():
+    # Default: NaN is a mismatch on BOTH comparators (solver failure signal).
     _assert_parity([1.0, float("nan")], [1.0, float("nan")], rtol=1e-5, atol=1e-8)
 
 
-def test_parity_inf():
+def test_parity_nan_equal_when_allowed():
+    # Opt-in legacy semantics: NaN == NaN equal on both comparators
+    _assert_parity([1.0, float("nan")], [1.0, float("nan")],
+                   rtol=1e-5, atol=1e-8, allow_nonfinite=True)
+
+
+def test_parity_inf_rejected_by_default():
     _assert_parity([float("inf"), 1.0], [float("inf"), 2.0], rtol=1e-5, atol=1e-8)
 
 
-def test_parity_neg_inf():
-    _assert_parity([float("-inf"), 1.0], [float("-inf"), 1.5], rtol=1e-5, atol=1e-8)
+def test_parity_inf_when_allowed():
+    _assert_parity([float("inf"), 1.0], [float("inf"), 2.0],
+                   rtol=1e-5, atol=1e-8, allow_nonfinite=True)
+
+
+def test_parity_neg_inf_when_allowed():
+    _assert_parity([float("-inf"), 1.0], [float("-inf"), 1.5],
+                   rtol=1e-5, atol=1e-8, allow_nonfinite=True)
+
+
+def test_parity_filter_cannot_exclude_nan():
+    # The data filter must not silently drop NaN on either comparator.
+    _assert_parity([float("nan"), 3.0], [float("nan"), 3.0], data_filter=">1e-6")
 
 
 def test_parity_max_abs_error():
@@ -135,9 +152,10 @@ def test_parity_data_filter():
 
 def test_parity_mixed_scenario():
     # Mixed exact / within-tol / mismatched values in a single array.
+    # Non-finite entries need the explicit opt-in to compare as equal.
     expected = [0.0, 1.0, 2.0, 5.0, float("inf"), float("nan"), -3.0]
     actual = [5.0, 1.0, 2.000001, 8.0, float("inf"), float("nan"), -3.5]
-    _assert_parity(expected, actual, rtol=1e-5, atol=1e-8)
+    _assert_parity(expected, actual, rtol=1e-5, atol=1e-8, allow_nonfinite=True)
 
 
 def test_parity_h5_multidimensional_matches_csv_semantics():

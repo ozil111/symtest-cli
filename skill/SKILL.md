@@ -70,6 +70,10 @@ legacy configs with `symtest migrate`.
    ```bash
    symtest validate test_cases.json
    ```
+   Validation and execution share the same preparation checks. Templates and
+   heirs may partially override `execution` dictionaries, but the expanded
+   case must be complete; supplied `steps` replace the whole list. Use the
+   same `--workspace` for validation, execution, and `find`.
 7. Run:
    ```bash
    symtest run test_cases.json
@@ -108,6 +112,18 @@ starting point.
    exists and its class imports succeed (use `from symtest.file_comparator...`,
    not other package names). To author a new one, see Workflow 3.
 3. Set numerical tolerance: `rtol` (relative) and `atol` (absolute).
+   Preserve integer values when preparing numeric data, especially IDs above
+   2**53: the numeric core supports mixed integer/float sequences and full
+   int64/uint64 ranges, but cannot recover precision already lost by converting
+   integers into a floating array. Use zero tolerances when exact equality is
+   required; reported error magnitudes remain floating-point statistics.
+   NaN/Inf values fail the comparison by default (non-finite solver output is
+   treated as a failure, and `data_filter` cannot exclude them); set
+   `allow_nonfinite: true` only when non-finite baseline values are
+   intentional. This must be a boolean, never a quoted string such as
+   `"false"`. For the data lane (including `script_extract`), per-channel
+   settings override `default_channel`, which overrides the comparator-level
+   setting; an explicit `false` overrides an inherited `true`.
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
 5. When results intentionally change and new output is correct, update baselines:

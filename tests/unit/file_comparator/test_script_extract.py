@@ -13,10 +13,31 @@ import numpy as np
 import pytest
 
 from symtest.file_comparator.base_comparator import CompareContext
+from symtest.file_comparator.factory import ComparatorFactory
 from symtest.file_comparator.script_extract_comparator import ScriptExtractComparator
 
 
 class TestValidPayloads:
+    @pytest.mark.parametrize("params, passed", [
+        ({}, False),
+        ({"allow_nonfinite": True}, True),
+        ({"allow_nonfinite": True, "default_channel": {"allow_nonfinite": False}}, False),
+        ({"allow_nonfinite": True, "channels": {"S11": {"allow_nonfinite": False}}}, False),
+        ({"channels": {"S11": {"allow_nonfinite": True}}}, True),
+    ])
+    def test_factory_nonfinite_policy(self, tmp_path, params, passed):
+        script = tmp_path / "extract.py"
+        script.write_text(
+            'print(\'{"channels":{"S11":{"expected":[NaN,Infinity],'
+            '"actual":[NaN,Infinity]}}}\')\n', encoding="utf-8",
+        )
+        cmp = ComparatorFactory.create_comparator(
+            "script_extract", workspace=str(tmp_path), script="extract.py", **params,
+        )
+        result = cmp.compare(CompareContext())
+        assert result.error is None
+        assert result.identical is passed
+
     def test_pass(self, tmp_path):
         script = tmp_path / "extract.py"
         script.write_text(textwrap.dedent("""

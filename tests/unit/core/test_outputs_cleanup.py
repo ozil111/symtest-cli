@@ -367,7 +367,8 @@ class TestValidateOutputs:
         }])
         report = validate_config(cfg, workspace=str(tmp_path))
         assert not report["valid"]
-        assert any("array of strings" in e for e in report["errors"])
+        # Type/shape checks are owned by the JSON Schema (structural stage).
+        assert any("outputs" in e and "array" in e for e in report["errors"])
 
     def test_duplicate_outputs_without_depends_on_warns(self, tmp_path):
         cfg = self._write_config(tmp_path, [
