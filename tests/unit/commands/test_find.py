@@ -302,6 +302,29 @@ def _name_line(config_file, name: str) -> int:
 
 
 class TestRunFind:
+    @pytest.mark.parametrize("escape", [False, True])
+    def test_workspace_controls_output_path_validation(self, tmp_path, monkeypatch, capsys, escape):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        output = (elsewhere if escape else workspace) / "result.txt"
+        cfg = {"test_cases": [{
+            "name": "output_case",
+            "execution": {"command": "echo", "args": [], "outputs": [str(output)]},
+            "expected": {},
+        }]}
+        path = workspace / "cases.json"
+        path.write_text(json.dumps(cfg), encoding="utf-8")
+        from symtest.config.config_io import validate_config
+
+        assert validate_config(path, workspace=str(workspace))["valid"] is (not escape)
+        result = run_find(_args("cases.json", "", workspace=str(workspace), output_format="json"))
+        assert result == (2 if escape else 0)
+        if not escape:
+            assert json.loads(capsys.readouterr().out)[0]["name"] == "output_case"
+
     def test_match_returns_zero(self, config_file, capsys):
         assert run_find(_args(config_file, "login")) == 0
         out = capsys.readouterr().out

@@ -1,19 +1,26 @@
 """JSON Schema (draft 2020-12) for symtest configuration files (Schema v2).
 
-Single source of truth for AI agents (and humans) that *generate* test
-configs.  Exposed via ``symtest schema``.
+Single source of truth for the configuration contract.  Two schema variants
+share the same ``$defs``:
 
-Schema v2 (1.4 Core Model Refactoring) — intentionally breaking layered DSL:
-- top level keeps metadata: ``name / description / tags / expected_failure /
-  xfail_reason / xfail_quiet / abstract / extends / variables / import``;
-- execution semantics move into ``execution`` (single-command shorthand or
-  the full ``steps`` form — 二选一);
-- validation semantics stay at top level in ``expected``;
-- scheduling semantics move into ``scheduling`` (``depends_on`` / ``resources``).
+- ``CONFIG_SCHEMA`` (raw form): the shape of *original config files* as
+  written by users / AI agents.  Exposed via ``symtest schema`` and used to
+  structurally validate every loaded config file (including imported ones).
+  Template (``abstract: true``) and inheritance (``extends``) cases are
+  allowed to omit required execution fields — completeness is enforced after
+  expansion instead.
+- ``EXPANDED_CONFIG_SCHEMA``: the shape of a fully prepared config (imports
+  expanded, ``extends`` resolved, variables applied).  Every case must be a
+  complete, executable definition; ``import`` / ``extends`` / ``abstract`` /
+  ``variables`` keys must no longer be present.
+
+Both variants are enforced by the shared preparation pipeline
+(``config.prepared.prepare_config``) used by ``symtest validate``, ``symtest
+run`` and ``symtest find`` — validation rules are defined here once and apply
+everywhere.
 
 Keep in sync with:
-- ``core.config_loader.parse_test_cases`` (accepted fields)
-- ``config.config_io.validate_config`` (required fields)
+- ``core.config_loader.parse_test_cases`` (runtime field consumption)
 - ``docs/user_manual.md`` / ``docs/user_manual_en.md`` (documented behavior)
 """
 
@@ -22,482 +29,610 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict
 
+# ---------------------------------------------------------------------------
+# Shared $defs building blocks
+# ---------------------------------------------------------------------------
+
+_EXPECTED_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": (
+        "Assertions evaluated after the command finishes. "
+        "All declared assertions must pass; the combined "
+        "stdout+stderr output is used for output assertions."
+    ),
+    "properties": {
+        "return_code": {
+            "type": ["integer", "null"],
+            "description": "Expected process exit code.",
+        },
+        "output_contains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Strings that must each appear in the command output.",
+        },
+        "output_matches": {
+            "type": ["string", "null"],
+            "description": "Regex (re.search) the command output must match.",
+        },
+        "compare_files": {
+            "type": "array",
+            "description": "File comparison assertions against golden/baseline files.",
+            "items": {"$ref": "#/$defs/compareSpec"},
+        },
+    },
+}
+
+_COMPARE_SPEC_DEF: Dict[str, Any] = {
+    "type": "object",
+    "required": [],
+    "additionalProperties": True,
+    "description": (
+        "One file comparison rule. actual/baseline are required for built-in "
+        "file-type comparators (text/csv/json/xml/h5/binary). "
+        "They are optional for script, script_extract, or custom (plugin) "
+        "comparator types. "
+        "Other keys are forwarded to the comparator constructor as kwargs "
+        "(e.g. rtol, atol, encoding, tables, data_filter, pass_threshold, "
+        "pass_pattern) and are STRICT: a parameter the comparator does not "
+        "declare fails construction loudly. Use 'options' for plugin-owned "
+        "configuration. Framework resolves actual/baseline and plugin "
+        "path_params-declared paths against the workspace before the "
+        "comparator is constructed."
+    ),
+    "properties": {
+        "actual": {
+            "type": "string",
+            "description": "File produced by the test command. Optional when type is 'script', 'script_extract', or a workspace plugin.",
+        },
+        "baseline": {
+            "type": "string",
+            "description": "Golden/reference file. Optional when type is 'script', 'script_extract', or a workspace plugin.",
+        },
+        "type": {
+            "type": "string",
+            "description": (
+                "Comparator type. Built-ins: text, json, csv, xml, h5, binary, "
+                "script, script_extract. "
+                "Custom (workspace plugin) comparator types are also allowed. "
+                "Omit to auto-detect from the actual file extension."
+            ),
+        },
+        "options": {
+            "type": "object",
+            "additionalProperties": True,
+            "description": (
+                "Plugin-owned configuration namespace. Entries are merged "
+                "into the comparator constructor kwargs (explicit top-level "
+                "keys take precedence). Preferred over adding plugin-specific "
+                "top-level keys; unknown parameters fail loudly at "
+                "construction, so typos are reported instead of silently "
+                "falling back to defaults."
+            ),
+        },
+        "channels": {
+            "type": "object",
+            "description": (
+                "Per-channel tolerance overrides for data-lane comparators "
+                "(script_extract / extractor plugins). Maps channel name to "
+                "{'rtol':…, 'atol':…, 'data_filter':…}. Channels not listed "
+                "use default_channel."
+            ),
+        },
+        "default_channel": {
+            "type": "object",
+            "description": (
+                "Default tolerance spec {'rtol':…, 'atol':…, 'data_filter':…} "
+                "applied to channels not listed in 'channels'."
+            ),
+        },
+        "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
+        "end_line": {"type": "integer", "minimum": 1, "description": "Only compare up to this line (1-based)."},
+        "start_column": {"type": "integer", "minimum": 1, "description": "Only compare from this column (1-based)."},
+        "end_column": {"type": "integer", "minimum": 1, "description": "Only compare up to this column (1-based)."},
+        "script": {"type": "string", "description": "Path to the analysis script (script / script_extract / custom comparator types)."},
+        "case_dir": {"type": "string", "description": "Working directory for the analysis script."},
+        "cwd": {"type": "string", "description": "Working directory for script execution (alias for case_dir)."},
+        "pass_threshold": {"type": "number", "description": "Numeric threshold below which the comparison is considered a pass."},
+        "pass_exit_code": {"type": "integer", "default": 0, "description": "Process exit code that indicates a pass (script comparator)."},
+        "pass_pattern": {"type": "string", "description": "Regex that must match stdout for a pass (script comparator)."},
+        "fail_pattern": {"type": "string", "description": "Regex that, if matched in stdout, forces a fail (script comparator)."},
+        "interpreter": {"type": "string", "description": "Python interpreter to use for running the script."},
+        "timeout": {"type": "number", "description": "Per-comparison timeout in seconds."},
+    },
+}
+
+_RESOURCES_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Optional scheduling hints (parallel mode).",
+    "properties": {
+        "estimated_time": {"type": "number", "description": "Estimated duration in seconds; used for LPT ordering."},
+        "min_memory_mb": {"type": "number", "description": "Soft memory hint to avoid OOM."},
+        "priority": {"type": "integer", "description": "Higher value => higher priority."},
+        "cpu_cores": {"type": "integer", "minimum": 1, "description": "CPU cores required by this task."},
+    },
+}
+
+_STEP_DEF: Dict[str, Any] = {
+    "type": "object",
+    "required": ["command", "args", "expected"],
+    "additionalProperties": False,
+    "description": (
+        "One atomic execution+validation pair within execution.steps. "
+        "Step-level retry is driven by the orchestration layer."
+    ),
+    "properties": {
+        "command": {"type": "string"},
+        "args": {
+            "type": "array",
+            "items": {"type": ["string", "number", "boolean"]},
+        },
+        "expected": {"$ref": "#/$defs/expected"},
+        "timeout": {"type": ["number", "null"], "description": "Per-step timeout in seconds."},
+        "retry_count": {"type": "integer", "minimum": 0, "description": "Per-step retry count on failure."},
+        "outputs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Declared output artifacts of this step, deleted "
+                "before the step runs (not run when resumed by "
+                "--resume). Only files may be declared (directories "
+                "and the workspace root are rejected). Relative "
+                "paths resolve against the workspace and must stay "
+                "inside it."
+            ),
+        },
+    },
+}
+
+_COMMAND_EXECUTION_DEF: Dict[str, Any] = {
+    "type": "object",
+    "required": ["command", "args"],
+    "additionalProperties": False,
+    "description": (
+        "Single-command shorthand form: requires command + args; "
+        "the steps form must not be declared alongside."
+    ),
+    "properties": {
+        "command": {
+            "type": "string",
+            "description": (
+                "Command to execute. May include leading arguments "
+                "(e.g. 'python ./run.py'); the framework splits and "
+                "path-resolves them."
+            ),
+        },
+        "args": {
+            "type": "array",
+            "items": {"type": ["string", "number", "boolean"]},
+        },
+        "timeout": {
+            "type": ["number", "null"],
+            "description": "Timeout in seconds (default 3600); null = no limit.",
+        },
+        "retry_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Retries after the first failure; passing after retry marks the result flaky.",
+        },
+        "env": {
+            "type": "object",
+            "additionalProperties": {"type": ["string", "number", "boolean"]},
+            "description": (
+                "Case-level environment variables injected into this "
+                "case's command(s) (subprocess). Overrides setup-level "
+                "and scheduler-injected environment variables."
+            ),
+        },
+        "outputs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Declared output artifacts of this execution unit. "
+                "Deleted before the command starts (and before every "
+                "retry attempt) so stale files cannot cause false "
+                "passes. Only files may be declared (directories and "
+                "the workspace root are rejected). Relative paths "
+                "resolve against the workspace and must stay inside "
+                "it; missing files are skipped silently; deletion "
+                "failure fails the case loudly."
+            ),
+        },
+    },
+}
+
+_STEPS_EXECUTION_DEF: Dict[str, Any] = {
+    "type": "object",
+    "required": ["steps"],
+    "additionalProperties": False,
+    "description": (
+        "Full steps form: requires steps; command/args must not be "
+        "declared alongside."
+    ),
+    "properties": {
+        "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/step"},
+            "description": "Steps run in order with fail-fast semantics.",
+        },
+        "timeout": {
+            "type": ["number", "null"],
+            "description": "Timeout in seconds (default 3600); null = no limit.",
+        },
+        "retry_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Retries after the first failure; passing after retry marks the result flaky.",
+        },
+        "env": {
+            "type": "object",
+            "additionalProperties": {"type": ["string", "number", "boolean"]},
+            "description": (
+                "Case-level environment variables injected into every "
+                "step (subprocess). Overrides setup-level and "
+                "scheduler-injected environment variables."
+            ),
+        },
+        "outputs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Case-level declared output artifacts, deleted once "
+                "before the first executed step on full runs. Only "
+                "files may be declared (directories and the workspace "
+                "root are rejected). Skipped when --resume starts "
+                "from a resumed step (artifacts of skipped steps are "
+                "trusted)."
+            ),
+        },
+    },
+}
+
+# Inheritance deep-merges execution dictionaries, so raw templates and heirs
+# may supply only args, timeout, env, etc. Reuse every field constraint;
+# only command/args completeness is deferred to the expanded schema.
+_PARTIAL_COMMAND_EXECUTION_DEF = {
+    **_COMMAND_EXECUTION_DEF,
+    "required": [],
+    "description": "Partial command execution for raw templates and heirs.",
+}
+
+_EXECUTION_SPEC_DEF: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Execution semantics (v2): single-command shorthand "
+        "(command/args/timeout/retry_count/env) OR the full steps form "
+        "(steps[]) — 二选一，由 oneOf 强制互斥. Case-level env applies "
+        "to all steps. Declaring both forms is a schema violation."
+    ),
+    "oneOf": [
+        {"$ref": "#/$defs/commandExecution"},
+        {"$ref": "#/$defs/stepsExecution"},
+    ],
+}
+
+_SCHEDULING_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Scheduling semantics (v2): dependencies and resource hints.",
+    "properties": {
+        "depends_on": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Names of test cases that must pass before this case can "
+                "start.  In parallel mode, dependencies are scheduled as a "
+                "DAG: cases with satisfied dependencies run concurrently. "
+                "If a dependency fails, this case is marked 'skipped'."
+            ),
+        },
+        "resources": {"$ref": "#/$defs/resources"},
+    },
+}
+
+_IMPORT_REF_DEF: Dict[str, Any] = {
+    "type": "object",
+    "required": ["import"],
+    "additionalProperties": False,
+    "description": "Inline another config file (path relative to this file).",
+    "properties": {
+        "import": {"type": "string"},
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Tags injected into every test case from the imported file "
+                "(merged before the case's own tags, deduplicated)."
+            ),
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Case-level property sets
+# ---------------------------------------------------------------------------
+
+def _case_properties(execution_ref: str, *, template_fields: bool = True) -> Dict[str, Any]:
+    """Case-level field properties shared by raw and expanded case defs.
+
+    ``execution_ref`` selects the allowed execution form (command shorthand
+    vs steps).  ``template_fields`` controls whether ``abstract`` / ``extends``
+    / ``variables`` keys are accepted (raw form only).
+    """
+    props: Dict[str, Any] = {
+        "name": {"type": "string", "description": "Unique test case name."},
+        "execution": {"$ref": execution_ref},
+        "expected": {"$ref": "#/$defs/expected"},
+        "scheduling": {"$ref": "#/$defs/schedulingSpec"},
+        "description": {"type": ["string", "null"]},
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Tags for --tag filtering.",
+        },
+        "expected_failure": {
+            "type": "boolean",
+            "description": (
+                "Mark this case as an expected failure (xfail). "
+                "When true, a failure counts as XFailed (not a suite failure); "
+                "an unexpected pass counts as XPassed (suite failure)."
+            ),
+        },
+        "xfail_reason": {
+            "type": "string",
+            "description": "Optional reason displayed in the report alongside XFailed results.",
+        },
+        "xfail_quiet": {
+            "type": "boolean",
+            "description": (
+                "When true and the case is xfailed (expected failure confirmed), "
+                "suppress the Command Output block in reports to reduce noise."
+            ),
+        },
+    }
+    if template_fields:
+        props["abstract"] = {
+            "type": "boolean",
+            "description": (
+                "When true, this case is a template (base) and is not "
+                "executed.  Other cases can extend it via 'extends'."
+            ),
+        }
+        props["extends"] = {
+            "type": "string",
+            "description": (
+                "Name of the base test case to inherit from.  Fields "
+                "from the base are deep-merged; the child's fields take "
+                "precedence.  Supports chain inheritance with cycle detection."
+            ),
+        }
+        props["variables"] = {
+            "type": "object",
+            "additionalProperties": {"type": ["string", "number", "boolean"]},
+            "description": (
+                "Per-case placeholder variables for {key} substitution. "
+                "Merged from the ancestor chain (child overrides parent), "
+                "then overlaid by global --var flags at run time."
+            ),
+        }
+    return props
+
+
+def _template_relaxation() -> Dict[str, Any]:
+    """Conditional required-fields relaxation for templates and heirs.
+
+    Concrete cases (no ``extends``, not ``abstract: true``) must declare all
+    required fields directly in the raw file.  Templates and inheritance
+    children may omit them — completeness is enforced on the expanded form.
+    """
+    return {
+        "if": {
+            "anyOf": [
+                {"required": ["extends"]},
+                {
+                    "required": ["abstract"],
+                    "properties": {"abstract": {"const": True}},
+                },
+            ]
+        },
+        "then": {"required": ["name"]},
+        # filled in by the caller (single vs sequence required sets differ)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Raw-form schema (original config files, ``symtest schema`` output)
+# ---------------------------------------------------------------------------
+
+_SINGLE_CASE_DEF: Dict[str, Any] = {
+    "allOf": [
+        {
+            **_template_relaxation(),
+            "else": {
+                "required": ["name", "execution", "expected"],
+                "properties": {"execution": {"$ref": "#/$defs/commandExecution"}},
+            },
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "description": (
+                "Single-command case (Schema v2 layered form): execution "
+                "uses the command shorthand (command/args); the steps form "
+                "belongs to sequenceCase."
+            ),
+            "properties": _case_properties("#/$defs/partialCommandExecution"),
+        },
+    ],
+}
+
+_SEQUENCE_CASE_DEF: Dict[str, Any] = {
+    "allOf": [
+        {
+            **_template_relaxation(),
+            "else": {"required": ["name", "execution"]},
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "description": (
+                "Multi-step case (Schema v2 layered form): steps live in "
+                "execution.steps and run in order with fail-fast semantics. "
+                "The case-level 'expected' is evaluated once after all steps "
+                "pass (optional)."
+            ),
+            "properties": _case_properties("#/$defs/stepsExecution"),
+        },
+    ],
+}
+
+# Item dispatch: precise per-item errors instead of an opaque anyOf failure.
+# - has "import"          → importRef
+# - execution has "steps" → sequenceCase
+# - otherwise             → singleCase
+_RAW_ITEMS: Dict[str, Any] = {
+    "if": {"required": ["import"]},
+    "then": {"$ref": "#/$defs/importRef"},
+    "else": {
+        "if": {
+            "required": ["execution"],
+            "properties": {"execution": {"required": ["steps"]}},
+        },
+        "then": {"$ref": "#/$defs/sequenceCase"},
+        "else": {"$ref": "#/$defs/singleCase"},
+    },
+}
+
+_SETUP_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Suite-level setup applied before any test runs.",
+    "properties": {
+        "environment_variables": {
+            "type": "object",
+            "description": "Environment variables injected into every test command.",
+            "additionalProperties": {"type": "string"},
+        },
+    },
+}
+
 CONFIG_SCHEMA: Dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "symtest configuration",
     "description": (
         "Test suite configuration for the symtest framework (Schema v2, "
         "layered execution/expected/scheduling). "
-        "YAML files follow the same structure (YAML is a JSON superset)."
+        "YAML files follow the same structure (YAML is a JSON superset). "
+        "Template (abstract) and inheritance (extends) cases may omit "
+        "required execution fields; every concrete case must be complete "
+        "after expansion."
     ),
     "type": "object",
     "required": ["test_cases"],
     "additionalProperties": False,
     "properties": {
-        "setup": {
-            "type": "object",
-            "additionalProperties": False,
-            "description": "Suite-level setup applied before any test runs.",
-            "properties": {
-                "environment_variables": {
-                    "type": "object",
-                    "description": "Environment variables injected into every test command.",
-                    "additionalProperties": {"type": "string"},
-                },
-            },
-        },
+        "setup": _SETUP_DEF,
         "test_cases": {
             "type": "array",
             "description": "List of test cases, sequence cases, or import references.",
-            "items": {
-                "anyOf": [
-                    {"$ref": "#/$defs/singleCase"},
-                    {"$ref": "#/$defs/sequenceCase"},
-                    {"$ref": "#/$defs/importRef"},
-                ],
-            },
+            "items": _RAW_ITEMS,
         },
     },
     "$defs": {
-        "expected": {
-            "type": "object",
-            "additionalProperties": False,
-            "description": (
-                "Assertions evaluated after the command finishes. "
-                "All declared assertions must pass; the combined "
-                "stdout+stderr output is used for output assertions."
-            ),
-            "properties": {
-                "return_code": {
-                    "type": ["integer", "null"],
-                    "description": "Expected process exit code.",
-                },
-                "output_contains": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Strings that must each appear in the command output.",
-                },
-                "output_matches": {
-                    "type": ["string", "null"],
-                    "description": "Regex (re.search) the command output must match.",
-                },
-                "compare_files": {
-                    "type": "array",
-                    "description": "File comparison assertions against golden/baseline files.",
-                    "items": {"$ref": "#/$defs/compareSpec"},
-                },
-            },
+        "expected": _EXPECTED_DEF,
+        "compareSpec": _COMPARE_SPEC_DEF,
+        "resources": _RESOURCES_DEF,
+        "step": _STEP_DEF,
+        "executionSpec": _EXECUTION_SPEC_DEF,
+        "commandExecution": _COMMAND_EXECUTION_DEF,
+        "partialCommandExecution": _PARTIAL_COMMAND_EXECUTION_DEF,
+        "stepsExecution": _STEPS_EXECUTION_DEF,
+        "schedulingSpec": _SCHEDULING_DEF,
+        "singleCase": _SINGLE_CASE_DEF,
+        "sequenceCase": _SEQUENCE_CASE_DEF,
+        "importRef": _IMPORT_REF_DEF,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Expanded-form schema (fully prepared config, enforced by prepare_config)
+# ---------------------------------------------------------------------------
+
+_EXPANDED_SINGLE_CASE_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "execution", "expected"],
+    "description": (
+        "Expanded single-command case: import/extends/abstract/variables "
+        "have been resolved away; every field must be complete."
+    ),
+    "properties": _case_properties("#/$defs/commandExecution", template_fields=False),
+}
+
+_EXPANDED_SEQUENCE_CASE_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "execution"],
+    "description": (
+        "Expanded multi-step case: case-level 'expected' stays optional; "
+        "import/extends/abstract/variables have been resolved away."
+    ),
+    "properties": _case_properties("#/$defs/stepsExecution", template_fields=False),
+}
+
+_EXPANDED_ITEMS: Dict[str, Any] = {
+    "if": {
+        "required": ["execution"],
+        "properties": {"execution": {"required": ["steps"]}},
+    },
+    "then": {"$ref": "#/$defs/expandedSequenceCase"},
+    "else": {"$ref": "#/$defs/expandedSingleCase"},
+}
+
+EXPANDED_CONFIG_SCHEMA: Dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "symtest configuration (expanded)",
+    "description": (
+        "Internal contract for a fully prepared symtest configuration: "
+        "imports expanded, extends resolved, variables applied. Every case "
+        "must be complete and executable. Not intended for hand authoring — "
+        "enforced by the shared preparation pipeline so that validate, run "
+        "and find apply identical rules."
+    ),
+    "type": "object",
+    "required": ["test_cases"],
+    "additionalProperties": False,
+    "properties": {
+        "setup": _SETUP_DEF,
+        "test_cases": {
+            "type": "array",
+            "items": _EXPANDED_ITEMS,
         },
-        "compareSpec": {
-            "type": "object",
-            "required": [],
-            "additionalProperties": True,
-            "description": (
-                "One file comparison rule. actual/baseline are required for built-in "
-                "file-type comparators (text/csv/json/xml/h5/binary). "
-                "They are optional for script, script_extract, or custom (plugin) "
-                "comparator types. "
-                "Other keys are forwarded to the comparator constructor as kwargs "
-                "(e.g. rtol, atol, encoding, tables, data_filter, pass_threshold, "
-                "pass_pattern) and are STRICT: a parameter the comparator does not "
-                "declare fails construction loudly. Use 'options' for plugin-owned "
-                "configuration. Framework resolves actual/baseline and plugin "
-                "path_params-declared paths against the workspace before the "
-                "comparator is constructed."
-            ),
-            "properties": {
-                "actual": {
-                    "type": "string",
-                    "description": "File produced by the test command. Optional when type is 'script', 'script_extract', or a workspace plugin.",
-                },
-                "baseline": {
-                    "type": "string",
-                    "description": "Golden/reference file. Optional when type is 'script', 'script_extract', or a workspace plugin.",
-                },
-                "type": {
-                    "type": "string",
-                    "description": (
-                        "Comparator type. Built-ins: text, json, csv, xml, h5, binary, "
-                        "script, script_extract. "
-                        "Custom (workspace plugin) comparator types are also allowed. "
-                        "Omit to auto-detect from the actual file extension."
-                    ),
-                },
-                "options": {
-                    "type": "object",
-                    "additionalProperties": True,
-                    "description": (
-                        "Plugin-owned configuration namespace. Entries are merged "
-                        "into the comparator constructor kwargs (explicit top-level "
-                        "keys take precedence). Preferred over adding plugin-specific "
-                        "top-level keys; unknown parameters fail loudly at "
-                        "construction, so typos are reported instead of silently "
-                        "falling back to defaults."
-                    ),
-                },
-                "channels": {
-                    "type": "object",
-                    "description": (
-                        "Per-channel tolerance overrides for data-lane comparators "
-                        "(script_extract / extractor plugins). Maps channel name to "
-                        "{'rtol':…, 'atol':…, 'data_filter':…}. Channels not listed "
-                        "use default_channel."
-                    ),
-                },
-                "default_channel": {
-                    "type": "object",
-                    "description": (
-                        "Default tolerance spec {'rtol':…, 'atol':…, 'data_filter':…} "
-                        "applied to channels not listed in 'channels'."
-                    ),
-                },
-                "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
-                "end_line": {"type": "integer", "minimum": 1, "description": "Only compare up to this line (1-based)."},
-                "start_column": {"type": "integer", "minimum": 1, "description": "Only compare from this column (1-based)."},
-                "end_column": {"type": "integer", "minimum": 1, "description": "Only compare up to this column (1-based)."},
-                "script": {"type": "string", "description": "Path to the analysis script (script / script_extract / custom comparator types)."},
-                "case_dir": {"type": "string", "description": "Working directory for the analysis script."},
-                "cwd": {"type": "string", "description": "Working directory for script execution (alias for case_dir)."},
-                "pass_threshold": {"type": "number", "description": "Numeric threshold below which the comparison is considered a pass."},
-                "pass_exit_code": {"type": "integer", "default": 0, "description": "Process exit code that indicates a pass (script comparator)."},
-                "pass_pattern": {"type": "string", "description": "Regex that must match stdout for a pass (script comparator)."},
-                "fail_pattern": {"type": "string", "description": "Regex that, if matched in stdout, forces a fail (script comparator)."},
-                "interpreter": {"type": "string", "description": "Python interpreter to use for running the script."},
-                "timeout": {"type": "number", "description": "Per-comparison timeout in seconds."},
-            },
-        },
-        "resources": {
-            "type": "object",
-            "additionalProperties": False,
-            "description": "Optional scheduling hints (parallel mode).",
-            "properties": {
-                "estimated_time": {"type": "number", "description": "Estimated duration in seconds; used for LPT ordering."},
-                "min_memory_mb": {"type": "number", "description": "Soft memory hint to avoid OOM."},
-                "priority": {"type": "integer", "description": "Higher value => higher priority."},
-                "cpu_cores": {"type": "integer", "minimum": 1, "description": "CPU cores required by this task."},
-            },
-        },
-        "step": {
-            "type": "object",
-            "required": ["command", "args", "expected"],
-            "additionalProperties": False,
-            "description": (
-                "One atomic execution+validation pair within execution.steps. "
-                "Step-level retry is driven by the orchestration layer."
-            ),
-            "properties": {
-                "command": {"type": "string"},
-                "args": {
-                    "type": "array",
-                    "items": {"type": ["string", "number", "boolean"]},
-                },
-                "expected": {"$ref": "#/$defs/expected"},
-                "timeout": {"type": ["number", "null"], "description": "Per-step timeout in seconds."},
-                "retry_count": {"type": "integer", "minimum": 0, "description": "Per-step retry count on failure."},
-                "outputs": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Declared output artifacts of this step, deleted "
-                        "before the step runs (not run when resumed by "
-                        "--resume). Only files may be declared (directories "
-                        "and the workspace root are rejected). Relative "
-                        "paths resolve against the workspace and must stay "
-                        "inside it."
-                    ),
-                },
-            },
-        },
-        "executionSpec": {
-            "type": "object",
-            "description": (
-                "Execution semantics (v2): single-command shorthand "
-                "(command/args/timeout/retry_count/env) OR the full steps form "
-                "(steps[]) — 二选一，由 oneOf 强制互斥. Case-level env applies "
-                "to all steps. Declaring both forms is a schema violation."
-            ),
-            "oneOf": [
-                {"$ref": "#/$defs/commandExecution"},
-                {"$ref": "#/$defs/stepsExecution"},
-            ],
-        },
-        "commandExecution": {
-            "type": "object",
-            "required": ["command", "args"],
-            "additionalProperties": False,
-            "description": (
-                "Single-command shorthand form: requires command + args; "
-                "the steps form must not be declared alongside."
-            ),
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": (
-                        "Command to execute. May include leading arguments "
-                        "(e.g. 'python ./run.py'); the framework splits and "
-                        "path-resolves them."
-                    ),
-                },
-                "args": {
-                    "type": "array",
-                    "items": {"type": ["string", "number", "boolean"]},
-                },
-                "timeout": {
-                    "type": ["number", "null"],
-                    "description": "Timeout in seconds (default 3600); null = no limit.",
-                },
-                "retry_count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
-                },
-                "env": {
-                    "type": "object",
-                    "additionalProperties": {"type": ["string", "number", "boolean"]},
-                    "description": (
-                        "Case-level environment variables injected into this "
-                        "case's command(s) (subprocess). Overrides setup-level "
-                        "and scheduler-injected environment variables."
-                    ),
-                },
-                "outputs": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Declared output artifacts of this execution unit. "
-                        "Deleted before the command starts (and before every "
-                        "retry attempt) so stale files cannot cause false "
-                        "passes. Only files may be declared (directories and "
-                        "the workspace root are rejected). Relative paths "
-                        "resolve against the workspace and must stay inside "
-                        "it; missing files are skipped silently; deletion "
-                        "failure fails the case loudly."
-                    ),
-                },
-            },
-        },
-        "stepsExecution": {
-            "type": "object",
-            "required": ["steps"],
-            "additionalProperties": False,
-            "description": (
-                "Full steps form: requires steps; command/args must not be "
-                "declared alongside."
-            ),
-            "properties": {
-                "steps": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"$ref": "#/$defs/step"},
-                    "description": "Steps run in order with fail-fast semantics.",
-                },
-                "timeout": {
-                    "type": ["number", "null"],
-                    "description": "Timeout in seconds (default 3600); null = no limit.",
-                },
-                "retry_count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Retries after the first failure; passing after retry marks the result flaky.",
-                },
-                "env": {
-                    "type": "object",
-                    "additionalProperties": {"type": ["string", "number", "boolean"]},
-                    "description": (
-                        "Case-level environment variables injected into every "
-                        "step (subprocess). Overrides setup-level and "
-                        "scheduler-injected environment variables."
-                    ),
-                },
-                "outputs": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Case-level declared output artifacts, deleted once "
-                        "before the first executed step on full runs. Only "
-                        "files may be declared (directories and the workspace "
-                        "root are rejected). Skipped when --resume starts "
-                        "from a resumed step (artifacts of skipped steps are "
-                        "trusted)."
-                    ),
-                },
-            },
-        },
-        "schedulingSpec": {
-            "type": "object",
-            "additionalProperties": False,
-            "description": "Scheduling semantics (v2): dependencies and resource hints.",
-            "properties": {
-                "depends_on": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Names of test cases that must pass before this case can "
-                        "start.  In parallel mode, dependencies are scheduled as a "
-                        "DAG: cases with satisfied dependencies run concurrently. "
-                        "If a dependency fails, this case is marked 'skipped'."
-                    ),
-                },
-                "resources": {"$ref": "#/$defs/resources"},
-            },
-        },
-        "singleCase": {
-            "allOf": [
-                {
-                    "if": {"required": ["extends"]},
-                    "then": {"required": ["name"]},
-                    "else": {"required": ["name", "execution", "expected"]},
-                },
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "description": "Single-command case (Schema v2 layered form).",
-                    "properties": {
-                        "name": {"type": "string", "description": "Unique test case name."},
-                        "execution": {"$ref": "#/$defs/executionSpec"},
-                        "expected": {"$ref": "#/$defs/expected"},
-                        "scheduling": {"$ref": "#/$defs/schedulingSpec"},
-                        "description": {"type": ["string", "null"]},
-                        "tags": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Tags for --tag filtering.",
-                        },
-                        "expected_failure": {
-                            "type": "boolean",
-                            "description": (
-                                "Mark this case as an expected failure (xfail). "
-                                "When true, a failure counts as XFailed (not a suite failure); "
-                                "an unexpected pass counts as XPassed (suite failure)."
-                            ),
-                        },
-                        "xfail_reason": {
-                            "type": "string",
-                            "description": "Optional reason displayed in the report alongside XFailed results.",
-                        },
-                        "xfail_quiet": {
-                            "type": "boolean",
-                            "description": (
-                                "When true and the case is xfailed (expected failure confirmed), "
-                                "suppress the Command Output block in reports to reduce noise."
-                            ),
-                        },
-                        "abstract": {
-                            "type": "boolean",
-                            "description": (
-                                "When true, this case is a template (base) and is not "
-                                "executed.  Other cases can extend it via 'extends'."
-                            ),
-                        },
-                        "extends": {
-                            "type": "string",
-                            "description": (
-                                "Name of the base test case to inherit from.  Fields "
-                                "from the base are deep-merged; the child's fields take "
-                                "precedence.  Supports chain inheritance with cycle detection."
-                            ),
-                        },
-                        "variables": {
-                            "type": "object",
-                            "additionalProperties": {"type": ["string", "number", "boolean"]},
-                            "description": (
-                                "Per-case placeholder variables for {key} substitution. "
-                                "Merged from the ancestor chain (child overrides parent), "
-                                "then overlaid by global --var flags at run time."
-                            ),
-                        },
-                    },
-                },
-            ],
-        },
-        "sequenceCase": {
-            "allOf": [
-                {
-                    "if": {"required": ["extends"]},
-                    "then": {"required": ["name"]},
-                    "else": {"required": ["name", "execution"]},
-                },
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "description": (
-                        "Multi-step case (Schema v2 layered form): steps live in "
-                        "execution.steps and run in order with fail-fast semantics. "
-                        "The case-level 'expected' is evaluated once after all steps pass."
-                    ),
-                    "properties": {
-                        "name": {"type": "string"},
-                        "execution": {
-                            "$ref": "#/$defs/executionSpec",
-                            "description": "Must use the steps form (execution.steps).",
-                        },
-                        "expected": {
-                            "$ref": "#/$defs/expected",
-                            "description": "Optional case-level assertions (e.g. compare_files on produced files), evaluated after all steps pass.",
-                        },
-                        "scheduling": {"$ref": "#/$defs/schedulingSpec"},
-                        "description": {"type": ["string", "null"]},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "expected_failure": {
-                            "type": "boolean",
-                            "description": (
-                                "Mark this case as an expected failure (xfail). "
-                                "When true, a failure counts as XFailed (not a suite failure); "
-                                "an unexpected pass counts as XPassed (suite failure)."
-                            ),
-                        },
-                        "xfail_reason": {
-                            "type": "string",
-                            "description": "Optional reason displayed in the report alongside XFailed results.",
-                        },
-                        "xfail_quiet": {
-                            "type": "boolean",
-                            "description": (
-                                "When true and the case is xfailed (expected failure confirmed), "
-                                "suppress the Command Output block in reports to reduce noise."
-                            ),
-                        },
-                        "abstract": {
-                            "type": "boolean",
-                            "description": (
-                                "When true, this case is a template (base) and is not "
-                                "executed.  Other cases can extend it via 'extends'."
-                            ),
-                        },
-                        "extends": {
-                            "type": "string",
-                            "description": (
-                                "Name of the base test case to inherit from.  Fields "
-                                "from the base are deep-merged; the child's fields take "
-                                "precedence.  Supports chain inheritance with cycle detection."
-                            ),
-                        },
-                        "variables": {
-                            "type": "object",
-                            "additionalProperties": {"type": ["string", "number", "boolean"]},
-                            "description": (
-                                "Per-case placeholder variables for {key} substitution. "
-                                "Merged from the ancestor chain (child overrides parent), "
-                                "then overlaid by global --var flags at run time."
-                            ),
-                        },
-                    },
-                },
-            ],
-        },
-        "importRef": {
-            "type": "object",
-            "required": ["import"],
-            "additionalProperties": False,
-            "description": "Inline another config file (path relative to this file).",
-            "properties": {
-                "import": {"type": "string"},
-            },
-        },
+    },
+    "$defs": {
+        "expected": _EXPECTED_DEF,
+        "compareSpec": _COMPARE_SPEC_DEF,
+        "resources": _RESOURCES_DEF,
+        "step": _STEP_DEF,
+        "executionSpec": _EXECUTION_SPEC_DEF,
+        "commandExecution": _COMMAND_EXECUTION_DEF,
+        "stepsExecution": _STEPS_EXECUTION_DEF,
+        "schedulingSpec": _SCHEDULING_DEF,
+        "expandedSingleCase": _EXPANDED_SINGLE_CASE_DEF,
+        "expandedSequenceCase": _EXPANDED_SEQUENCE_CASE_DEF,
     },
 }
 
 
 def get_config_schema() -> Dict[str, Any]:
-    """Return a deep copy of the config JSON Schema (safe to mutate)."""
+    """Return a deep copy of the raw config JSON Schema (safe to mutate)."""
     return copy.deepcopy(CONFIG_SCHEMA)
+
+
+def get_expanded_config_schema() -> Dict[str, Any]:
+    """Return a deep copy of the expanded-form JSON Schema (safe to mutate)."""
+    return copy.deepcopy(EXPANDED_CONFIG_SCHEMA)

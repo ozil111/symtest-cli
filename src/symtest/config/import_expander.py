@@ -75,6 +75,7 @@ def expand_imports(
     config: Dict[str, Any],
     config_path: Path,
     loaded_paths: Optional[Set[str]] = None,
+    on_file_loaded: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Recursively expand ``import`` references in a config dict.
 
@@ -91,6 +92,11 @@ def expand_imports(
         for resolving relative ``import`` paths).
     loaded_paths:
         Set of already-loaded canonical paths (for cycle detection).
+    on_file_loaded:
+        Optional callback ``fn(sub_path, sub_config) -> bool`` invoked after
+        each imported file is loaded.  Return ``True`` to skip inlining this
+        import (e.g. the file failed upstream validation); the file is still
+        marked as visited so repeated imports are not re-processed.
 
     Returns
     -------
@@ -126,9 +132,27 @@ def expand_imports(
 
             logger.debug("Expanding import: %s -> %s", import_rel, sub_path)
 
-            sub_config = _load_raw_config(sub_path)
+            try:
+                sub_config = _load_raw_config(sub_path)
+            except Exception as exc:
+                # Normalize parser-specific errors (including optional YAML
+                # parsers) at the file-reading boundary, retaining provenance.
+                raise ValueError(
+                    f"Error loading imported config {sub_path} "
+                    f"(referenced from {config_path}): {exc}"
+                ) from exc
+
+            if on_file_loaded is not None and on_file_loaded(sub_path, sub_config):
+                # Upstream rejected this file (e.g. structural validation
+                # failed); skip inlining but mark visited to avoid duplicate
+                # diagnostics on repeated imports of the same file.
+                loaded_paths.add(str(sub_path.resolve()))
+                continue
+
             # Recursively expand (pass loaded_paths copy for cycle detection)
-            sub_config = expand_imports(sub_config, sub_path, loaded_paths)
+            sub_config = expand_imports(
+                sub_config, sub_path, loaded_paths, on_file_loaded,
+            )
 
             # Merge setup from sub-file
             sub_setup = sub_config.get("setup", {})

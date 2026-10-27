@@ -70,6 +70,10 @@ legacy configs with `symtest migrate`.
    ```bash
    symtest validate test_cases.json
    ```
+   Validation and execution share the same preparation checks. Templates and
+   heirs may partially override `execution` dictionaries, but the expanded
+   case must be complete; supplied `steps` replace the whole list. Use the
+   same `--workspace` for validation, execution, and `find`.
 7. Run:
    ```bash
    symtest run test_cases.json

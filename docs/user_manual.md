@@ -690,11 +690,20 @@ symtest run config.json --var solver=/path/to/solver
 - `extends` 目标是否存在
 - 是否形成循环继承链
 - `abstract` 用例不计入可执行用例数
-- `extends` 用例跳过必填字段检查（内容来自父类）
+- 原始文件中的 `extends` / `abstract` 用例可以缺少必填字段（内容来自父类或子类补充）；但**继承展开后仍不完整的用例会报错**
+- `execution` 字典可局部覆盖，例如仅设置 `args`、`timeout` 或 `env`；字段类型、未知字段和执行形态互斥仍会检查。`steps` 列表整体替换，每个提供的 step 必须完整。
 
 ## 配置校验
 
 `validate` 命令在不运行测试的情况下检查配置文件的正确性，适合在 CI 流水线中做配置合法性检查。
+
+`validate` 与 `run` / `find` 的配置加载共用同一条校验流程（结构检查基于
+`symtest schema` 导出的 JSON Schema，双形态契约）：同一份配置在 `validate`
+与 `run` 中产生一致的错误；`run` 遇到配置错误时在执行任何命令之前退出。
+
+导入 YAML 文件的语法错误也返回校验诊断，包含出错文件和引用来源。
+`find --workspace` 与 `validate --workspace` 使用指定工作区检查输出路径；
+Python API `load_config(path, workspace=...)` 同样支持显式工作区，默认使用当前目录。
 
 ### 用法
 
@@ -717,9 +726,12 @@ symtest validate test_cases.json --output-format json
 | 检查项 | 说明 |
 |---|---|
 | 语法正确性 | JSON/YAML 格式是否合法（加载时隐式检查） |
-| 必填字段 | 每条用例是否包含 `name`、`execution.command`、`execution.args`、`expected`（序列模式检查每个 step） |
-| import 引用 | 被引用的子文件是否存在 |
+| 结构检查（JSON Schema） | 每个加载的文件（含 import 子文件）按 schema 检查：字段名（未知字段/拼写错误报错，如 `return_cod`）、类型、取值范围（如 `retry_count >= 0`）、执行形态互斥（`command/args` 与 `steps` 不能同时声明） |
+| 必填字段 | 每条可执行用例必须包含 `name`、`execution`、`expected`（单命令模式）；序列模式检查每个 step；`abstract` 模板与 `extends` 继承用例在原始文件中可缺省，但**继承展开后必须完整** |
+| import 引用 | 被引用的子文件是否存在；子文件自身也按 schema 检查，错误定位到具体文件与字段 |
 | 循环引用 | import 链中是否存在 A→B→A 的循环 |
+| 继承与重名 | `extends` 目标存在性、循环继承链、用例名重复（extends 引用必须无歧义） |
+| 语义检查 | `outputs` 路径边界（不得逃逸 workspace、不得为目录）；`depends_on` 目标存在性、自引用与循环依赖 |
 
 ### 输出示例
 
@@ -735,11 +747,11 @@ symtest validate test_cases.json --output-format json
     - /project/cases/json_tests.yaml
 ```
 
-有错误时：
+有错误时（结构错误带文件路径与字段路径）：
 ```
   [OK] Loaded 3 test cases from 1 file(s)
-  [FAIL] case 'bad_case': missing required field 'expected'
-  [FAIL] Import target not found: /project/cases/nonexistent.json
+  [FAIL] [/project/config.json] $.test_cases[0]: 'expected' is a required property
+  [FAIL] Imported config file not found: /project/cases/nonexistent.json (referenced from /project/config.json)
 ```
 
 ## 跨文件搜索用例（find）
@@ -948,7 +960,7 @@ symtest validate config.json --output-format json
 ```json
 {
   "valid": false,
-  "errors": ["[main_config.json] case 'bad_case': missing required field 'expected'"],
+  "errors": ["[/project/main_config.json] $.test_cases[0]: 'expected' is a required property"],
   "summary": {"files": 1, "cases": 3, "files_loaded": ["/project/main_config.json"]}
 }
 ```

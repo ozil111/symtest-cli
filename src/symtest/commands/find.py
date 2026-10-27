@@ -307,7 +307,7 @@ def run_find(args) -> int:
     config_file = (workspace_path / args.config_file).resolve()
 
     try:
-        config = load_config(config_file)
+        config = load_config(config_file, workspace=str(workspace_path))
         cases = parse_test_cases(config)
     except Exception as e:
         logger.error("Failed to load configuration: %s", e)

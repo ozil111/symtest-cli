@@ -1,22 +1,32 @@
 """
-Unified configuration I/O with import-expansion support.
+Unified configuration I/O.
 
-Provides ``load_config`` and ``save_config`` as the canonical read/write
-entry points for test configuration files, with transparent import expansion.
+``load_config`` / ``save_config`` remain the canonical read/write entry
+points for test configuration files.  ``validate_config`` delegates to the
+shared preparation pipeline (``config.prepared.prepare_config``) so that
+``symtest validate`` and ``symtest run`` apply identical rules; the JSON
+Schema in ``config_schema.py`` is the single source of truth for structural
+checks.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
-from .import_expander import expand_imports, _load_raw_config
-from .inheritance_expander import resolve_inheritance
+from .import_expander import _load_raw_config
+from .prepared import prepare_config, ConfigValidationError
 
 logger = logging.getLogger("symtest.config.config_io")
+
+__all__ = [
+    "load_config",
+    "save_config",
+    "validate_config",
+    "ConfigValidationError",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -27,15 +37,25 @@ def load_config(
     config_file_path: Union[str, Path],
     *,
     expand: bool = True,
+    workspace: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Load and (optionally) expand import references in a config file.
+    """Load and (optionally) prepare a config file through the shared pipeline.
 
     Parameters
     ----------
     config_file_path:
         Path to the config file (JSON, JSONC or YAML).
     expand:
-        If ``True`` (default), recursively expand ``import`` references.
+        If ``True`` (default), run the full preparation pipeline: raw-form
+        structural validation, ``import`` expansion, ``extends`` resolution,
+        variable application and expanded-form validation.  Structural
+        problems raise ``ConfigValidationError``.
+        If ``False``, the file is read as-is with no expansion or validation
+        (used for round-tripping draft / legacy dicts).
+
+    workspace:
+        Workspace root for semantic path checks (default: current directory).
+        Used only when ``expand=True``.
 
     Returns
     -------
@@ -46,13 +66,13 @@ def load_config(
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    config = _load_raw_config(path)
+    if not expand:
+        return _load_raw_config(path)
 
-    if expand:
-        config = expand_imports(config, path)
-        config = resolve_inheritance(config)
-
-    return config
+    prepared = prepare_config(path, workspace=workspace)
+    if not prepared.valid:
+        raise ConfigValidationError(prepared.errors)
+    return prepared.config
 
 
 def save_config(
@@ -96,222 +116,26 @@ def save_config(
 # Validation
 # ---------------------------------------------------------------------------
 
-def _get_execution(test_case: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the v2 ``execution`` block of a case dict (empty dict if absent)."""
-    execution = test_case.get("execution")
-    return execution if isinstance(execution, dict) else {}
-
-
-def _get_depends_on(test_case: Dict[str, Any]) -> Any:
-    """Return the v2 ``scheduling.depends_on`` of a case dict (default [])."""
-    scheduling = test_case.get("scheduling")
-    if isinstance(scheduling, dict):
-        return scheduling.get("depends_on", [])
-    return []
-
-
-def _validate_required_fields(test_case: Dict[str, Any], index: int, source: str) -> List[str]:
-    """Check required fields for a single test case dict (Schema v2). Returns list of error messages."""
-    errors: List[str] = []
-    name = test_case.get("name", "<unnamed>")
-    prefix = f"[{source}] case '{name}'"
-
-    if "name" not in test_case:
-        errors.append(f"{prefix}: missing required field 'name'")
-
-    execution = _get_execution(test_case)
-    if not execution:
-        errors.append(f"{prefix}: missing required field 'execution'")
-        return errors
-
-    if "steps" in execution:
-        # Sequence mode (case-level expected optional)
-        for si, step in enumerate(execution["steps"]):
-            for field in ("command", "args", "expected"):
-                if field not in step:
-                    errors.append(f"{prefix} step {si}: missing required field '{field}'")
-    else:
-        # Single-command mode
-        for field in ("expected", "command", "args"):
-            if field not in (test_case if field == "expected" else execution):
-                errors.append(
-                    f"{prefix}: missing required field "
-                    f"'{field if field == 'expected' else f'execution.{field}'}'"
-                )
-
-    return errors
-
-
-# ---------------------------------------------------------------------------
-# Warning-level checks (do not affect ``valid``)
-# ---------------------------------------------------------------------------
-
-def _command_warning(command: Any, workspace: Path) -> Optional[str]:
-    """Return a warning message if a command is clearly not executable.
-
-    Heuristic only — shell builtins, ``{placeholder}`` commands, and anything
-    resolvable via PATH pass silently.
-    """
-    if not isinstance(command, str) or not command.strip():
-        return "empty command"
-
-    from ..core.execution.executor import _SHELL_BUILTINS
-
-    first = command.strip().split()[0]
-    if "{" in first or "}" in first:
-        return None  # variable placeholder; cannot resolve statically
-    if first.lower() in _SHELL_BUILTINS:
-        return None
-    if Path(first).is_absolute() or "/" in first or "\\" in first:
-        # Path-like command: resolve relative to the workspace
-        candidate = Path(first)
-        if not candidate.is_absolute():
-            candidate = workspace / candidate
-        if not candidate.exists():
-            return f"command not found: '{first}'"
-        return None
-    if shutil.which(first) is None:
-        return f"command not found on PATH: '{first}'"
-    return None
-
-
-def _baseline_warnings(expected: Any, prefix: str, workspace: Path) -> List[str]:
-    """Warn when a compare_files baseline file does not exist.
-
-    ``actual`` files are produced by the test command, so only ``baseline``
-    is checked. Placeholders (``{var}``) are skipped.
-    """
-    warnings: List[str] = []
-    if not isinstance(expected, dict):
-        return warnings
-    compare_specs = expected.get("compare_files") or []
-    for spec in compare_specs:
-        if not isinstance(spec, dict):
-            continue
-        baseline = spec.get("baseline")
-        if not baseline or not isinstance(baseline, str) or "{" in baseline:
-            continue
-        candidate = Path(baseline)
-        if not candidate.is_absolute():
-            candidate = workspace / candidate
-        if not candidate.exists():
-            warnings.append(f"{prefix}: baseline file not found: '{baseline}'")
-    return warnings
-
-
-def _iter_case_outputs(test_case: Dict[str, Any]) -> List[Any]:
-    """Yield all declared ``outputs`` entries of a case (case-level + steps)."""
-    execution = _get_execution(test_case)
-    entries: List[Any] = []
-    outputs = execution.get("outputs")
-    if isinstance(outputs, list):
-        entries.extend(outputs)
-    for step in execution.get("steps", []) or []:
-        if isinstance(step, dict) and isinstance(step.get("outputs"), list):
-            entries.extend(step["outputs"])
-    return entries
-
-
-def _outputs_errors(test_case: Dict[str, Any], prefix: str, workspace: Path) -> List[str]:
-    """Error-level checks for declared ``outputs`` paths (Schema v2).
-
-    - must be an array of strings;
-    - ``{placeholder}`` entries are skipped (cannot resolve statically);
-    - resolved path must stay inside the workspace (no escape);
-    - resolved path must not be the workspace root itself (e.g. ``"."``)
-      and must not already exist as a directory — only files may be
-      declared as outputs.
-    """
-    errors: List[str] = []
-    execution = _get_execution(test_case)
-    outputs = execution.get("outputs")
-    if outputs is not None and not (
-        isinstance(outputs, list) and all(isinstance(o, str) for o in outputs)
-    ):
-        errors.append(f"{prefix}: execution.outputs must be an array of strings")
-    for step in execution.get("steps", []) or []:
-        if not isinstance(step, dict):
-            continue
-        step_outputs = step.get("outputs")
-        if step_outputs is not None and not (
-            isinstance(step_outputs, list) and all(isinstance(o, str) for o in step_outputs)
-        ):
-            errors.append(f"{prefix}: step outputs must be an array of strings")
-
-    for raw in _iter_case_outputs(test_case):
-        if not isinstance(raw, str) or "{" in raw:
-            continue
-        p = Path(raw)
-        candidate = p.resolve() if p.is_absolute() else (workspace / p).resolve()
-        try:
-            candidate.relative_to(workspace)
-        except ValueError:
-            errors.append(
-                f"{prefix}: output path escapes workspace: '{raw}'"
-            )
-            continue
-        if candidate == workspace:
-            errors.append(
-                f"{prefix}: output path resolves to the workspace root "
-                f"(only files may be declared): '{raw}'"
-            )
-            continue
-        if candidate.exists() and candidate.is_dir() and not candidate.is_symlink():
-            errors.append(
-                f"{prefix}: output path is a directory "
-                f"(only files may be declared as outputs): '{raw}'"
-            )
-    return errors
-
-
-def _validate_case_warnings(
-    test_case: Dict[str, Any], source: str, workspace: Path,
-) -> List[str]:
-    """Warning-level checks for a single test case dict (Schema v2)."""
-    warnings: List[str] = []
-    name = test_case.get("name", "<unnamed>")
-    prefix = f"[{source}] case '{name}'"
-
-    execution = _get_execution(test_case)
-    if "steps" in execution:
-        for si, step in enumerate(execution.get("steps", [])):
-            if not isinstance(step, dict):
-                continue
-            step_prefix = f"{prefix} step {si}"
-            cmd_warn = _command_warning(step.get("command"), workspace)
-            if cmd_warn:
-                warnings.append(f"{step_prefix}: {cmd_warn}")
-            warnings.extend(
-                _baseline_warnings(step.get("expected"), step_prefix, workspace)
-            )
-        warnings.extend(
-            _baseline_warnings(test_case.get("expected"), prefix, workspace)
-        )
-    else:
-        cmd_warn = _command_warning(execution.get("command"), workspace)
-        if cmd_warn:
-            warnings.append(f"{prefix}: {cmd_warn}")
-        warnings.extend(
-            _baseline_warnings(test_case.get("expected"), prefix, workspace)
-        )
-
-    return warnings
-
-
 def validate_config(
     config_file_path: Union[str, Path],
     workspace: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate a test config file (with import expansion) without running tests.
+    """Validate a test config file without running tests.
 
-    Checks (errors — affect ``valid``):
+    Delegates to the shared preparation pipeline (``prepare_config``) — the
+    same checks that gate ``symtest run`` — and returns a report dict.
+
+    Error-level checks (affect ``valid``):
     - JSON/YAML syntax correctness (implicit from successful load)
-    - Required fields on every test case
-    - Import target existence
-    - Circular import detection
-    - extends target existence
-    - Circular extends inheritance detection
+    - Raw-form structure per the JSON Schema: field names, types, value
+      ranges, execution-form mutual exclusion, unknown fields
+    - Import target existence; circular import detection
+    - Duplicate case names
+    - extends target existence; circular inheritance detection
+    - Expanded-form completeness: every executable case must be complete
+      after inheritance resolution
     - ``outputs`` path validity (array of strings, no workspace escape)
+    - depends_on target existence, self-reference and cycle detection
 
     Warning-level checks (reported in ``warnings``, do not affect ``valid``):
     - ``command`` executability (PATH lookup / path existence)
@@ -321,232 +145,10 @@ def validate_config(
     Returns a dict with keys ``valid`` (bool), ``errors`` (list),
     ``warnings`` (list), and ``summary`` (dict with file/case counts).
     """
-    path = Path(config_file_path).resolve()
-    errors: List[str] = []
-    warnings: List[str] = []
-    files_loaded: List[str] = []
-    total_cases = 0
-    ws = Path(workspace).resolve() if workspace else Path.cwd()
-
-    try:
-        config = _load_raw_config(path)
-    except Exception as exc:
-        return {
-            "valid": False,
-            "errors": [f"Syntax error in {path}: {exc}"],
-            "warnings": [],
-            "summary": {"files": 0, "cases": 0},
-        }
-
-    # Collect all files and cases (walk the import tree)
-    all_cases: List[tuple] = []  # (case_dict, source_path)
-
-    def _walk(current_path: Path, current_config: Dict[str, Any], visited: set) -> None:
-        nonlocal total_cases
-        canonical = str(current_path.resolve())
-        if canonical in visited:
-            errors.append(f"Circular import detected: {canonical}")
-            return
-        visited.add(canonical)
-        files_loaded.append(str(current_path))
-
-        for idx, item in enumerate(current_config.get("test_cases", [])):
-            if "import" in item:
-                sub_path = (current_path.parent / item["import"]).resolve()
-                if not sub_path.exists():
-                    errors.append(
-                        f"Import target not found: {sub_path} "
-                        f"(referenced by {current_path})"
-                    )
-                    continue
-                try:
-                    sub_config = _load_raw_config(sub_path)
-                    _walk(sub_path, sub_config, visited)
-                except Exception as exc:
-                    errors.append(f"Error loading {sub_path}: {exc}")
-            else:
-                is_abstract = item.get("abstract", False)
-                has_extends = "extends" in item
-                source = str(current_path)
-
-                all_cases.append((item, source))
-
-                if is_abstract:
-                    # Abstract cases are templates — skip counting and field validation
-                    continue
-
-                total_cases += 1
-                # extends cases inherit fields from parent; skip required-field checks
-                if not has_extends:
-                    errors.extend(_validate_required_fields(item, idx, source))
-                    errors.extend(
-                        _outputs_errors(
-                            item, f"[{source}] case '{item.get('name', '<unnamed>')}'", ws,
-                        )
-                    )
-                warnings.extend(_validate_case_warnings(item, source, ws))
-
-    _walk(path, config, set())
-
-    # ── Inheritance validation (extends targets + cycle detection) ──
-    def _validate_inheritance() -> None:
-        """Check extends target existence and circular inheritance chains."""
-        names: Dict[str, Dict[str, Any]] = {}
-        for case_dict, source in all_cases:
-            name = case_dict.get("name")
-            if name:
-                if name in names:
-                    # Duplicate names are ambiguous for extends; flag as error
-                    errors.append(
-                        f"Duplicate case name '{name}' "
-                        f"(found in multiple config files; "
-                        f"extends references must be unambiguous)"
-                    )
-                names[name] = case_dict
-
-        for case_dict, source in all_cases:
-            extends_target = case_dict.get("extends")
-            if not extends_target:
-                continue
-            case_name = case_dict.get("name", "<unnamed>")
-            if extends_target not in names:
-                errors.append(
-                    f"[{source}] case '{case_name}': "
-                    f"extends target '{extends_target}' not found"
-                )
-
-        # Cycle detection: follow extends chain from each case
-        for name, case_dict in names.items():
-            visited_chain: List[str] = []
-            current = name
-            while current in names:
-                target = names[current].get("extends")
-                if not target:
-                    break
-                if target in visited_chain:
-                    chain = " -> ".join(visited_chain + [target])
-                    errors.append(f"Circular extends detected: {chain}")
-                    break
-                visited_chain.append(current)
-                current = target
-
-    _validate_inheritance()
-
-    # ── depends_on validation (name existence + self-reference + cycle) ──
-    def _validate_depends_on() -> None:
-        """Check depends_on references: target existence, no self-reference, no cycles."""
-        # Build name→case mapping from all cases (including abstract)
-        names: Dict[str, tuple] = {}
-        for case_dict, source in all_cases:
-            name = case_dict.get("name")
-            if name:
-                names[name] = (case_dict, source)
-
-        for case_dict, source in all_cases:
-            case_name = case_dict.get("name", "<unnamed>")
-            deps = _get_depends_on(case_dict)
-            if not deps:
-                continue
-            if not isinstance(deps, list):
-                errors.append(
-                    f"[{source}] case '{case_name}': "
-                    f"depends_on must be an array of strings"
-                )
-                continue
-            for dep in deps:
-                if not isinstance(dep, str):
-                    errors.append(
-                        f"[{source}] case '{case_name}': "
-                        f"depends_on entries must be strings, got {type(dep).__name__}"
-                    )
-                    continue
-                if dep == case_name:
-                    errors.append(
-                        f"[{source}] case '{case_name}': "
-                        f"cannot depend on itself ('{dep}')"
-                    )
-                    continue
-                if dep not in names:
-                    errors.append(
-                        f"[{source}] case '{case_name}': "
-                        f"depends_on target '{dep}' not found"
-                    )
-
-        # Cycle detection in depends_on graph
-        for name, (case_dict, source) in names.items():
-            visited: List[str] = []
-            current = name
-            while current in names:
-                deps = _get_depends_on(names[current][0])
-                if not deps or not isinstance(deps, list):
-                    break
-                # Check each dependency for a cycle
-                for dep in deps:
-                    if dep in visited:
-                        chain = " -> ".join(visited + [dep])
-                        errors.append(
-                            f"Circular depends_on detected: {chain}"
-                        )
-                        # Mark as broken to avoid infinite loop
-                        visited.append(dep)
-                        break
-                if len(visited) > 0 and visited[-1] == name:
-                    break
-                # Move to next: pick the first dep (any cycle will be caught)
-                next_dep = None
-                for dep in deps:
-                    if isinstance(dep, str):
-                        next_dep = dep
-                        break
-                if next_dep is None or next_dep in visited:
-                    break
-                visited.append(current)
-                current = next_dep
-
-    _validate_depends_on()
-
-    # ── outputs conflict warning (parallel safety) ──
-    # Two concurrently scheduled cases declaring the same output path race
-    # on deletion. Pairs connected via depends_on are legitimate (upstream
-    # runs first) and are not flagged.
-    def _warn_output_conflicts() -> None:
-        output_owners: Dict[str, List[str]] = {}
-        for case_dict, source in all_cases:
-            name = case_dict.get("name", "<unnamed>")
-            for raw in _iter_case_outputs(case_dict):
-                if not isinstance(raw, str) or "{" in raw:
-                    continue
-                key = str(Path(raw)).replace("\\", "/").lower()
-                output_owners.setdefault(key, []).append(name)
-        deps_map: Dict[str, List[str]] = {
-            case_dict.get("name", "<unnamed>"): (
-                _get_depends_on(case_dict) if isinstance(_get_depends_on(case_dict), list) else []
-            )
-            for case_dict, _ in all_cases
-        }
-        for key, owners in output_owners.items():
-            unique = list(dict.fromkeys(owners))
-            for i in range(len(unique)):
-                for j in range(i + 1, len(unique)):
-                    a, b = unique[i], unique[j]
-                    if a in deps_map.get(b, []) or b in deps_map.get(a, []):
-                        continue
-                    warnings.append(
-                        f"output path declared by multiple cases without "
-                        f"depends_on: '{key}' ({a}, {b}); concurrent runs may "
-                        f"delete each other's artifacts"
-                    )
-
-    _warn_output_conflicts()
-
-    valid = len(errors) == 0
+    prepared = prepare_config(config_file_path, workspace=workspace)
     return {
-        "valid": valid,
-        "errors": errors,
-        "warnings": warnings,
-        "summary": {
-            "files": len(files_loaded),
-            "cases": total_cases,
-            "files_loaded": files_loaded,
-        },
+        "valid": prepared.valid,
+        "errors": prepared.errors,
+        "warnings": prepared.warnings,
+        "summary": prepared.summary,
     }
