@@ -1858,6 +1858,8 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 
 ### CSV File Comparison
 
+When a row window is set, row-count differences use only CSV records inside the window; extra records outside it do not affect the result. The starting row must refer to an existing record in both files. A starting row past the last record, or an empty file, returns an out-of-range error.
+
 ```bash
 # Basic comparison
 compare-files data1.csv data2.csv

@@ -239,18 +239,25 @@ class CsvComparator(TextComparator):
                 pass
 
             # Row-window validation mirrors the text layer's error message.
-            if counts1[0] < start_line:
+            if counts1[0] <= start_line:
                 raise ValueError(f"Start line {start_line} is beyond file length {counts1[0]}")
-            if counts2[0] < start_line:
+            if counts2[0] <= start_line:
                 raise ValueError(f"Start line {start_line} is beyond file length {counts2[0]}")
+
+            # Only records inside the selected window affect the verdict.
+            window_end = end_line + 1 if end_line is not None else None
+            selected1, selected2 = (
+                (min(count, window_end) if window_end is not None else count) - start_line
+                for count in (counts1[0], counts2[0])
+            )
 
             # Row count mismatch: prepend like the in-memory path (it is the
             # first difference there) and keep the report capped at max_diffs.
-            if counts1[0] != counts2[0]:
+            if selected1 != selected2:
                 differences.insert(0, Difference(
                     position="row count",
-                    expected=f"{counts1[0]} rows",
-                    actual=f"{counts2[0]} rows",
+                    expected=f"{selected1} rows",
+                    actual=f"{selected2} rows",
                     diff_type="row_count_mismatch"
                 ))
                 del differences[max_diffs:]

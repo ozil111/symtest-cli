@@ -1880,6 +1880,8 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 
 ### CSV 文件比较
 
+设置行窗口时，行数差异仅按窗口内的 CSV 记录数判定，窗口外的额外记录不影响结果。起始行必须指向两份文件中都存在的记录；起始行位于文件末尾之后或文件为空时，返回越界错误。
+
 ```bash
 # 基本比较
 compare-files data1.csv data2.csv

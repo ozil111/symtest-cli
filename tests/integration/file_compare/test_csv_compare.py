@@ -357,6 +357,40 @@ def test_csv_streaming_line_window(tmp_path):
     assert result.identical
 
 
+@pytest.mark.parametrize("error_analysis", [False, True])
+@pytest.mark.parametrize("swap_files", [False, True])
+def test_csv_streaming_ignores_extra_records_outside_window(tmp_path, error_analysis, swap_files):
+    file1, file2 = _make_files(tmp_path, "v\n1\n2\n", "v\n1\n2\n3\n")
+    if swap_files:
+        file1, file2 = file2, file1
+
+    result = compare_csv(file1, file2, start_line=1, end_line=2,
+                         error_analysis=error_analysis)
+
+    assert result.error is None
+    assert result.identical
+    assert result.differences == []
+    if error_analysis:
+        assert result.error_stats["total_numeric_cells"] == 2
+
+
+@pytest.mark.parametrize("error_analysis", [False, True])
+@pytest.mark.parametrize("end_line", [None, 100])
+def test_csv_streaming_counts_only_records_inside_window(tmp_path, error_analysis, end_line):
+    file1, file2 = _make_files(tmp_path, "v\n1\n2\n", "v\n1\n2\n3\n")
+
+    result = compare_csv(file1, file2, start_line=1, end_line=end_line,
+                         error_analysis=error_analysis)
+
+    assert result.error is None
+    assert not result.identical
+    assert len(result.differences) == 1
+    diff = result.differences[0]
+    assert diff.diff_type == "row_count_mismatch"
+    assert diff.expected == "2 rows"
+    assert diff.actual == "3 rows"
+
+
 def test_csv_streaming_quoted_newline_field(tmp_path):
     """Quoted fields containing newlines compare as single records."""
     baseline = 'id,note\n1,"line1\nline1b"\n2,end\n'
@@ -369,6 +403,26 @@ def test_csv_streaming_quoted_newline_field(tmp_path):
     diff = result.differences[0]
     assert diff.diff_type == "cell_mismatch"
     assert diff.position == "row 3, column 2"
+
+
+@pytest.mark.parametrize("error_analysis", [False, True])
+@pytest.mark.parametrize("baseline,actual,start_line", [
+    ("v\n1\n", "v\n1\n", 2),
+    ("v\n1\n", "v\n1\n2\n", 2),
+    ("v\n1\n2\n", "v\n1\n", 2),
+    ("", "", 0),
+    ("", "v\n", 0),
+    ("v\n", "", 0),
+])
+def test_csv_streaming_start_line_at_eof_is_error(tmp_path, error_analysis, baseline, actual, start_line):
+    file1, file2 = _make_files(tmp_path, baseline, actual)
+
+    result = compare_csv(file1, file2, start_line=start_line,
+                         error_analysis=error_analysis)
+
+    assert not result.identical
+    assert result.error is not None
+    assert "beyond file length" in result.error
 
 
 def test_csv_streaming_start_line_beyond_eof(tmp_path):
