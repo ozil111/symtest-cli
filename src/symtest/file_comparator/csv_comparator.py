@@ -10,12 +10,13 @@
 
 import csv
 import io
+import math
 import re
 import numpy as np
 from pathlib import Path
 from .text_comparator import TextComparator
 from .result import Difference, ComparisonResult
-from .numeric_compare import compare_numeric, parse_data_filter
+from .numeric_compare import compare_numeric, parse_data_filter, validate_allow_nonfinite
 
 
 def _parse_cell_number(cell):
@@ -35,6 +36,35 @@ def _parse_cell_number(cell):
         return float(cell)
     except ValueError:
         return None
+
+
+# Any float overflow requires an exponent or at least 309 decimal digits.
+# Parse all exponent spellings, including underscores accepted by float(),
+# and long mantissas; a short exponent can overflow with a large mantissa.
+_NONFINITE_HINT_RE = re.compile(r"nan|inf|e", re.IGNORECASE)
+
+
+def _cell_is_finite_number(value):
+    """Whether a parsed cell value is finite (ints always are)."""
+    if isinstance(value, int):
+        return True
+    return math.isfinite(value)
+
+
+def _row_has_nonfinite_numeric(row):
+    """
+    @brief Whether any CSV cell parses to a non-finite float (NaN / +-Inf).
+    @details Textual hints gate the numeric parse so rows made of ordinary
+             numbers keep the streaming fast path free of per-cell parsing.
+    """
+    for cell in row:
+        if not isinstance(cell, str):
+            continue
+        if len(cell) >= 309 or _NONFINITE_HINT_RE.search(cell):
+            num = _parse_cell_number(cell)
+            if num is not None and not _cell_is_finite_number(num):
+                return True
+    return False
 
 
 class _NumericStatsAccumulator:
@@ -98,7 +128,7 @@ class CsvComparator(TextComparator):
              - Streaming two-file comparison (compare_files) with O(1) row memory
     """
 
-    def __init__(self, encoding="utf-8", delimiter=",", quotechar='"', chunk_size=8192, rtol=1e-5, atol=1e-8, data_filter=None, error_analysis=False):
+    def __init__(self, encoding="utf-8", delimiter=",", quotechar='"', chunk_size=8192, rtol=1e-5, atol=1e-8, data_filter=None, error_analysis=False, allow_nonfinite=False):
         """
         @brief Initialize CSV comparator with configuration
         @param encoding str: File encoding (default: utf-8)
@@ -109,6 +139,8 @@ class CsvComparator(TextComparator):
         @param atol float: Absolute tolerance for numerical comparison (default: 1e-8)
         @param data_filter str: Data filter expression applied before numeric comparison
         @param error_analysis bool: Enable streaming error statistics over ALL numeric cells
+        @param allow_nonfinite bool: Allow NaN/Inf values to pass as equal (default False:
+               any non-finite cell is a mismatch; data filters cannot exclude them)
         @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
         super().__init__(encoding=encoding, chunk_size=chunk_size)
@@ -119,6 +151,7 @@ class CsvComparator(TextComparator):
         self.data_filter = data_filter
         self.filter_func = self._parse_filter()
         self.error_analysis = error_analysis
+        self.allow_nonfinite = validate_allow_nonfinite(allow_nonfinite)
         self._error_stats = None
 
     def read_content(self, file_path, start_line=0, end_line=None, start_column=0, end_column=None):
@@ -223,7 +256,12 @@ class CsvComparator(TextComparator):
                 rec2 = self._apply_column_window(rec2, start_column, end_column)
                 # Fast path only when stats are not requested; with
                 # error_analysis every numeric cell must still be traversed.
-                if acc is None and rec1 == rec2:
+                # Default non-finite rejection bypasses the text-equality
+                # shortcut: identical "nan"/"inf"/"1e999" cells must reach
+                # the numeric core instead of passing as equal text.
+                if (acc is None and rec1 == rec2
+                        and (self.allow_nonfinite
+                             or not _row_has_nonfinite_numeric(rec1))):
                     row_index += 1
                     continue
                 if self._compare_row_pair(rec1, rec2, row_index, differences, max_diffs, acc):
@@ -391,17 +429,20 @@ class CsvComparator(TextComparator):
             row_res = compare_numeric(
                 row_exp, row_act, rtol=self.rtol, atol=self.atol,
                 filter_func=self.filter_func, collect_stats=acc is not None,
+                allow_nonfinite=self.allow_nonfinite,
             )
             if acc is not None:
                 acc.add(row_res, row_pos)
             for k, is_mismatch in enumerate(row_res.mismatch_mask):
                 if is_mismatch and len(differences) < max_diffs:
                     ri, cj = row_pos[k]
+                    nonfinite = (not _cell_is_finite_number(row_exp[k])
+                                 or not _cell_is_finite_number(row_act[k]))
                     differences.append(Difference(
                         position=f"row {ri+1}, column {cj+1}",
                         expected=row1[cj],
                         actual=row2[cj],
-                        diff_type="cell_mismatch"
+                        diff_type="non_finite_value" if nonfinite else "cell_mismatch"
                     ))
 
         return acc is None and len(differences) >= max_diffs
@@ -426,7 +467,11 @@ class CsvComparator(TextComparator):
 
         # Fast path only when stats are not requested; with error_analysis we
         # must still traverse all numeric cells to build the statistics.
-        if content1 == content2 and not self.error_analysis:
+        # Default non-finite rejection bypasses the text-equality shortcut
+        # (see the streaming path above for the same rule).
+        if (content1 == content2 and not self.error_analysis
+                and (self.allow_nonfinite
+                     or not any(_row_has_nonfinite_numeric(r) for r in content1))):
             return True, [], False
 
         differences = []

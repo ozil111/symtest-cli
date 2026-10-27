@@ -59,7 +59,7 @@ class ScriptExtractComparator(ExtractorComparator):
 
     def __init__(self, script: str = "", args=None, cwd: str = None,
                  interpreter: str = None, timeout: int = 3600,
-                 channels=None, default_channel=None):
+                 channels=None, default_channel=None, allow_nonfinite: bool = False):
         """
         @param script str: Path to the extraction script (required).
         @param args list: Extra CLI arguments passed to the script.
@@ -68,9 +68,12 @@ class ScriptExtractComparator(ExtractorComparator):
                ``path_params``).
         @param interpreter str: Python interpreter (default ``sys.executable``).
         @param timeout int: Subprocess timeout in seconds (default 3600).
+        @param allow_nonfinite bool: Allow matching NaN/Inf pairs (default False);
+               default_channel and per-channel settings override this fallback.
         @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
-        super().__init__(channels=channels, default_channel=default_channel)
+        super().__init__(channels=channels, default_channel=default_channel,
+                         allow_nonfinite=allow_nonfinite)
         self.script = script      # workspace-resolved by the framework
         self.args = list(args) if args else []
         self.cwd = cwd            # workspace-resolved by the framework

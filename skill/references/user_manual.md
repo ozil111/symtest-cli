@@ -312,6 +312,7 @@ Fields for each comparison rule:
 | `end_line` | No | Ending line number (1-based), compare up to and including this line |
 | `start_column` | No | Starting column number (1-based), compare from this column onward; CSV/H5 select data columns (CSV fields / matrix columns), the text comparator selects character columns |
 | `end_column` | No | Ending column number (1-based), compare up to and including this column; CSV/H5 select data columns, the text comparator selects character columns |
+| `allow_nonfinite` | No | Default `false`: any NaN/Inf on either side is a mismatch (difference type `non_finite_value`), and a `data_filter` cannot exclude it; set `true` to restore the legacy `NaN == NaN` / same-sign `±Inf` equality. Applies to CSV/H5 numeric comparison and the data lane (per-channel override supported) |
 | Others | No | Passed through to the corresponding comparator, e.g., `rtol`, `atol`, `encoding`, `tables`, `data_filter` |
 
 ```json
@@ -2222,6 +2223,8 @@ Config (per-channel tolerances routed by name; unlisted channels use `default_ch
 
 **Verdict and result semantics**:
 - Each channel runs `compare_numeric` independently (symmetric tolerance `|a-b| <= max(rtol*max(|a|,|b|), atol)`)
+- Non-finite values are rejected by default: NaN/Inf in channel data fails the channel (a `data_filter` cannot exclude it); set `"allow_nonfinite": true` in `channels`/`default_channel` or at the comparator level to restore the legacy semantics
+- `allow_nonfinite` must be a boolean `true`/`false`; strings such as `"false"`, numbers, and `null` are configuration errors (the Python API also rejects non-booleans). The data lane, including `script_extract`, uses the first declared value in this order: per-channel setting → `default_channel` → comparator parameter → `false`. Thus, a per-channel `false` can override a comparator-level `true`.
 - `identical = all channels pass`; one compareSpec is still one assertion
 - Difference positions carry the channel prefix (`channel S33`); `error_stats` nests by channel name
 - The report shows per-channel pass/fail, tolerances and stats; channel differences are trimmed per channel in JSON output

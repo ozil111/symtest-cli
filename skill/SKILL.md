@@ -117,6 +117,13 @@ starting point.
    int64/uint64 ranges, but cannot recover precision already lost by converting
    integers into a floating array. Use zero tolerances when exact equality is
    required; reported error magnitudes remain floating-point statistics.
+   NaN/Inf values fail the comparison by default (non-finite solver output is
+   treated as a failure, and `data_filter` cannot exclude them); set
+   `allow_nonfinite: true` only when non-finite baseline values are
+   intentional. This must be a boolean, never a quoted string such as
+   `"false"`. For the data lane (including `script_extract`), per-channel
+   settings override `default_channel`, which overrides the comparator-level
+   setting; an explicit `false` overrides an inherited `true`.
 4. Use `--error-analysis` to get full statistics (max error, RMSE, etc.) on
    failure.
 5. When results intentionally change and new output is correct, update baselines:

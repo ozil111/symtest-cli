@@ -5,6 +5,18 @@ import pytest
 from symtest.file_comparator.numeric_compare import compare_numeric, parse_data_filter
 
 
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}])
+def test_nonfinite_policy_rejects_non_boolean_in_python_api(value):
+    from symtest.file_comparator.csv_comparator import CsvComparator
+    from symtest.file_comparator.h5_comparator import H5Comparator
+
+    for constructor in (CsvComparator, H5Comparator):
+        with pytest.raises(TypeError, match="allow_nonfinite.*bool"):
+            constructor(allow_nonfinite=value)
+    with pytest.raises(TypeError, match="allow_nonfinite.*bool"):
+        compare_numeric([np.nan], [np.nan], allow_nonfinite=value)
+
+
 # ── Basic closeness ──
 
 def test_exact_equality():
@@ -58,24 +70,82 @@ def test_very_small_values_within_atol():
     assert res.mismatched == 0
 
 
-def test_nan_equal_nan():
+def test_nan_equal_nan_rejected_by_default():
+    # NaN output usually means a solver failure: must NOT silently pass.
     res = compare_numeric([np.nan], [np.nan])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert np.all(res.mismatch_mask)
+
+
+def test_nan_equal_nan_allowed_with_explicit_opt_in():
+    res = compare_numeric([np.nan], [np.nan], allow_nonfinite=True)
     assert res.mismatched == 0
+    assert res.nonfinite_mismatched == 0
 
 
 def test_nan_vs_number_mismatch():
     res = compare_numeric([np.nan], [1.0])
     assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
 
 
-def test_inf_matching():
+def test_nan_object_lane_rejected_by_default():
+    # Mixed sequence takes the object lane; NaN must be rejected there too.
+    res = compare_numeric([np.nan, 2**53], [np.nan, 2**53])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert res.mismatch_mask.tolist() == [True, False]
+
+
+def test_inf_matching_rejected_by_default():
     res = compare_numeric([np.inf], [np.inf])
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+
+
+def test_inf_matching_allowed_with_explicit_opt_in():
+    res = compare_numeric([np.inf], [np.inf], allow_nonfinite=True)
     assert res.mismatched == 0
 
 
-def test_neg_inf_matching():
+def test_neg_inf_matching_rejected_by_default():
     res = compare_numeric([-np.inf], [-np.inf])
+    assert res.mismatched == 1
+
+
+def test_neg_inf_matching_allowed_with_explicit_opt_in():
+    res = compare_numeric([-np.inf], [-np.inf], allow_nonfinite=True)
     assert res.mismatched == 0
+
+
+def test_opposite_sign_inf_rejected_even_when_allowed():
+    res = compare_numeric([np.inf], [-np.inf], allow_nonfinite=True)
+    assert res.mismatched == 1
+
+
+def test_data_filter_cannot_exclude_nan():
+    # Regression: NaN fails '>1e-6' so the filter used to silently drop it.
+    res = compare_numeric([np.nan, 3.0], [np.nan, 3.0],
+                          filter_func=parse_data_filter(">1e-6"))
+    assert res.total == 2
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
+    assert res.mismatch_mask.tolist() == [True, False]
+
+
+def test_data_filter_can_exclude_nan_when_allowed():
+    res = compare_numeric([np.nan, 3.0], [np.nan, 3.0],
+                          filter_func=parse_data_filter(">1e-6"),
+                          allow_nonfinite=True)
+    assert res.total == 1
+    assert res.mismatched == 0
+
+
+def test_collect_stats_false_nan_rejected_by_default():
+    res = compare_numeric([np.nan], [np.nan], collect_stats=False)
+    assert res.mismatched == 1
+    assert res.nonfinite_mismatched == 1
 
 
 def test_inf_vs_finite_mismatch():

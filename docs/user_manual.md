@@ -374,6 +374,7 @@ symtest run test_cases.json -t C --with-deps
 | `end_line` | 否 | 结束行号（1-based），比较到该行为止（含该行） |
 | `start_column` | 否 | 起始列号（1-based），仅比较该列及之后的内容；CSV/H5 按数据列（CSV 字段 / 矩阵列）选择，文本比较器按字符列选择 |
 | `end_column` | 否 | 结束列号（1-based），比较到该列为止（含该列）；CSV/H5 按数据列选择，文本比较器按字符列选择 |
+| `allow_nonfinite` | 否 | 默认 `false`：任一侧出现 NaN/Inf 即判不匹配（差异类型 `non_finite_value`），且 `data_filter` 无法将其排除；设为 `true` 恢复 `NaN==NaN`、同号 `±Inf` 相等的旧语义。适用于 CSV/H5 数值比较及数据泳道（支持 per-channel 覆盖） |
 | 其他 | 否 | 透传给对应比较器的参数，如 `rtol`、`atol`、`encoding`、`tables`、`data_filter` 等 |
 
 ```json
@@ -2226,6 +2227,8 @@ class UelStressComparator(ExtractorComparator):
 
 **判定与结果语义**：
 - 每通道独立跑 `compare_numeric`（对称容差 `|a-b| <= max(rtol*max(|a|,|b|), atol)`）
+- 非有限值默认拒绝：通道数据出现 NaN/Inf 即判失败（`data_filter` 无法排除）；`channels`/`default_channel` 或比较器层设置 `"allow_nonfinite": true` 可按需恢复旧语义
+- `allow_nonfinite` 必须使用布尔值 `true`/`false`，字符串 `"false"`、数字及 `null` 均报配置错误（Python API 同样拒绝非布尔值）。数据泳道（含 `script_extract`）按逐通道配置 → `default_channel` → 比较器参数 → `false` 的顺序取第一个已声明的值，因此逐通道的 `false` 可以覆盖比较器级的 `true`。
 - `identical = 所有通道全过`；一条 compareSpec 仍是一条断言
 - 差异 position 带通道前缀（`channel S33`）；`error_stats` 按通道名嵌套
 - 报告逐通道展示 pass/fail、容差与统计；JSON 输出中通道差异按 per-channel 配额截断

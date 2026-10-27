@@ -453,3 +453,70 @@ def test_csv_streaming_memory_stays_bounded(tmp_path):
 
     assert result.identical
     assert peak < 16 * 1024 * 1024
+
+
+# ── Non-finite value rejection (NaN / Inf) ──
+
+@pytest.mark.parametrize("cell_text", [
+    "nan", "inf", "1e999", "9" * 309 + ".0", "9" * 300 + "e99", "1e3_09",
+])
+@pytest.mark.parametrize("error_analysis", [False, True])
+def test_csv_identical_nonfinite_cells_rejected_by_default(tmp_path, cell_text, error_analysis):
+    """Regression: identical NaN/Inf text cells must NOT pass the streaming
+    fast path silently; identical text is not a valid numeric result."""
+    file1, file2 = _make_files(tmp_path, f"value\n1.0\n{cell_text}\n",
+                               f"value\n1.0\n{cell_text}\n")
+
+    result = compare_csv(file1, file2, error_analysis=error_analysis)
+    assert not result.identical
+    diff = result.differences[0]
+    assert diff.diff_type == "non_finite_value"
+    assert diff.expected == cell_text
+    assert diff.actual == cell_text
+
+    result_allowed = compare_csv(file1, file2, allow_nonfinite=True,
+                                 error_analysis=error_analysis)
+    assert result_allowed.identical
+
+    from symtest.file_comparator.csv_comparator import CsvComparator
+
+    comp = CsvComparator(error_analysis=error_analysis)
+    identical, differences, _ = comp.compare_content(
+        comp.read_content(file1), comp.read_content(file2))
+    assert not identical
+    assert differences[0].diff_type == "non_finite_value"
+
+
+def test_csv_in_memory_identical_nonfinite_cells_rejected_by_default(tmp_path):
+    """Regression: the in-memory compare_content fast path (content1 == content2)
+    must also reject identical NaN text."""
+    from symtest.file_comparator.csv_comparator import CsvComparator
+
+    file1, file2 = _make_files(tmp_path, "value\nnan\n", "value\nnan\n")
+    comp = CsvComparator()
+    identical, differences, _ = comp.compare_content(
+        comp.read_content(file1), comp.read_content(file2))
+    assert not identical
+    assert differences[0].diff_type == "non_finite_value"
+
+
+def test_csv_data_filter_cannot_exclude_nonfinite(tmp_path):
+    """Regression: '>1e-6' filter used to silently drop NaN cells."""
+    file1, file2 = _make_files(tmp_path, "value\nnan\n3.0\n", "value\nnan\n3.0\n")
+
+    result = compare_csv(file1, file2, data_filter=">1e-6")
+    assert not result.identical
+    assert result.differences[0].diff_type == "non_finite_value"
+
+    result_allowed = compare_csv(file1, file2, data_filter=">1e-6",
+                                 allow_nonfinite=True)
+    assert result_allowed.identical
+
+
+def test_csv_nonfinite_vs_finite_rejected(tmp_path):
+    """NaN vs a finite number must fail regardless of settings."""
+    file1, file2 = _make_files(tmp_path, "value\nnan\n", "value\n1.0\n")
+
+    result = compare_csv(file1, file2, allow_nonfinite=True)
+    assert not result.identical
+    assert result.differences[0].diff_type == "non_finite_value"

@@ -63,6 +63,22 @@ _EXPECTED_DEF: Dict[str, Any] = {
     },
 }
 
+_NONFINITE_POLICY_DEF: Dict[str, Any] = {
+    "type": "boolean",
+    "default": False,
+    "description": (
+        "Allow matching NaN or same-sign Inf pairs. Defaults to false: "
+        "non-finite numeric values fail even when excluded by a data filter. "
+        "Must be a boolean, not a string or number."
+    ),
+}
+
+_CHANNEL_SPEC_DEF: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {"allow_nonfinite": _NONFINITE_POLICY_DEF},
+}
+
 _COMPARE_SPEC_DEF: Dict[str, Any] = {
     "type": "object",
     "required": [],
@@ -73,14 +89,16 @@ _COMPARE_SPEC_DEF: Dict[str, Any] = {
         "They are optional for script, script_extract, or custom (plugin) "
         "comparator types. "
         "Other keys are forwarded to the comparator constructor as kwargs "
-        "(e.g. rtol, atol, encoding, tables, data_filter, pass_threshold, "
-        "pass_pattern) and are STRICT: a parameter the comparator does not "
-        "declare fails construction loudly. Use 'options' for plugin-owned "
+        "(e.g. rtol, atol, encoding, tables, data_filter, allow_nonfinite, "
+        "pass_threshold, pass_pattern) and are STRICT: a parameter the "
+        "comparator does not declare fails construction loudly. Use 'options' "
+        "for plugin-owned "
         "configuration. Framework resolves actual/baseline and plugin "
         "path_params-declared paths against the workspace before the "
         "comparator is constructed."
     ),
     "properties": {
+        "allow_nonfinite": _NONFINITE_POLICY_DEF,
         "actual": {
             "type": "string",
             "description": "File produced by the test command. Optional when type is 'script', 'script_extract', or a workspace plugin.",
@@ -112,18 +130,19 @@ _COMPARE_SPEC_DEF: Dict[str, Any] = {
         },
         "channels": {
             "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/channelSpec"},
             "description": (
                 "Per-channel tolerance overrides for data-lane comparators "
                 "(script_extract / extractor plugins). Maps channel name to "
-                "{'rtol':…, 'atol':…, 'data_filter':…}. Channels not listed "
-                "use default_channel."
+                "{'rtol':…, 'atol':…, 'data_filter':…, 'allow_nonfinite':…}. "
+                "Channels not listed use default_channel."
             ),
         },
         "default_channel": {
-            "type": "object",
+            "$ref": "#/$defs/channelSpec",
             "description": (
-                "Default tolerance spec {'rtol':…, 'atol':…, 'data_filter':…} "
-                "applied to channels not listed in 'channels'."
+                "Default tolerance spec {'rtol':…, 'atol':…, 'data_filter':…, "
+                "'allow_nonfinite':…} applied to channels not listed in 'channels'."
             ),
         },
         "start_line": {"type": "integer", "minimum": 1, "description": "Only compare from this line (1-based)."},
@@ -544,6 +563,7 @@ CONFIG_SCHEMA: Dict[str, Any] = {
     "$defs": {
         "expected": _EXPECTED_DEF,
         "compareSpec": _COMPARE_SPEC_DEF,
+        "channelSpec": _CHANNEL_SPEC_DEF,
         "resources": _RESOURCES_DEF,
         "step": _STEP_DEF,
         "executionSpec": _EXECUTION_SPEC_DEF,
@@ -616,6 +636,7 @@ EXPANDED_CONFIG_SCHEMA: Dict[str, Any] = {
     "$defs": {
         "expected": _EXPECTED_DEF,
         "compareSpec": _COMPARE_SPEC_DEF,
+        "channelSpec": _CHANNEL_SPEC_DEF,
         "resources": _RESOURCES_DEF,
         "step": _STEP_DEF,
         "executionSpec": _EXECUTION_SPEC_DEF,

@@ -44,6 +44,25 @@ def _valid_single_case(name="t"):
 # ---------------------------------------------------------------------------
 
 class TestStructuralErrors:
+    @pytest.mark.parametrize("location", ["top", "default_channel", "channels"])
+    def test_nonfinite_policy_requires_boolean(self, tmp_path, location):
+        spec = {"type": "csv", "actual": "a.csv", "baseline": "b.csv"}
+        policy = {"allow_nonfinite": "false"}
+        if location == "top":
+            spec.update(policy)
+        elif location == "channels":
+            spec[location] = {"S11": policy}
+        else:
+            spec[location] = policy
+        case = _valid_single_case()
+        case["expected"]["compare_files"] = [spec]
+        path = _write(tmp_path, {"test_cases": [case]})
+        report = validate_config(path, workspace=str(tmp_path))
+        assert not report["valid"]
+        assert any("allow_nonfinite" in e and "boolean" in e for e in report["errors"])
+        with pytest.raises(ConfigValidationError, match="allow_nonfinite"):
+            load_config(path, workspace=str(tmp_path))
+
     def test_empty_config_object(self, tmp_path):
         """``{}`` (no test_cases) must be invalid."""
         report = validate_config(_write(tmp_path, {}), workspace=str(tmp_path))
@@ -393,6 +412,27 @@ class TestVariablesPipeline:
 # ---------------------------------------------------------------------------
 
 class TestSchemaContract:
+    @pytest.mark.parametrize("schema_fn", [get_config_schema, get_expanded_config_schema])
+    @pytest.mark.parametrize("location", ["top", "default_channel", "channels"])
+    @pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [], {}, False, True])
+    def test_nonfinite_policy_type(self, schema_fn, location, value):
+        from jsonschema import Draft202012Validator
+
+        spec = {"type": "script_extract", "script": "extract.py"}
+        policy = {"allow_nonfinite": value}
+        if location == "top":
+            spec.update(policy)
+        elif location == "channels":
+            spec[location] = {"S11": policy}
+        else:
+            spec[location] = policy
+        case = _valid_single_case()
+        case["expected"]["compare_files"] = [spec]
+        errors = list(Draft202012Validator(schema_fn()).iter_errors({"test_cases": [case]}))
+        assert bool(errors) is (type(value) is not bool)
+        if errors:
+            assert any("allow_nonfinite" in e.json_path for e in errors)
+
     def test_single_case_forces_command_form(self):
         defs = get_config_schema()["$defs"]
         execution = defs["singleCase"]["allOf"][1]["properties"]["execution"]

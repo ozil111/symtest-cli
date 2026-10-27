@@ -3,10 +3,10 @@ import h5py
 import numpy as np
 import logging
 import re
-from .numeric_compare import compare_numeric, parse_data_filter
+from .numeric_compare import compare_numeric, parse_data_filter, validate_allow_nonfinite
 
 class H5Comparator(FileComparator):
-    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, encoding="utf-8", verbose=False):
+    def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, encoding="utf-8", verbose=False, allow_nonfinite=False):
         """
         Initialize H5 comparator
         :param tables: List of table names to compare. If None, compare all tables
@@ -21,6 +21,8 @@ class H5Comparator(FileComparator):
         :param error_analysis: Enable streaming error statistics over ALL numeric cells
         :param encoding: Text encoding for attribute values
         :param verbose: Debug logging of this comparator's own logger
+        :param allow_nonfinite: Allow NaN/Inf values to pass as equal (default False:
+               any non-finite element is a mismatch; data filters cannot exclude them)
         @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
         super().__init__(encoding=encoding, verbose=verbose)
@@ -34,6 +36,7 @@ class H5Comparator(FileComparator):
         self.data_filter = data_filter
         self.filter_func = self._parse_filter()
         self.error_analysis = error_analysis
+        self.allow_nonfinite = validate_allow_nonfinite(allow_nonfinite)
         self._error_stats = None
         
         # Set debug level if debug mode is enabled (verbose is handled by
@@ -443,23 +446,33 @@ class H5Comparator(FileComparator):
                             # 应用过滤器
                             mask1 = self.filter_func(data1) if self.filter_func else np.ones_like(data1, dtype=bool)
                             mask2 = self.filter_func(data2) if self.filter_func else np.ones_like(data2, dtype=bool)
-                            
+
                             # 我们只关心两个文件中都满足条件的位置
                             combined_mask = mask1 & mask2
-                            
+
+                            # 默认拒绝非有限值：NaN/Inf 位置必须强制保留在比较中，
+                            # 不能被 data filter 提前排除（NaN 不满足 '>1e-6' 类条件）
+                            if (not self.allow_nonfinite
+                                    and np.issubdtype(data1.dtype, np.number)
+                                    and np.issubdtype(data2.dtype, np.number)):
+                                nonfinite = (~np.isfinite(data1)) | (~np.isfinite(data2))
+                                if np.any(nonfinite):
+                                    combined_mask = combined_mask | nonfinite
+
                             # 过滤后的数据
                             filtered_data1 = data1[combined_mask]
                             filtered_data2 = data2[combined_mask]
-                            
+
                             if self.filter_func:
                                 self.logger.debug(f"Applied filter to {table_name}: {np.sum(combined_mask)}/{data1.size} elements meet criteria")
-                            
+
                             # 对于数值类型数据使用 shared numeric core
                             if np.issubdtype(data1.dtype, np.number) and np.issubdtype(data2.dtype, np.number):
                                 res = compare_numeric(
                                     filtered_data1, filtered_data2,
                                     rtol=self.rtol, atol=self.atol,
                                     collect_stats=self.error_analysis,
+                                    allow_nonfinite=self.allow_nonfinite,
                                 )
                                 all_close = res.mismatched == 0
 
@@ -480,12 +493,20 @@ class H5Comparator(FileComparator):
 
                                 if not all_close:
                                     # 过滤后数据内容不同，报告差异（位置语义使用 dataset path）
-                                    differences.append(self._create_difference(
-                                        position=table_name,
-                                        expected="Same content (after filtering)",
-                                        actual="Content differs (after filtering)",
-                                        diff_type="content"
-                                    ))
+                                    if res.nonfinite_mismatched:
+                                        differences.append(self._create_difference(
+                                            position=table_name,
+                                            expected="Finite numeric content",
+                                            actual="Non-finite values (NaN/Inf) rejected by default; set allow_nonfinite=True to allow",
+                                            diff_type="non_finite_value"
+                                        ))
+                                    else:
+                                        differences.append(self._create_difference(
+                                            position=table_name,
+                                            expected="Same content (after filtering)",
+                                            actual="Content differs (after filtering)",
+                                            diff_type="content"
+                                        ))
                                     identical = False
                             # 对于字符串或其他类型直接比较
                             else:
@@ -705,13 +726,19 @@ class H5Comparator(FileComparator):
                         flat1 = slice1.ravel()
                         flat2 = slice2.ravel()
                         combined_mask = self.filter_func(flat1) & self.filter_func(flat2)
+                        # 默认拒绝非有限值：过滤器不能提前排除 NaN/Inf（与内存分支一致）
+                        if not self.allow_nonfinite and is_numeric:
+                            nonfinite = (~np.isfinite(flat1)) | (~np.isfinite(flat2))
+                            if np.any(nonfinite):
+                                combined_mask = combined_mask | nonfinite
                         slice1 = flat1[combined_mask]
                         slice2 = flat2[combined_mask]
 
                     if is_numeric:
                         # Compare slices via shared numeric core
                         res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol,
-                                              collect_stats=self.error_analysis)
+                                              collect_stats=self.error_analysis,
+                                              allow_nonfinite=self.allow_nonfinite)
                         if ea is not None:
                             ea["total"] += res.total
                             ea["mismatched"] += res.mismatched
@@ -727,12 +754,20 @@ class H5Comparator(FileComparator):
                                     ea["max_rel_at"] = table_name
                         if res.mismatched > 0:
                             if not mismatch_reported:
-                                differences.append(self._create_difference(
-                                    position=position,
-                                    expected="Content matches",
-                                    actual="Content differs",
-                                    diff_type="content"
-                                ))
+                                if res.nonfinite_mismatched:
+                                    differences.append(self._create_difference(
+                                        position=position,
+                                        expected="Finite numeric content",
+                                        actual="Non-finite values (NaN/Inf) rejected by default; set allow_nonfinite=True to allow",
+                                        diff_type="non_finite_value"
+                                    ))
+                                else:
+                                    differences.append(self._create_difference(
+                                        position=position,
+                                        expected="Content matches",
+                                        actual="Content differs",
+                                        diff_type="content"
+                                    ))
                                 mismatch_reported = True
                             # Early return on first difference to save time,
                             # but only when full-window statistics are not

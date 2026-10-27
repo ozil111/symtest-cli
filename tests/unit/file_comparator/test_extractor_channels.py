@@ -30,6 +30,15 @@ def _ctx(**kw):
 
 
 class TestChannelRouting:
+    @pytest.mark.parametrize("location", ["top", "default_channel", "channels"])
+    @pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
+    def test_nonfinite_policy_rejects_non_boolean(self, location, value):
+        policy = {"allow_nonfinite": value}
+        kwargs = (policy if location == "top" else
+                  {location: {"S11": policy} if location == "channels" else policy})
+        with pytest.raises(TypeError, match="allow_nonfinite.*bool"):
+            FakeExtractor(**kwargs)
+
     def test_per_channel_tolerance_override(self):
         """A channel-specific atol overrides default_channel."""
         # diff = 0.5: fails rtol=1e-5/atol=1e-8, passes atol=1.0
@@ -202,6 +211,62 @@ class TestDataFilter:
         result = cmp.compare(_ctx())
         assert result.identical is True
         assert result.channels[0].stats["total"] == 1
+
+
+class TestNonfiniteValues:
+    def test_nan_channel_rejected_by_default(self):
+        """Regression: identical NaN arrays must fail the channel verdict."""
+        data = {"S33": ChannelData(
+            expected=np.array([1.0, np.nan]),
+            actual=np.array([1.0, np.nan]),
+        )}
+        cmp = FakeExtractor(channels_data=data)
+        result = cmp.compare(_ctx())
+        assert result.identical is False
+        ch = result.channels[0]
+        assert ch.passed is False
+        assert ch.differences[0].diff_type == "non_finite_value"
+        assert "non-finite" in ch.differences[0].actual
+        assert result.error_stats["S33"]["mismatched"] == 1
+
+    def test_nan_channel_passes_with_comparator_opt_in(self):
+        data = {"S33": ChannelData(
+            expected=np.array([1.0, np.nan]),
+            actual=np.array([1.0, np.nan]),
+        )}
+        cmp = FakeExtractor(channels_data=data, allow_nonfinite=True)
+        result = cmp.compare(_ctx())
+        assert result.identical is True
+
+    def test_per_channel_allow_nonfinite_override(self):
+        """channels spec can opt a single channel into non-finite equality."""
+        data = {
+            "S33": ChannelData(expected=np.array([np.nan]), actual=np.array([np.nan])),
+            "S11": ChannelData(expected=np.array([np.nan]), actual=np.array([np.nan])),
+        }
+        cmp = FakeExtractor(
+            channels_data=data,
+            channels={"S33": {"allow_nonfinite": True}},
+        )
+        result = cmp.compare(_ctx())
+        by_name = {ch.name: ch for ch in result.channels}
+        assert by_name["S33"].passed is True
+        assert by_name["S11"].passed is False
+        assert result.identical is False
+
+    def test_data_filter_cannot_exclude_nan(self):
+        """Regression: 'abs>1e-6' used to silently drop NaN channel values."""
+        data = {"U": ChannelData(
+            expected=np.array([np.nan, 3.0]),
+            actual=np.array([np.nan, 3.0]),
+        )}
+        cmp = FakeExtractor(
+            channels_data=data,
+            default_channel={"data_filter": "abs>1e-6"},
+        )
+        result = cmp.compare(_ctx())
+        assert result.identical is False
+        assert result.channels[0].differences[0].diff_type == "non_finite_value"
 
 
 class TestAssertionsIntegration:

@@ -429,12 +429,48 @@ class TestCompareContentNumericData:
         assert result.error_stats["mismatched_cells"] == 1
         assert result.error_stats["max_abs_error"] == 1
 
-    def test_nan_values_equal_with_equal_nan(self):
+    def test_nan_values_rejected_by_default(self):
+        """Regression: identical NaN cells must NOT silently pass by default."""
         comp = H5Comparator()
         c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
         c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
         identical, diffs, _ = comp.compare_content(c1, c2)
+        assert not identical
+        assert any(d.diff_type == "non_finite_value" for d in diffs)
+
+    def test_nan_values_equal_with_allow_nonfinite(self):
+        comp = H5Comparator(allow_nonfinite=True)
+        c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
+        c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([1.0, np.nan])}}
+        identical, diffs, _ = comp.compare_content(c1, c2)
         assert identical
+
+    def test_nan_rejected_in_chunked_large_dataset(self, tmp_path):
+        """Regression: the chunked (>1M elements) lane must reject NaN too."""
+        size = 1_000_000
+        baseline = np.ones(size)
+        actual = baseline.copy()
+        baseline[-1] = np.nan
+        actual[-1] = np.nan
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        create_h5(f1, {"ds": baseline})
+        create_h5(f2, {"ds": actual})
+        result = H5Comparator().compare_files(f1, f2)
+        assert not result.identical
+        assert any(d.diff_type == "non_finite_value" for d in result.differences)
+        result_allowed = H5Comparator(allow_nonfinite=True).compare_files(f1, f2)
+        assert result_allowed.identical
+
+    def test_data_filter_cannot_exclude_nan(self):
+        """Regression: '>1e-6' filter used to drop NaN before comparison."""
+        comp = H5Comparator(data_filter=">1e-6")
+        c1 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([np.nan, 3.0])}}
+        c2 = {"ds": {"type": "dataset", "shape": (2,), "dtype": "float64", "attrs": {}, "data": np.array([np.nan, 3.0])}}
+        identical, diffs, _ = comp.compare_content(c1, c2)
+        assert not identical
+        comp_allowed = H5Comparator(data_filter=">1e-6", allow_nonfinite=True)
+        identical_allowed, _, _ = comp_allowed.compare_content(c1, c2)
+        assert identical_allowed
 
     def test_numeric_data_within_tolerance(self):
         comp = H5Comparator(rtol=1e-3, atol=1e-6)
