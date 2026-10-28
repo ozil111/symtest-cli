@@ -12,12 +12,11 @@ from typing import Optional, Dict, Any, Callable, BinaryIO, List
 from ..core.parallel_runner import ParallelRunner, AtomicSemaphore
 from ..core.config_loader import parse_test_cases
 from ..core.orchestration.sequence import execute_sequence
-from ..config.inheritance_expander import resolve_inheritance, apply_variables
+from ..config.prepared import prepare_config
 from ..core.test_case import TestCase
 from ..core.orchestration.single import execute_single_test_case
 from ..core.types import TestCaseData
 from ..utils.path_resolver import PathResolver
-from ..config.import_expander import expand_imports
 
 logger = logging.getLogger("symtest.runners.parallel_config_runner")
 
@@ -175,21 +174,30 @@ class ParallelConfigRunner(ParallelRunner):
     # ------------------------------------------------------------------
 
     def load_test_cases(self) -> None:
-        """Load test cases from config file using the injected loader."""
+        """Load test cases through the shared config preparation pipeline."""
         if self._config_loader is None:
             raise RuntimeError(
                 "config_loader must be set before loading test cases"
             )
         try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = self._config_loader(f)
-
-            # Expand import references (no-op if none present)
-            config = expand_imports(config, self.config_path)
-            # Resolve extends inheritance (no-op if none present)
-            config = resolve_inheritance(config)
-            # Per-case + global variable substitution
-            config = apply_variables(config, self._variables)
+            # Shared pipeline: raw-form schema validation, import expansion,
+            # extends resolution, variable application, expanded-form
+            # completeness validation and semantic checks (same rules as
+            # ``symtest validate``).
+            prepared = prepare_config(
+                self.config_path,
+                workspace=str(self.workspace) if self.workspace else None,
+                variables=self._variables,
+                file_loader=self._config_loader,
+            )
+            if not prepared.valid:
+                details = "\n  ".join(prepared.errors)
+                sys.exit(
+                    f"Failed to load configuration file "
+                    f"(invalid configuration, {len(prepared.errors)} error(s)):\n"
+                    f"  {details}"
+                )
+            config = prepared.config
 
             self.load_setup_from_config(config)
             self.test_cases = parse_test_cases(

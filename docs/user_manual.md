@@ -371,9 +371,10 @@ symtest run test_cases.json -t C --with-deps
 | `baseline` | 是 | 基线/参考文件路径（相对路径按 workspace 解析） |
 | `type` | 否 | 比较器类型：`text`、`json`、`csv`、`xml`、`h5`、`binary`；省略时按扩展名自动识别 |
 | `start_line` | 否 | 起始行号（1-based），仅比较该行及之后的内容 |
-| `end_line` | 否 | 结束行号（1-based），比较到该行为止 |
-| `start_column` | 否 | 起始列号（1-based），仅比较该列及之后的内容 |
-| `end_column` | 否 | 结束列号（1-based），比较到该列为止 |
+| `end_line` | 否 | 结束行号（1-based），比较到该行为止（含该行） |
+| `start_column` | 否 | 起始列号（1-based），仅比较该列及之后的内容；CSV/H5 按数据列（CSV 字段 / 矩阵列）选择，文本比较器按字符列选择 |
+| `end_column` | 否 | 结束列号（1-based），比较到该列为止（含该列）；CSV/H5 按数据列选择，文本比较器按字符列选择 |
+| `allow_nonfinite` | 否 | 默认 `false`：任一侧出现 NaN/Inf 即判不匹配（差异类型 `non_finite_value`），且 `data_filter` 无法将其排除；设为 `true` 恢复 `NaN==NaN`、同号 `±Inf` 相等的旧语义。适用于 CSV/H5 数值比较及数据泳道（支持 per-channel 覆盖） |
 | 其他 | 否 | 透传给对应比较器的参数，如 `rtol`、`atol`、`encoding`、`tables`、`data_filter` 等 |
 
 ```json
@@ -690,11 +691,20 @@ symtest run config.json --var solver=/path/to/solver
 - `extends` 目标是否存在
 - 是否形成循环继承链
 - `abstract` 用例不计入可执行用例数
-- `extends` 用例跳过必填字段检查（内容来自父类）
+- 原始文件中的 `extends` / `abstract` 用例可以缺少必填字段（内容来自父类或子类补充）；但**继承展开后仍不完整的用例会报错**
+- `execution` 字典可局部覆盖，例如仅设置 `args`、`timeout` 或 `env`；字段类型、未知字段和执行形态互斥仍会检查。`steps` 列表整体替换，每个提供的 step 必须完整。
 
 ## 配置校验
 
 `validate` 命令在不运行测试的情况下检查配置文件的正确性，适合在 CI 流水线中做配置合法性检查。
+
+`validate` 与 `run` / `find` 的配置加载共用同一条校验流程（结构检查基于
+`symtest schema` 导出的 JSON Schema，双形态契约）：同一份配置在 `validate`
+与 `run` 中产生一致的错误；`run` 遇到配置错误时在执行任何命令之前退出。
+
+导入 YAML 文件的语法错误也返回校验诊断，包含出错文件和引用来源。
+`find --workspace` 与 `validate --workspace` 使用指定工作区检查输出路径；
+Python API `load_config(path, workspace=...)` 同样支持显式工作区，默认使用当前目录。
 
 ### 用法
 
@@ -717,9 +727,12 @@ symtest validate test_cases.json --output-format json
 | 检查项 | 说明 |
 |---|---|
 | 语法正确性 | JSON/YAML 格式是否合法（加载时隐式检查） |
-| 必填字段 | 每条用例是否包含 `name`、`execution.command`、`execution.args`、`expected`（序列模式检查每个 step） |
-| import 引用 | 被引用的子文件是否存在 |
+| 结构检查（JSON Schema） | 每个加载的文件（含 import 子文件）按 schema 检查：字段名（未知字段/拼写错误报错，如 `return_cod`）、类型、取值范围（如 `retry_count >= 0`）、执行形态互斥（`command/args` 与 `steps` 不能同时声明） |
+| 必填字段 | 每条可执行用例必须包含 `name`、`execution`、`expected`（单命令模式）；序列模式检查每个 step；`abstract` 模板与 `extends` 继承用例在原始文件中可缺省，但**继承展开后必须完整** |
+| import 引用 | 被引用的子文件是否存在；子文件自身也按 schema 检查，错误定位到具体文件与字段 |
 | 循环引用 | import 链中是否存在 A→B→A 的循环 |
+| 继承与重名 | `extends` 目标存在性、循环继承链、用例名重复（extends 引用必须无歧义） |
+| 语义检查 | `outputs` 路径边界（不得逃逸 workspace、不得为目录）；`depends_on` 目标存在性、自引用与循环依赖 |
 
 ### 输出示例
 
@@ -735,11 +748,11 @@ symtest validate test_cases.json --output-format json
     - /project/cases/json_tests.yaml
 ```
 
-有错误时：
+有错误时（结构错误带文件路径与字段路径）：
 ```
   [OK] Loaded 3 test cases from 1 file(s)
-  [FAIL] case 'bad_case': missing required field 'expected'
-  [FAIL] Import target not found: /project/cases/nonexistent.json
+  [FAIL] [/project/config.json] $.test_cases[0]: 'expected' is a required property
+  [FAIL] Imported config file not found: /project/cases/nonexistent.json (referenced from /project/config.json)
 ```
 
 ## 跨文件搜索用例（find）
@@ -948,7 +961,7 @@ symtest validate config.json --output-format json
 ```json
 {
   "valid": false,
-  "errors": ["[main_config.json] case 'bad_case': missing required field 'expected'"],
+  "errors": ["[/project/main_config.json] $.test_cases[0]: 'expected' is a required property"],
   "summary": {"files": 1, "cases": 3, "files_loaded": ["/project/main_config.json"]}
 }
 ```
@@ -1880,6 +1893,8 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 
 ### CSV 文件比较
 
+设置行窗口时，行数差异仅按窗口内的 CSV 记录数判定，窗口外的额外记录不影响结果。起始行必须指向两份文件中都存在的记录；起始行位于文件末尾之后或文件为空时，返回越界错误。
+
 ```bash
 # 基本比较
 compare-files data1.csv data2.csv
@@ -1904,7 +1919,7 @@ compare-files data1.csv data2.csv --csv-data-filter '<=0.01'
 | `--csv-quotechar` | 引用字符，默认 `"` |
 | `--csv-data-filter` | 数据过滤表达式：`>`, `>=`, `<`, `<=`, `==`，支持 `abs` 前缀。只比较两个文件中**都满足**条件的数值单元格 |
 
-CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内视为相等。`--csv-data-filter` 过滤后，不满足条件的数值单元格对不会报差异。差异报告包含行数、列数不匹配与单元格不一致，最多列出 10 条。
+CSV 比较按行列结构逐单元格比对；数值单元格在容差范围内视为相等。`--csv-data-filter` 过滤后，不满足条件的数值单元格对不会报差异。差异报告包含行数、列数不匹配与单元格不一致，最多列出 10 条。整数单元格保留精确整数语义（如 `9007199254740992` 与 `9007199254740993` 在零容差下判为不同），支持与浮点单元格混排以及完整 int64 / uint64 范围，不会因其他单元格触发浮点转换而丢失整数差异。CSV 误差统计直接累计逐行判定结果，避免统计与 verdict 不一致；误差幅值仍以浮点数报告。H5 和数据泳道共享上述整数比较规则；Python 调用者应保留原始整数类型，框架无法恢复输入浮点数组中已经丢失的精度。CSV 比较以流式逐行方式进行，内存占用与文件大小无关（仅与单行相关），可直接比较任意大小的 CSV；Python API（`read_content`/`compare_content`）保留全量读取路径供直接调用者使用。
 
 #### 误差分析（--error-analysis）
 
@@ -2212,6 +2227,8 @@ class UelStressComparator(ExtractorComparator):
 
 **判定与结果语义**：
 - 每通道独立跑 `compare_numeric`（对称容差 `|a-b| <= max(rtol*max(|a|,|b|), atol)`）
+- 非有限值默认拒绝：通道数据出现 NaN/Inf 即判失败（`data_filter` 无法排除）；`channels`/`default_channel` 或比较器层设置 `"allow_nonfinite": true` 可按需恢复旧语义
+- `allow_nonfinite` 必须使用布尔值 `true`/`false`，字符串 `"false"`、数字及 `null` 均报配置错误（Python API 同样拒绝非布尔值）。数据泳道（含 `script_extract`）按逐通道配置 → `default_channel` → 比较器参数 → `false` 的顺序取第一个已声明的值，因此逐通道的 `false` 可以覆盖比较器级的 `true`。
 - `identical = 所有通道全过`；一条 compareSpec 仍是一条断言
 - 差异 position 带通道前缀（`channel S33`）；`error_stats` 按通道名嵌套
 - 报告逐通道展示 pass/fail、容差与统计；JSON 输出中通道差异按 per-channel 配额截断

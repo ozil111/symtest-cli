@@ -274,7 +274,8 @@ def config_file(tmp_path):
         ],
     }
     path = tmp_path / "cases.json"
-    path.write_text(json.dumps(cfg), encoding="utf-8")
+    # indent=2 → multi-line JSON, so source line numbers are meaningful
+    path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return path
 
 
@@ -291,7 +292,39 @@ def _args(config_file, pattern, **extra):
     )
 
 
+def _name_line(config_file, name: str) -> int:
+    """1-based line where ``"name": "<name>"`` appears in the fixture file."""
+    text = config_file.read_text(encoding="utf-8")
+    return next(
+        i for i, ln in enumerate(text.splitlines(), 1)
+        if f'"name": "{name}"' in ln
+    )
+
+
 class TestRunFind:
+    @pytest.mark.parametrize("escape", [False, True])
+    def test_workspace_controls_output_path_validation(self, tmp_path, monkeypatch, capsys, escape):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        output = (elsewhere if escape else workspace) / "result.txt"
+        cfg = {"test_cases": [{
+            "name": "output_case",
+            "execution": {"command": "echo", "args": [], "outputs": [str(output)]},
+            "expected": {},
+        }]}
+        path = workspace / "cases.json"
+        path.write_text(json.dumps(cfg), encoding="utf-8")
+        from symtest.config.config_io import validate_config
+
+        assert validate_config(path, workspace=str(workspace))["valid"] is (not escape)
+        result = run_find(_args("cases.json", "", workspace=str(workspace), output_format="json"))
+        assert result == (2 if escape else 0)
+        if not escape:
+            assert json.loads(capsys.readouterr().out)[0]["name"] == "output_case"
+
     def test_match_returns_zero(self, config_file, capsys):
         assert run_find(_args(config_file, "login")) == 0
         out = capsys.readouterr().out
@@ -328,6 +361,22 @@ class TestRunFind:
         assert rows[0]["timeout"] == 30
         assert rows[0]["mode"] == "single"
 
+    def test_source_in_json_output(self, config_file, capsys):
+        """JSON rows carry source file + line of the case definition."""
+        assert run_find(_args(config_file, "login", output_format="json")) == 0
+        rows = json.loads(capsys.readouterr().out)
+        expected_line = _name_line(config_file, "login_ok")
+        assert rows[0]["source_file"] == str(config_file)
+        assert rows[0]["source_line"] == expected_line
+        assert rows[0]["source"].endswith(f"{config_file.name}:{expected_line}")
+
+    def test_source_in_text_table(self, config_file, capsys):
+        """Text table shows a ``file:line`` Source column."""
+        assert run_find(_args(config_file, "login")) == 0
+        out = capsys.readouterr().out
+        assert "Source" in out
+        assert f"{config_file.name}:" in out
+
     def test_import_expansion(self, tmp_path, capsys):
         """find auto-expands import references before searching."""
         sub = tmp_path / "sub.json"
@@ -342,3 +391,44 @@ class TestRunFind:
 
         assert run_find(_args(main, "deep_case")) == 0
         assert "deep_case" in capsys.readouterr().out
+
+    def test_imported_case_source_points_to_sub_file(self, tmp_path, capsys):
+        """Provenance of an imported case is its defining sub-config file."""
+        sub = tmp_path / "sub.json"
+        sub.write_text(json.dumps({"test_cases": [
+            {"name": "deep_case",
+             "execution": {"command": "echo", "args": ["hi"]},
+             "expected": {"return_code": 0}},
+        ]}, indent=2), encoding="utf-8")
+        main = tmp_path / "main.json"
+        main.write_text(json.dumps({"test_cases": [{"import": "sub.json"}]}),
+                        encoding="utf-8")
+
+        assert run_find(_args(main, "deep_case", output_format="json")) == 0
+        rows = json.loads(capsys.readouterr().out)
+        expected_line = _name_line(sub, "deep_case")
+        assert rows[0]["source_file"] == str(sub)
+        assert rows[0]["source_line"] == expected_line
+        # outside cwd/workspace → absolute path is kept
+        assert rows[0]["source"] == f"{sub}:{expected_line}"
+
+    def test_source_relative_to_workspace(self, tmp_path, capsys):
+        """With --workspace, source paths are shown relative to it."""
+        sub_dir = tmp_path / "cases"
+        sub_dir.mkdir()
+        sub = sub_dir / "sub.json"
+        sub.write_text(json.dumps({"test_cases": [
+            {"name": "rel_case",
+             "execution": {"command": "echo", "args": ["hi"]},
+             "expected": {"return_code": 0}},
+        ]}, indent=2), encoding="utf-8")
+        main = tmp_path / "main.json"
+        main.write_text(json.dumps({"test_cases": [{"import": "cases/sub.json"}]}),
+                        encoding="utf-8")
+
+        assert run_find(_args(main, "rel_case",
+                              workspace=str(tmp_path),
+                              output_format="json")) == 0
+        rows = json.loads(capsys.readouterr().out)
+        expected_line = _name_line(sub, "rel_case")
+        assert rows[0]["source"] == f"cases/sub.json:{expected_line}"

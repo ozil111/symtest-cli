@@ -37,7 +37,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from .base_comparator import ComparatorBase, CompareContext
-from .numeric_compare import compare_numeric, parse_data_filter
+from .numeric_compare import compare_numeric, parse_data_filter, validate_allow_nonfinite
 from .result import ChannelResult, ComparisonResult, Difference
 
 
@@ -63,15 +63,20 @@ class ExtractorComparator(ComparatorBase):
     """
 
     def __init__(self, channels=None, default_channel=None,
-                 rtol: float = 1e-5, atol: float = 1e-8):
+                 rtol: float = 1e-5, atol: float = 1e-8,
+                 allow_nonfinite: bool = False):
         """
         @param channels dict|None: ``{channel_name: {"rtol":…, "atol":…,
-               "data_filter":…}}`` overrides; unset keys fall back to
-               ``default_channel``.
+               "data_filter":…, "allow_nonfinite":…}}`` overrides; unset keys
+               fall back to ``default_channel``.
         @param default_channel dict|None: Tolerance spec applied to channels
                not listed in ``channels``.
         @param rtol float: Final fallback relative tolerance (default 1e-5).
         @param atol float: Final fallback absolute tolerance (default 1e-8).
+        @param allow_nonfinite bool: Final fallback for non-finite handling
+               (default False): NaN/Inf values are mismatches and cannot be
+               excluded by a data filter; True restores the legacy
+               NaN==NaN / same-sign-Inf equality.
         @note Parameters are strict: unknown/misspelled config keys fail loudly.
         """
         super().__init__()
@@ -79,6 +84,14 @@ class ExtractorComparator(ComparatorBase):
         self.default_spec: Dict[str, Any] = dict(default_channel or {})
         self.rtol = rtol
         self.atol = atol
+        self.allow_nonfinite = validate_allow_nonfinite(allow_nonfinite)
+        specs = [("default_channel", self.default_spec)]
+        specs.extend((f"channels[{name!r}]", spec)
+                     for name, spec in self.channel_specs.items())
+        for name, spec in specs:
+            if "allow_nonfinite" in spec:
+                validate_allow_nonfinite(spec["allow_nonfinite"],
+                                         name=f"{name}.allow_nonfinite")
 
     @abstractmethod
     def extract(self, ctx: CompareContext) -> Dict[str, ChannelData]:
@@ -119,6 +132,7 @@ class ExtractorComparator(ComparatorBase):
             spec = self._spec_for(name)
             rtol = spec.get("rtol", self.rtol)
             atol = spec.get("atol", self.atol)
+            allow_nonfinite = spec.get("allow_nonfinite", self.allow_nonfinite)
             filter_func = parse_data_filter(spec.get("data_filter"), logger=self.logger)
 
             try:
@@ -126,6 +140,7 @@ class ExtractorComparator(ComparatorBase):
                     data.expected, data.actual,
                     rtol=rtol, atol=atol,
                     filter_func=filter_func, collect_stats=True,
+                    allow_nonfinite=allow_nonfinite,
                 )
             except Exception as exc:
                 # e.g. size mismatch between expected/actual arrays
@@ -158,15 +173,28 @@ class ExtractorComparator(ComparatorBase):
             passed = res.mismatched == 0
             differences = []
             if not passed:
-                diff = Difference(
-                    position=f"channel {name}",
-                    expected=f"within rtol={rtol:g}, atol={atol:g}",
-                    actual=(
+                if res.nonfinite_mismatched:
+                    detail = (
+                        f"{res.mismatched}/{res.total} values mismatched "
+                        f"({res.nonfinite_mismatched} non-finite NaN/Inf, "
+                        f"max_abs={self._fmt(res.max_abs_error)}, "
+                        f"max_rel={self._fmt(res.max_rel_error)}; "
+                        f"set allow_nonfinite=True to allow non-finite values)"
+                    )
+                else:
+                    detail = (
                         f"{res.mismatched}/{res.total} values mismatched "
                         f"(max_abs={self._fmt(res.max_abs_error)}, "
                         f"max_rel={self._fmt(res.max_rel_error)})"
+                    )
+                diff = Difference(
+                    position=f"channel {name}",
+                    expected=f"within rtol={rtol:g}, atol={atol:g}",
+                    actual=detail,
+                    diff_type=(
+                        "non_finite_value" if res.nonfinite_mismatched
+                        else "channel_mismatch"
                     ),
-                    diff_type="channel_mismatch",
                 )
                 differences.append(diff)
                 aggregated_differences.append(diff)

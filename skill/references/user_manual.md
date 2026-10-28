@@ -309,9 +309,10 @@ Fields for each comparison rule:
 | `baseline` | Yes | Path to the baseline/reference file (relative paths resolved against workspace) |
 | `type` | No | Comparator type: `text`, `json`, `csv`, `xml`, `h5`, `binary`; auto-detected by extension if omitted |
 | `start_line` | No | Starting line number (1-based), compare from this line onward |
-| `end_line` | No | Ending line number (1-based), compare up to this line |
-| `start_column` | No | Starting column number (1-based), compare from this column onward |
-| `end_column` | No | Ending column number (1-based), compare up to this column |
+| `end_line` | No | Ending line number (1-based), compare up to and including this line |
+| `start_column` | No | Starting column number (1-based), compare from this column onward; CSV/H5 select data columns (CSV fields / matrix columns), the text comparator selects character columns |
+| `end_column` | No | Ending column number (1-based), compare up to and including this column; CSV/H5 select data columns, the text comparator selects character columns |
+| `allow_nonfinite` | No | Default `false`: any NaN/Inf on either side is a mismatch (difference type `non_finite_value`), and a `data_filter` cannot exclude it; set `true` to restore the legacy `NaN == NaN` / same-sign `±Inf` equality. Applies to CSV/H5 numeric comparison and the data lane (per-channel override supported) |
 | Others | No | Passed through to the corresponding comparator, e.g., `rtol`, `atol`, `encoding`, `tables`, `data_filter` |
 
 ```json
@@ -689,11 +690,29 @@ The `setup` block uses only global `--var` substitution (no case-level variables
 - Whether the `extends` target exists
 - Whether a circular inheritance chain exists
 - `abstract` cases are not counted as executable
-- `extends` cases skip required-field checks (content comes from parent)
+- `extends` / `abstract` cases may omit required fields in the raw file
+  (content comes from the parent or is supplied by children); cases that
+  are **still incomplete after inheritance expansion are reported as errors**
+- The `execution` dictionary supports partial overrides such as only `args`,
+  `timeout`, or `env`; field types, unknown fields, and mutually exclusive
+  execution forms are still checked. A `steps` list is replaced in full,
+  and each supplied step must be complete.
 
 ## Configuration Validation
 
 The `validate` command checks configuration file correctness without running tests, suitable for CI pipeline config validation.
+
+`validate` shares one preparation pipeline with the config loading of
+`run` / `find` (structural checks are driven by the JSON Schema exported via
+`symtest schema`, dual-form contract): the same invalid config yields
+identical errors from `validate` and `run`, and `run` exits before executing
+any command.
+
+Syntax errors in imported YAML files also return validation diagnostics,
+including the failing file and its referring file. `find --workspace` and
+`validate --workspace` check output paths against the specified workspace.
+The Python API `load_config(path, workspace=...)` also accepts an explicit
+workspace, defaulting to the current directory.
 
 ### Usage
 
@@ -716,9 +735,12 @@ symtest validate test_cases.json --output-format json
 | Check | Description |
 |---|---|
 | Syntax correctness | Whether JSON/YAML is valid (implicitly checked on load) |
-| Required fields | Whether each case has `name`, `execution.command`, `execution.args`, `expected` (each step in sequence mode) |
-| Import references | Whether referenced sub-files exist |
+| Structure (JSON Schema) | Every loaded file (including imported sub-files) is checked against the schema: field names (unknown fields / typos such as `return_cod` fail), types, value ranges (e.g. `retry_count >= 0`), execution-form exclusivity (`command`/`args` and `steps` cannot be declared together) |
+| Required fields | Every executable case must have `name`, `execution`, `expected` (single-command mode); each step is checked in sequence mode; `abstract` templates and `extends` heirs may omit them in the raw file but **must be complete after expansion** |
+| Import references | Whether referenced sub-files exist; sub-files are schema-checked as well, with errors localized to the exact file and field |
 | Circular references | Whether an A→B→A cycle exists in the import chain |
+| Inheritance & names | `extends` target existence, circular inheritance chains, duplicate case names (extends references must be unambiguous) |
+| Semantic checks | `outputs` path boundaries (no workspace escape, no directories); `depends_on` target existence, self-reference and cycles |
 
 ### Output Examples
 
@@ -734,11 +756,11 @@ On success:
     - /project/cases/json_tests.yaml
 ```
 
-On error:
+On error (structural errors carry the file path and field path):
 ```
   [OK] Loaded 3 test cases from 1 file(s)
-  [FAIL] case 'bad_case': missing required field 'expected'
-  [FAIL] Import target not found: /project/cases/nonexistent.json
+  [FAIL] [/project/config.json] $.test_cases[0]: 'expected' is a required property
+  [FAIL] Imported config file not found: /project/cases/nonexistent.json (referenced from /project/config.json)
 ```
 
 ## Cross-File Case Search (find)
@@ -952,7 +974,7 @@ Output example:
 ```json
 {
   "valid": false,
-  "errors": ["[main_config.json] case 'bad_case': missing required field 'expected'"],
+  "errors": ["[/project/main_config.json] $.test_cases[0]: 'expected' is a required property"],
   "summary": {"files": 1, "cases": 3, "files_loaded": ["/project/main_config.json"]}
 }
 ```
@@ -1858,6 +1880,8 @@ compare-files data1.json data2.json --json-compare-mode key-based --json-key-fie
 
 ### CSV File Comparison
 
+When a row window is set, row-count differences use only CSV records inside the window; extra records outside it do not affect the result. The starting row must refer to an existing record in both files. A starting row past the last record, or an empty file, returns an out-of-range error.
+
 ```bash
 # Basic comparison
 compare-files data1.csv data2.csv
@@ -1882,7 +1906,7 @@ compare-files data1.csv data2.csv --csv-data-filter '<=0.01'
 | `--csv-quotechar` | Quote character, default `"` |
 | `--csv-data-filter` | Data filter expression: `>`, `>=`, `<`, `<=`, `==`; supports `abs` prefix. Only compares numeric cells that **both files** satisfy the condition for |
 
-CSV comparison compares cell by cell in row-column structure; numeric cells within tolerance are considered equal. After `--csv-data-filter` filtering, numeric cell pairs that don't satisfy the condition won't report differences. The difference report includes row/column count mismatches and cell inconsistencies, listing up to 10 entries.
+CSV comparison compares cell by cell in row-column structure; numeric cells within tolerance are considered equal. After `--csv-data-filter` filtering, numeric cell pairs that don't satisfy the condition won't report differences. The difference report includes row/column count mismatches and cell inconsistencies, listing up to 10 entries. Integer cells retain exact integer semantics (e.g., `9007199254740992` vs `9007199254740993` differ under zero tolerance), including mixed integer/float cells and the full int64 / uint64 ranges; unrelated cells cannot force a floating conversion that loses integer differences. CSV error statistics accumulate the per-row verdict calculations directly, keeping statistics consistent with the verdict; error magnitudes are still reported as floating-point numbers. H5 and the data lane share these integer comparison rules. Python callers should preserve original integer types: the framework cannot recover precision already lost in floating input arrays. CSV comparison streams record by record, so memory scales with one row instead of the file size and CSVs of any size can be compared directly; the Python API (`read_content`/`compare_content`) keeps the in-memory path for direct callers.
 
 #### Error Analysis (--error-analysis)
 
@@ -2199,6 +2223,8 @@ Config (per-channel tolerances routed by name; unlisted channels use `default_ch
 
 **Verdict and result semantics**:
 - Each channel runs `compare_numeric` independently (symmetric tolerance `|a-b| <= max(rtol*max(|a|,|b|), atol)`)
+- Non-finite values are rejected by default: NaN/Inf in channel data fails the channel (a `data_filter` cannot exclude it); set `"allow_nonfinite": true` in `channels`/`default_channel` or at the comparator level to restore the legacy semantics
+- `allow_nonfinite` must be a boolean `true`/`false`; strings such as `"false"`, numbers, and `null` are configuration errors (the Python API also rejects non-booleans). The data lane, including `script_extract`, uses the first declared value in this order: per-channel setting → `default_channel` → comparator parameter → `false`. Thus, a per-channel `false` can override a comparator-level `true`.
 - `identical = all channels pass`; one compareSpec is still one assertion
 - Difference positions carry the channel prefix (`channel S33`); `error_stats` nests by channel name
 - The report shows per-channel pass/fail, tolerances and stats; channel differences are trimmed per channel in JSON output
