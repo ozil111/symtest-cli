@@ -10,9 +10,9 @@
 准入判据（全部满足才授予，任一不满足则排队等待）：
 
 1. **CPU 令牌**充足（``AtomicSemaphore`` 语义不变，纳入同一把锁）；
-2. **最小启动间隔**：距上一次授予 ≥ ``min_start_interval``——准入
-   串行决策，错开启动以减少多个任务同时看到充足余量而扎堆启动；
-   间隔不保证覆盖延迟尖峰；
+2. **条件启动间隔**：仅在存在活动任务且活动估算峰值之和 + 新需求
+   + 提交保留量超过当前提交余量时，要求距上次授予达到最小间隔。
+   这只是保守的错峰信号，不作硬预留；新需求/余量未知时保守错峰；
 3. **提交余量** ≥ 新任务估算需求 + ``commit_reserve_bytes``（历史
    提交峰值仅用于提交准入；需求未知或结构性不可满足时跳过该项）；
 4. **物理低水位**：可用物理内存 ≥ ``physical_watermark_bytes``
@@ -39,7 +39,7 @@
 （``execution/windows_job.py``），系统快照来自 ``system_memory``。
 
 兼容说明：``memory_capacity_bytes`` 与 ``_mem_capacity`` / ``_mem_free``
-仅作观测记账（活动任务估算需求之和），不参与任何准入判定；采集
+不作为硬准入预算；活动任务估算需求之和仅用于拥挤风险判断；采集
 脚本（memory-probe）据此读取"活动预留"，语义为估算需求而非预算。
 """
 import logging
@@ -103,7 +103,7 @@ class JointResourceManager:
         time_fn: Callable[[], float] = time.monotonic,
     ):
         self._cpu_capacity = max(1, cpu_capacity)
-        # 仅观测记账，不参与准入（见模块 docstring 兼容说明）
+        # 活动估算需求用于启动间隔判断，不作为硬预留（见模块 docstring 兼容说明）
         self._mem_capacity = memory_capacity_bytes or 0
         self._reserved_demand = 0
         self._cpu_free = self._cpu_capacity
@@ -260,17 +260,6 @@ class JointResourceManager:
             )
             return None
 
-        if (self._min_start_interval > 0
-                and self._last_grant_time is not None
-                and now - self._last_grant_time < self._min_start_interval):
-            waiter.interval_deadline = (self._last_grant_time
-                                        + self._min_start_interval)
-            waiter.deny_reason = (
-                "minimum startup interval %.1fs not elapsed since last "
-                "admission" % self._min_start_interval
-            )
-            return None
-
         snap = self._snapshot_fn()
         if not snap.usable:
             # fail-open：快照不可用（API 失败/非 Windows）时仅保留
@@ -308,6 +297,26 @@ class JointResourceManager:
                        self._physical_watermark_bytes / 1024 ** 3)
                 )
                 return None
+
+        # Full active peaks are a conservative spacing signal, never a hard
+        # reservation: current allocations are already reflected in headroom.
+        # Missing demand/headroom retains spacing while tasks are active.
+        crowding_risk = self._cpu_free < self._cpu_capacity and (
+            not snap.usable or snap.avail_commit_bytes is None
+            or waiter.unknown_demand
+            or self._reserved_demand + waiter.need_mem
+            + self._commit_reserve_bytes > snap.avail_commit_bytes
+        )
+        if (crowding_risk and self._min_start_interval > 0
+                and self._last_grant_time is not None
+                and now - self._last_grant_time < self._min_start_interval):
+            waiter.interval_deadline = (self._last_grant_time
+                                        + self._min_start_interval)
+            waiter.deny_reason = (
+                "peak crowding risk: minimum startup interval %.1fs not elapsed since last "
+                "admission" % self._min_start_interval
+            )
+            return None
 
         # 授予
         self._cpu_free -= waiter.cpu

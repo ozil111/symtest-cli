@@ -239,6 +239,27 @@ def _sleep_case(name, seconds=2, mem_mb=None):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 class TestWindowsMemoryManagement:
+    def test_short_case_batch_has_no_per_case_startup_delay(self, tmp_path, monkeypatch):
+        """A dozen tiny cases must not incur eleven one-second launch gaps."""
+        from symtest.core.system_memory import MemorySnapshot
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: MemorySnapshot(16 * GB, 12 * GB, 12 * GB, 32 * GB),
+        )
+        config = tmp_path / "cases.json"
+        _write_config(config, [
+            _sleep_case("tiny%d" % i, seconds=0, mem_mb=16) for i in range(12)
+        ])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=4, execution_mode="thread",
+        )
+        start = time.perf_counter()
+        assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["passed"] == 12
+        assert time.perf_counter() - start < 8
+
     def test_commit_reserve_over_limit_runs_and_records_peak(
             self, tmp_path, monkeypatch, caplog):
         """需求本身可满足但加保留量超上限：完整执行并更新 history。"""
@@ -436,7 +457,8 @@ class TestWindowsMemoryManagement:
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def test_memory_admission_allows_parallel_when_abundant(self, monkeypatch):
+    @pytest.mark.parametrize("headroom_gb", [80, 1000])
+    def test_memory_admission_allows_parallel_when_abundant(self, monkeypatch, headroom_gb):
         """余量充足时不重复计账：三个 40 GiB 任务全部并发（回归防护）。"""
         from symtest.core.resource_manager import JointResourceManager
         from symtest.core.system_memory import MemorySnapshot
@@ -444,7 +466,7 @@ class TestWindowsMemoryManagement:
         fake = MemorySnapshot(
             total_physical_bytes=1000 * GB,
             avail_physical_bytes=1000 * GB,
-            avail_commit_bytes=1000 * GB,
+            avail_commit_bytes=headroom_gb * GB,
             commit_limit_bytes=1000 * GB,
         )
         state = {"active": 0, "max_active": 0, "grants": []}
@@ -493,13 +515,14 @@ class TestWindowsMemoryManagement:
                 "admission must not double-count active reservations: "
                 "max concurrent = %d" % state["max_active"]
             )
-            # 最小启动间隔（默认 1s）在授予之间生效
             grants = sorted(state["grants"])
-            for earlier, later in zip(grants, grants[1:]):
-                assert later - earlier >= 0.9, (
-                    "minimum startup interval not respected: %.2fs"
-                    % (later - earlier)
-                )
+            if headroom_gb == 80:
+                # Individual demand fits, overlapping full peaks do not:
+                # stagger grants without turning the estimate into a hard cap.
+                for earlier, later in zip(grants, grants[1:]):
+                    assert later - earlier >= 0.9
+            else:
+                assert grants[-1] - grants[0] < 0.9
         finally:
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)

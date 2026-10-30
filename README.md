@@ -193,7 +193,8 @@ runtime history. On Windows, enabling `--history-dir` or declaring
 case's process-group commit-memory peak is measured via a Job Object and
 stored in history, and a case starts only when CPU tokens, commit margin
 (the case's own estimated demand plus a reserve), a physical-memory
-watermark, and a minimum startup interval are all satisfied — queued
+watermark, and (only under potential peak crowding) a minimum startup interval
+are all satisfied — queued
 instead of launching into a memory shortage. Active tasks hold no full
 peak reservations, so occasional overcommit is accepted (zero-OOM not
 guaranteed). Process mode
