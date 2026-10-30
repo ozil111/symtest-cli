@@ -5,6 +5,8 @@ import tempfile
 import time
 import unittest
 
+import pytest
+
 from symtest.runners.json_runner import JSONRunner
 from symtest.runners.parallel_json_runner import ParallelJSONRunner
 
@@ -205,4 +207,301 @@ class TestParallelRunner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Windows memory management (measurement + joint admission)
+# ---------------------------------------------------------------------------
+
+GB = 1024 ** 3
+
+
+def _write_config(path, cases):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"test_cases": cases}, f, ensure_ascii=False, indent=2)
+
+
+def _sleep_case(name, seconds=2, mem_mb=None):
+    case = {
+        "name": name,
+        "execution": {
+            "command": sys.executable,
+            "args": ["-c",
+                     "import time;time.sleep(%d);print('%s')" % (seconds, name)],
+        },
+        "expected": {"return_code": 0, "output_contains": [name]},
+        "scheduling": {"resources": {"cpu_cores": 1}},
+    }
+    if mem_mb is not None:
+        case["scheduling"]["resources"]["min_memory_mb"] = mem_mb
+    return case
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+class TestWindowsMemoryManagement:
+    def test_commit_reserve_over_limit_runs_and_records_peak(
+            self, tmp_path, monkeypatch, caplog):
+        """需求本身可满足但加保留量超上限：完整执行并更新 history。"""
+        from symtest.core.system_memory import MemorySnapshot
+        from symtest.core.history_store import load_history
+
+        reads = 0
+
+        def snapshot():
+            nonlocal reads
+            reads += 1
+            # Bound a regression to permanent polling without leaking workers.
+            if reads > 5:
+                raise AssertionError("unsatisfiable commit demand kept polling")
+            return MemorySnapshot(16 * GB, 12 * GB, 8 * GB, 8 * GB)
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot", snapshot,
+        )
+        config = tmp_path / "cases.json"
+        _write_config(config, [_sleep_case("reserve", seconds=0, mem_mb=7 * 1024)])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=2, execution_mode="thread",
+            history_dir="hist", memory_commit_reserve_mb=2048,
+            memory_min_start_interval_s=0,
+        )
+        assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["passed"] == 1
+        assert "plus 2.0 GiB reserve" in caplog.text
+        record = load_history(str(tmp_path / "hist"))["cases"]["reserve"]
+        assert record["max_peak_memory_bytes"] > 0
+        assert record["peak_memory_source"] == "windows_job_commit"
+
+    @pytest.mark.parametrize("watermark_mb", [2048, 3072])
+    def test_impossible_watermark_fails_before_execution(
+            self, tmp_path, monkeypatch, watermark_mb):
+        from symtest.core.system_memory import MemorySnapshot
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: MemorySnapshot(2 * GB, GB, 16 * GB, 16 * GB),
+        )
+        config = tmp_path / "cases.json"
+        _write_config(config, [_sleep_case("never_started", seconds=0, mem_mb=256)])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=2, execution_mode="thread",
+            history_dir="hist", memory_physical_watermark_mb=watermark_mb,
+        )
+        monkeypatch.setattr(
+            runner, "run_single_test",
+            lambda case: pytest.fail("invalid watermark must prevent execution"),
+        )
+        with pytest.raises(SystemExit, match="memory_physical_watermark_mb"):
+            runner.run_tests()
+        from symtest.core.history_store import load_history
+        assert not load_history(str(tmp_path / "hist")).get("cases")
+
+    @pytest.mark.parametrize("watermark_mb", [0, 512])
+    def test_small_machine_runs_with_valid_watermark(
+            self, tmp_path, monkeypatch, watermark_mb):
+        from symtest.core.system_memory import MemorySnapshot
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: MemorySnapshot(2 * GB, GB, 16 * GB, 16 * GB),
+        )
+        config = tmp_path / "cases.json"
+        _write_config(config, [_sleep_case("small", seconds=0, mem_mb=256)])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=2, execution_mode="thread",
+            memory_physical_watermark_mb=watermark_mb,
+        )
+        assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["details"][0]["peak_memory_bytes"] > 0
+
+    def test_peaks_measured_and_recorded(self):
+        """启用内存管理（thread + Windows + history）→ 结果与 history 均有峰值。"""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            config_file = os.path.join(temp_dir, "mem_config.json")
+            _write_config(config_file, [
+                _sleep_case("m0", seconds=0, mem_mb=256),
+                _sleep_case("m1", seconds=0, mem_mb=256),
+            ])
+            runner = ParallelJSONRunner(
+                config_file, temp_dir, max_workers=2, execution_mode="thread",
+                history_dir="hist",
+            )
+            assert runner.run_tests()
+            for detail in runner.results["details"]:
+                assert detail["peak_memory_bytes"] > 0
+                assert detail["peak_memory_source"] == "windows_job_commit"
+
+            from symtest.core.history_store import load_history
+            hist = load_history(os.path.join(temp_dir, "hist"))
+            for name in ("m0", "m1"):
+                rec = hist["cases"][name]
+                assert rec["max_peak_memory_bytes"] > 0
+                assert rec["peak_memory_source"] == "windows_job_commit"
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_memory_management_disabled_without_history_and_declaration(self):
+        """无 history 且未声明内存 → 不进入内存管理路径（旧行为）。"""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            config_file = os.path.join(temp_dir, "plain_config.json")
+            _write_config(config_file, [
+                _sleep_case("p0", seconds=0),
+            ])
+            runner = ParallelJSONRunner(
+                config_file, temp_dir, max_workers=2, execution_mode="thread",
+            )
+            assert runner.run_tests()
+            assert not runner._memory_enabled
+            for detail in runner.results["details"]:
+                assert "peak_memory_bytes" not in detail
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_memory_admission_caps_concurrency(self, monkeypatch):
+        """机会式准入：提交余量不足时第三个任务排队，已运行任务继续。
+
+        快照按「基础余量 − 活动任务估算需求」动态模拟真实系统的提交
+        余量消耗。三个 40 GiB 用例、100 GiB 基础余量：前两个可并发
+        （40+2 ≤ 100−40），第三个需 42 ≤ 20 不满足 → 等待，前两个
+        释放后放行。全部通过，最大并发 ≤ 2。
+        """
+        from symtest.core.resource_manager import JointResourceManager
+        from symtest.core.system_memory import MemorySnapshot
+
+        state = {"demand": 0, "active": 0, "max_active": 0}
+        clock = time.perf_counter
+
+        def fake_snapshot():
+            return MemorySnapshot(
+                total_physical_bytes=100 * GB,
+                avail_physical_bytes=100 * GB,
+                avail_commit_bytes=100 * GB - state["demand"],
+                commit_limit_bytes=100 * GB,
+            )
+
+        class TrackingManager(JointResourceManager):
+            def acquire(self, *args, **kwargs):
+                ticket = super().acquire(*args, **kwargs)
+                state["demand"] += ticket.memory_bytes
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"],
+                                           state["active"])
+                return ticket
+
+            def release(self, ticket, label=""):
+                state["demand"] -= ticket.memory_bytes
+                state["active"] -= 1
+                super().release(ticket, label)
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            fake_snapshot,
+        )
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.JointResourceManager",
+            TrackingManager,
+        )
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            config_file = os.path.join(temp_dir, "queue_config.json")
+            _write_config(config_file, [
+                _sleep_case("q0", seconds=2, mem_mb=40 * 1024),
+                _sleep_case("q1", seconds=2, mem_mb=40 * 1024),
+                _sleep_case("q2", seconds=2, mem_mb=40 * 1024),
+            ])
+            runner = ParallelJSONRunner(
+                config_file, temp_dir, max_workers=3, execution_mode="thread",
+                history_dir="hist",
+            )
+            start = clock()
+            assert runner.run_tests()
+            elapsed = clock() - start
+            assert runner._memory_enabled
+            assert runner.results["passed"] == 3
+            # 提交余量不足 → 不能 3 个全并发（无重复计账下前两个可并发）
+            assert state["max_active"] <= 2, (
+                "memory admission failed to cap concurrency: %d concurrent"
+                % state["max_active"]
+            )
+            assert state["max_active"] >= 1
+            assert elapsed < 60
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_memory_admission_allows_parallel_when_abundant(self, monkeypatch):
+        """余量充足时不重复计账：三个 40 GiB 任务全部并发（回归防护）。"""
+        from symtest.core.resource_manager import JointResourceManager
+        from symtest.core.system_memory import MemorySnapshot
+
+        fake = MemorySnapshot(
+            total_physical_bytes=1000 * GB,
+            avail_physical_bytes=1000 * GB,
+            avail_commit_bytes=1000 * GB,
+            commit_limit_bytes=1000 * GB,
+        )
+        state = {"active": 0, "max_active": 0, "grants": []}
+        clock = time.perf_counter
+
+        class TrackingManager(JointResourceManager):
+            def acquire(self, *args, **kwargs):
+                ticket = super().acquire(*args, **kwargs)
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"],
+                                           state["active"])
+                state["grants"].append(clock())
+                return ticket
+
+            def release(self, ticket, label=""):
+                state["active"] -= 1
+                super().release(ticket, label)
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: fake,
+        )
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.JointResourceManager",
+            TrackingManager,
+        )
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            config_file = os.path.join(temp_dir, "abundant_config.json")
+            _write_config(config_file, [
+                _sleep_case("a0", seconds=2, mem_mb=40 * 1024),
+                _sleep_case("a1", seconds=2, mem_mb=40 * 1024),
+                _sleep_case("a2", seconds=2, mem_mb=40 * 1024),
+            ])
+            runner = ParallelJSONRunner(
+                config_file, temp_dir, max_workers=3, execution_mode="thread",
+                history_dir="hist",
+            )
+            assert runner.run_tests()
+            assert runner._memory_enabled
+            assert runner.results["passed"] == 3
+            # 旧策略会把 3×40 GiB 预留判为超容量而串行；机会式准入在
+            # 余量充足时必须放行并发
+            assert state["max_active"] == 3, (
+                "admission must not double-count active reservations: "
+                "max concurrent = %d" % state["max_active"]
+            )
+            # 最小启动间隔（默认 1s）在授予之间生效
+            grants = sorted(state["grants"])
+            for earlier, later in zip(grants, grants[1:]):
+                assert later - earlier >= 0.9, (
+                    "minimum startup interval not respected: %.2fs"
+                    % (later - earlier)
+                )
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 

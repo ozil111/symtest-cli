@@ -181,7 +181,7 @@ the exact file and field.
 - JSON/YAML runners differ only by injected config_loader; common logic lives in the generic sequential / parallel runners
 - xfail: when `expected_failure=True`, `passed → xpassed` (unexpected pass, counted as a suite failure); any non-passed status → `xfailed` (expected failure, not counted)
 - JUnit XML status mapping: `xfailed → <skipped>`, `xpassed → <failure>`, `timeout → <error>`, `failed` split into `<failure>` / `<error>` by message type
-- History: cumulative average update; regression is checked against the prior average before writing; `--update-history` clears then records
+- History: duration uses cumulative average update; regression is checked against the prior average before writing; memory peaks are recorded independently (`last_peak_memory_bytes` / `max_peak_memory_bytes` / `peak_memory_count` / `peak_memory_source`, bytes) for any run with a valid measurement (including failed / timeout), scheduling estimates use the historical maximum; `--update-history` clears the whole record (duration + memory)
 - `--last-failed`: each run overwrites only the statuses of executed cases; subset runs never lose states of unexecuted cases
 
 ### 4.2 Two Case Modes
@@ -193,11 +193,24 @@ JSON Schema; it is not restated here.
 
 ### 4.3 Parallelism and Resource Scheduling
 
-- LPT strategy: long tasks first; with history enabled, historical `avg_duration` takes precedence over declared `estimated_time`
+- LPT strategy: long tasks first; with history enabled, historical `avg_duration` takes precedence over declared `estimated_time` (entries with memory-only records and no duration fields are tolerated, treated as 0)
 - `AtomicSemaphore` resource pool: `safe_capacity = max(1, cpu_count − 2)`; per-case acquire/release by `cpu_cores`
 - Relative CPU cores assigned proportionally by weight; auto-injects `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC`
 - Environment variable precedence: `os.environ` < scheduler injection < case-level env (via subprocess, never mutating global `os.environ`)
 - Thread mode shares memory with result/print locks; process mode isolates via process workers; sequential fallback available
+
+**Windows memory-aware scheduling — opportunistic admission** (enabled for thread mode on Windows when `--history-dir` is set or `min_memory_mb` is declared; otherwise the original CPU-only path is kept unchanged):
+
+- Demand estimate priority: explicit `min_memory_mb` > historical max peak × safety factor (default 1.2, configurable via `memory_margin`) > configurable default demand (`memory_default_demand_mb`, default 4096 MB); no more whole-pool exclusive runs
+- `JointResourceManager` joint pool: CPU tokens + a system snapshot (`GlobalMemoryStatusEx` available physical memory, `GetPerformanceInfo` commit margin) are evaluated atomically under a single lock — eliminating the partial-holding deadlock of "holding CPU while waiting for memory and vice versa"
+- **Admission criteria** (all must hold to start): CPU tokens suffice; at least the minimum startup interval (`memory_min_start_interval_s`, default 1s) has elapsed since the previous grant (staggered starts, avoiding thundering herds that all see the same headroom); commit margin ≥ the new task's estimated demand + commit reserve (`memory_commit_reserve_mb`, default 2048 MB); available physical memory ≥ the physical watermark (`memory_physical_watermark_mb`, default 2048 MB, an independent pressure check not tied to the demand). The commit and physical budgets are modelled separately and never mixed
+- **No double counting**: full future peaks are no longer reserved for running tasks — memory already in use shows up naturally in the system headroom; the residual risk of a running task growing again is explicitly accepted (occasional OOM allowed, zero-failure not guaranteed). Measurements proved the old "full reservations + snapshot backstop" policy squeezed 2/4-worker concurrency down to 1 on a 31.8 GiB machine
+- Under memory pressure only new admissions are paused; running tasks continue. Waiters reuse already granted tickets under the lock, preventing duplicate charges when polling timeouts race with release; waiters blocked by the startup interval wake on the remaining interval
+- Denial reasons (with key numbers: demand / reserve / headroom / watermark) come from the actual decision path and are stored on `waiter.deny_reason` plus the scheduler log for acceptance attribution
+- Physical watermark validation: when total physical memory is known, a nonzero watermark must be strictly below it; otherwise initialization raises `ValueError` instead of waiting forever. Lower `memory_physical_watermark_mb`, or set it to 0 to disable this check.
+- Memory shortage queues instead of downgrading (the CPU 10s-downgrade heuristic does not apply to memory); unknown demand (`None`) or demand plus commit reserve beyond the system commit limit (structurally unsatisfiable, e.g. a small pagefile) skip the commit check and run (physical watermark and startup interval still apply), leaving the problem to the case's own failure rather than queueing forever
+- All descendants in a Job share the launcher's command deadline. After pipe EOF, execution still waits for the group to finish; reaching the deadline terminates the group and reports a timeout.
+- These parameters are `symtest.json` run-section config keys (no CLI flags in the first version); process mode does not participate in resource scheduling (unchanged behavior)
 
 ### 4.4 DAG Dependency Scheduling Semantics
 
@@ -217,9 +230,17 @@ workspace root are always rejected; resolved
 paths must stay inside the workspace, deletion failure fails loudly as an execution
 error; runs on every attempt, and steps skipped by `--resume` are naturally not
 cleaned) → subprocess-isolated execution (captures
-stdout / stderr / returncode / duration) → assertions (return_code / contains /
+stdout / stderr / returncode / duration; when Windows measurement is enabled, the process group runs inside a Job Object created suspended → assigned → resumed, capturing the group's commit-memory peak `PeakJobMemoryUsed`; on timeout `TerminateJobObject` kills the whole group; measurement failure falls back to the plain subprocess path with the peak left unknown) → assertions (return_code / contains /
 matches / compare_files) → retries on failure up to `retry_count` → kills the
 whole process group on timeout → structured result with `next_action_hint`.
+
+The process-group memory peak is an **execution fact** (Principle 2), optionally
+carried on results as `peak_memory_bytes` / `peak_memory_source` (Windows
+commit-memory basis, NOT physical-memory peak; fields are absent when no valid
+measurement exists — never 0-for-unknown). Aggregation: retry takes the maximum
+across attempts; a sequence takes the maximum across actually-executed steps
+(steps run serially, no summation; steps skipped by `--resume` contribute no
+fabricated data).
 
 ### 4.6 Assertions and File Comparison Integration
 
@@ -232,7 +253,7 @@ whole process group on timeout → structured result with `next_action_hint`.
 | State | Content | Update timing / semantics |
 |---|---|---|
 | Project defaults `symtest.json` | `run` group run options + `report` group report paths | Read once at run start (CLI > project config > built-in defaults); read-only, never updated during a run |
-| History | per-case `avg_duration` / `last_duration` / `run_count` | Cumulative average after runs; regression-checked before writing |
+| History | per-case `avg_duration` / `last_duration` / `run_count` + optional memory fields (`last_peak_memory_bytes` / `max_peak_memory_bytes` / `peak_memory_count` / `peak_memory_source`) | Duration: cumulative average after runs, regression-checked before writing (passed cases only); memory: recorded for any run with a valid measurement, scheduling estimates use the historical max |
 | `last_run.json` | case → last status | Overwrites executed cases; unexecuted retain old status |
 | `sequence_state/<case>.json` | SHA-256 config hash (steps + case expected), set of passed steps | Saved after each passing step; cleaned up after full pass |
 | `sequence_state/cache/*.log` | Step output cache | Kept in sync; spliced back on resume |
@@ -309,8 +330,7 @@ no interactive UI maintenance burden.
 | Semaphore-based CPU core management | More fine-grained than thread pool worker count; allows different cases to declare different core requirements |
 | LPT scheduling strategy | Long tasks start first, reducing tail latency; prioritizes `.symtest` historical data |
 | Cumulative average history update | Simple and intuitive; single anomalies are naturally diluted over many runs |
-| Regression check before update | Compare against old average first, then update; ensures comparison is against the "historical baseline" |
-| `.symtest/` directory | Non-intrusive to the user's directory view; JSON format for easy debugging; state files centrally managed |
+| Regression check before update | Compare against old average first, then update; ensures comparison is against the "historical baseline" || `.symtest/` directory | Non-intrusive to the user's directory view; JSON format for easy debugging; state files centrally managed |
 | Environment variable injection | Scientific computing solvers often ignore Python-level thread control |
 | Comparator factory + plugin discovery | Creates comparators by file type; workspace `comparators/` directory for auto-discovered plugins |
 | subprocess isolated execution | Each test case runs in an independent subprocess, ensuring tests don't affect each other |
@@ -326,6 +346,12 @@ no interactive UI maintenance burden.
 | JUnit XML output | Compatible with GitLab CI / Jenkins / CircleCI and other major CI system test report formats |
 | Project-level default configuration (`.symtest/symtest.json`) | Frequently used run options (parallel, error analysis, dependency expansion, report paths) are stored per project so `symtest run` needs no repeated input. Three-level precedence (CLI > project config > built-in defaults) is implemented with tri-state booleans (argparse defaults to `None`; `--no-xxx` turns a flag off explicitly); unknown keys and bad JSON are handled tolerantly with a warning only — the config is a pure bonus and never blocks a run. Replaces per-repo entry scripts whose only job was storing default arguments |
 | Console log/report channel separation | The console (stderr logging) carries progress and summary logs only. Reports reach stdout solely via an explicit `--output-format text/json/html` (redirectable to a file), with full details written to disk via `--text-report`/`--html-report`/`--junit-xml`. Fixes the channel confusion where the former `print_report` replayed the whole text report through `logger.info` — with `--error-analysis-all` the per-case error_stats flooded the terminal and buried the pass/failed summary |
+| Windows Job Object measures process-group peaks | Create-suspended → assign → resume eliminates the descendant-escape race; the OS maintains the peak continuously, catching short spikes without sampling; `PeakJobMemoryUsed` is commit memory, honestly named `peak_memory_source=windows_job_commit`, never presented as a physical-memory peak |
+| Joint atomic CPU+memory admission | Two independent semaphores allow a partial-holding deadlock ("holding CPU while waiting for memory and vice versa"); the joint pool evaluates pool tokens + system snapshot atomically under one lock (physical availability and commit margin are checked separately — they guard different failure modes) |
+| Opportunistic memory admission (no full peak reservations) | The old policy requiring system headroom to cover all active reservations plus the new request double-counted allocated memory (measured to squeeze 2/4-worker concurrency to 1) and misused commit peaks for the physical-memory check. Opportunistic admission checks only the new task's own demand + reserve; memory in use shows up naturally in the system headroom; a minimum startup interval staggers grants; occasional OOM is accepted, zero-failure is not guaranteed |
+| Memory queues instead of downgrading | The CPU token timeout-downgrade is a throughput heuristic; downgraded memory launch is precisely the source of parallel OOM failures, so memory shortage waits indefinitely (periodic wake-ups re-evaluate external memory changes); only structurally unsatisfiable requests (demand plus commit reserve beyond the commit limit) skip the check and run |
+| Memory history uses the maximum, not the average | Peaks are naturally monotone; an occasional spike diluted by averaging would OOM again at the next scheduling; estimates add a safety factor (default 1.2, configurable) |
+| Memory measurement failure falls back to the plain path | Measurement is a bonus, not an acceptance criterion: on backend failure / non-Windows / process mode the peak stays unknown (None, never 0-for-unknown) and execution and verdict semantics are unchanged |
 
 ---
 

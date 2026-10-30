@@ -85,6 +85,12 @@ class TestResultData(TypedDict):
     # ── Per-assertion pass/fail detail (populated on both pass and failure) ──
     assertion_results: List[Dict[str, Any]]
     xfail_reason: Optional[str]
+    # ── Optional process-group memory peak (execution fact, Windows only) ──
+    # Present only when a valid measurement exists (never 0-for-unknown);
+    # peak_memory_source identifies the measurement backend
+    # (e.g. "windows_job_commit" = Windows Job Object commit-memory peak).
+    peak_memory_bytes: Optional[int]
+    peak_memory_source: Optional[str]
     # ── Structured remediation suggestion (populated on failure) ──
     # Dict with: action ('update_baseline' | 'update_expected' | 'increase_timeout'
     # | 'investigate'), command (concrete symtest command, filled by runners),

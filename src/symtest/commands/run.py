@@ -128,6 +128,19 @@ def run_tests(args):
     with_deps = getattr(args, 'with_deps', False)
     plugin_dirs = getattr(args, 'plugin_dirs', None)
 
+    # 机会式内存准入参数（symtest.json run 段；CLI 第一版不提供旗标）。
+    # None → 不传，由 runner 应用内置默认值。
+    memory_keys = (
+        'memory_margin', 'memory_commit_reserve_mb',
+        'memory_physical_watermark_mb', 'memory_default_demand_mb',
+        'memory_min_start_interval_s',
+    )
+    memory_kwargs = {
+        key: getattr(args, key)
+        for key in memory_keys
+        if getattr(args, key, None) is not None
+    }
+
     try:
         if args.parallel:
             # Format-aware parallel runner selection
@@ -150,6 +163,7 @@ def run_tests(args):
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
+                    **memory_kwargs,
                 )
             elif file_ext in ['.yaml', '.yml']:
                 runner = ParallelYAMLRunner(
@@ -170,6 +184,7 @@ def run_tests(args):
                     last_failed=last_failed,
                     resume=resume,
                     plugin_dirs=plugin_dirs,
+                    **memory_kwargs,
                 )
             else:
                 logger.error("Unsupported configuration file format for parallel mode: %s", file_ext)

@@ -24,3 +24,11 @@ dependencies installed (`pip install -e ".[dev]"`).
 
 `demos/` scripts are standalone (e.g., `python tests/demos/h5_filter_demo.py`).
 
+Windows memory admission integration tests in
+`integration/parallel/test_parallel_runner.py` cover real Job peak collection
+and history updates, admission under simulated commit pressure, impossible
+commit demand including the reserve, and rejection of physical watermarks at
+or above total RAM. Small-machine cases also verify that lowering the watermark
+or setting it to zero permits execution. They use injected snapshots rather
+than exhausting host memory.
+

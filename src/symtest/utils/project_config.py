@@ -47,6 +47,13 @@ _RUN_KEYS = {
     "with_deps": bool,
     "error_analysis": bool,
     "error_analysis_all": bool,
+    # 机会式内存准入参数（Windows + thread 模式生效；CLI 第一版不提供
+    # 旗标，仅 symtest.json run 段配置）
+    "memory_margin": float,
+    "memory_commit_reserve_mb": int,
+    "memory_physical_watermark_mb": int,
+    "memory_default_demand_mb": int,
+    "memory_min_start_interval_s": float,
 }
 _REPORT_KEYS = {
     "text": str,
@@ -190,6 +197,21 @@ def merge_project_config(args, project_config, workspace_path):
                                   run_cfg.get("error_analysis"), False)
     args.error_analysis_all = resolve(getattr(args, 'error_analysis_all', None),
                                       run_cfg.get("error_analysis_all"), False)
+    # 机会式内存准入参数（None → runner 内置默认值）
+    args.memory_margin = resolve(getattr(args, 'memory_margin', None),
+                                 run_cfg.get("memory_margin"), None)
+    args.memory_commit_reserve_mb = resolve(
+        getattr(args, 'memory_commit_reserve_mb', None),
+        run_cfg.get("memory_commit_reserve_mb"), None)
+    args.memory_physical_watermark_mb = resolve(
+        getattr(args, 'memory_physical_watermark_mb', None),
+        run_cfg.get("memory_physical_watermark_mb"), None)
+    args.memory_default_demand_mb = resolve(
+        getattr(args, 'memory_default_demand_mb', None),
+        run_cfg.get("memory_default_demand_mb"), None)
+    args.memory_min_start_interval_s = resolve(
+        getattr(args, 'memory_min_start_interval_s', None),
+        run_cfg.get("memory_min_start_interval_s"), None)
 
     args.text_report = resolve(getattr(args, 'text_report', None),
                                report_cfg.get("text"), None)

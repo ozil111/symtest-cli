@@ -39,10 +39,13 @@ class TestResult:
     description: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     next_action_hint: Optional[Dict[str, Any]] = None
+    # ── 进程组内存峰值（执行事实，可选；无可测量时不出现在 wire format） ──
+    peak_memory_bytes: Optional[int] = None
+    peak_memory_source: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为 1.3 兼容的 ``TestResultData`` wire format。"""
-        return {
+        data = {
             "name": self.name,
             "status": self.status,
             "message": self.message,
@@ -66,3 +69,9 @@ class TestResult:
             "assertion_results": self.assertion_results,
             "next_action_hint": self.next_action_hint,
         }
+        # 仅在有效测量时携带峰值字段，避免破坏旧消费者的输出契约
+        # （None 表示未测量，不得用 0 表示未知）。
+        if self.peak_memory_bytes is not None:
+            data["peak_memory_bytes"] = self.peak_memory_bytes
+            data["peak_memory_source"] = self.peak_memory_source
+        return data

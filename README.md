@@ -186,11 +186,20 @@ symtest run test_cases.json --parallel --workers 4
 symtest run test_cases.json --parallel --execution-mode process
 ```
 
-Thread mode currently supports CPU-token allocation, solver thread environment
+Thread mode supports CPU-token allocation, solver thread environment
 variables, and longest-processing-time-first scheduling using estimates or
-runtime history. Process mode provides execution isolation but does not yet use
-the resource scheduler. Memory enforcement, priority semantics, and broader
-resource scheduling remain active areas of development.
+runtime history. On Windows, enabling `--history-dir` or declaring
+`min_memory_mb` additionally turns on opportunistic memory admission: each
+case's process-group commit-memory peak is measured via a Job Object and
+stored in history, and a case starts only when CPU tokens, commit margin
+(the case's own estimated demand plus a reserve), a physical-memory
+watermark, and a minimum startup interval are all satisfied — queued
+instead of launching into a memory shortage. Active tasks hold no full
+peak reservations, so occasional overcommit is accepted (zero-OOM not
+guaranteed). Process mode
+provides execution isolation but does not yet use the resource scheduler.
+Linux memory scheduling, priority semantics, and broader resource scheduling
+remain active areas of development.
 
 ## CI and reports
 
