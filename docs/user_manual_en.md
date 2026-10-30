@@ -1642,13 +1642,83 @@ Only effective in thread mode. Configured via the `scheduling.resources` field; 
 |---|---|
 | `cpu_cores` | Required CPU core count, default 1. The framework uses semaphores to control allocation; tasks exceeding the limit wait in queue |
 | `estimated_time` | Estimated duration (seconds), used for LPT scheduling (long tasks start first) |
-| `min_memory_mb` | Estimated memory (MB), currently used for log warnings only |
+| `min_memory_mb` | Memory demand estimate (MB). Used directly as the admission demand estimate when Windows memory management is enabled; informational otherwise |
 | `priority` | Priority 0-10, currently used for informational labeling only |
 
 Framework behavior:
 - Automatically detects CPU core count, reserving 2 cores for the system
 - Automatically injects `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `NPROC` environment variables when a task starts, preventing solver thread runaway
 - Schedules by `estimated_time` in descending order (LPT strategy); if `--history-dir` is enabled, prefers historical `avg_duration` for ordering
+
+### Windows Memory-Aware Scheduling (Opportunistic Admission)
+
+Large-scale parallel solvers (e.g. Abaqus) occasionally fail from memory exhaustion.
+On **Windows in thread mode**, once `--history-dir` is enabled or `min_memory_mb` is
+declared, the framework switches to opportunistic memory admission: whether to start
+a new task is decided from historical demand and the current memory pressure,
+reducing parallel memory failures; occasional overcommit is allowed and zero-OOM is
+not guaranteed.
+
+**Peak measurement**: every command runs inside a Windows Job Object
+(created suspended → assigned → resumed), so the launcher and all its descendant
+processes (the solvers) are tracked as one group for the **commit-memory peak**
+(commit basis, not physical-memory peak). Retries take the maximum across attempts;
+step sequences take the maximum across actually-executed steps.
+After the launcher exits, execution waits for all descendants in the Job to finish.
+The whole group shares the command's `timeout`; reaching that deadline terminates
+the group and reports a timeout, without a fixed descendant cleanup grace period.
+
+**Admission criteria** (all must hold to start; otherwise the task queues and is
+re-evaluated periodically):
+
+1. CPU tokens suffice;
+2. at least the minimum startup interval (default 1s) has elapsed since the last
+   start — staggered launches prevent several tasks from all seeing the same
+   ample headroom and starting simultaneously;
+3. commit margin ≥ the new task's estimated demand + commit reserve
+   (default 2048 MB);
+4. available physical memory ≥ the physical watermark (default 2048 MB; an
+   independent pressure check unrelated to the task's demand).
+
+The commit and physical budgets are checked separately and never mixed. **No full
+peak reservations**: memory already in use shows up naturally in the system
+headroom, so the headroom check only covers the new task's own demand — avoiding
+the old policy's double counting that squeezed concurrency down to 1. Under memory
+pressure only new admissions pause; running tasks continue. Every denial records
+its concrete reason (demand / reserve / headroom / watermark figures) in the
+scheduler log for attribution.
+
+**Demand estimate priority**:
+
+1. explicitly declared `min_memory_mb` (user judgment wins);
+2. the historical max peak from history × safety factor (default 1.2);
+3. neither (first run): a configurable default demand (default 4096 MB) — no more
+   whole-pool exclusive runs; the risk of an inaccurate first estimate is accepted
+   and history is updated after the run.
+
+**Admission parameters** (`run` section of `symtest.json`; no CLI flags in the
+first version):
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `memory_margin` | float | 1.2 | Safety factor applied to historical peaks for demand estimation |
+| `memory_commit_reserve_mb` | int | 2048 | Commit reserve (MB) the margin must additionally cover |
+| `memory_physical_watermark_mb` | int | 2048 | Physical memory low-water mark (MB); below it new admissions pause |
+| `memory_default_demand_mb` | int | 4096 | Default demand estimate (MB) for cases with no history |
+| `memory_min_start_interval_s` | float | 1.0 | Minimum interval (seconds) between consecutive task starts; 0 disables |
+
+**Limitations and notes**:
+- Memory shortage waits indefinitely (this is the mechanism that prevents OOM
+  failures); a heartbeat log including the denial reason is emitted once per
+  minute while waiting;
+- Physical watermark validation: when total physical memory is known, a nonzero watermark must be strictly below it; otherwise initialization raises `ValueError` instead of waiting forever. Lower `memory_physical_watermark_mb`, or set it to 0 to disable this check.
+- estimated demand plus commit reserve exceeding the system commit limit (structurally unsatisfiable, e.g. a
+  small pagefile) warn and skip the commit check (physical watermark and startup
+  interval still apply), leaving the problem to the case's own failure;
+- process mode (`--execution-mode process`) and Linux do not yet participate in
+  memory scheduling or peak measurement;
+- measurement failure falls back to the plain execution path with the peak marked
+  unknown; test verdicts are unaffected.
 
 ## History & Regression Detection
 
@@ -1657,8 +1727,9 @@ Use `--history-dir` to specify a directory where the framework maintains a `.sym
 ### How It Works
 
 1. **First run**: No `.symtest` in the directory; an empty file is auto-created; ordering still uses `estimated_time` from the config
-2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order
+2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order; Windows memory-aware scheduling additionally uses the historical max memory peak for admission estimates
 3. **Regression detection**: After each run, if any case's duration exceeds the historical average by the threshold multiplier (default 1.5), a warning is printed
+4. **Memory peaks**: durations are recorded only for passed cases, while memory peaks are recorded whenever a valid measurement exists (including failed/timed-out cases — that data protects the next scheduling decision just as well)
 
 ### CLI Usage
 
@@ -1700,7 +1771,11 @@ success = runner.run_tests()
     "case_name_1": {
       "avg_duration": 3.5,
       "last_duration": 3.2,
-      "run_count": 5
+      "run_count": 5,
+      "last_peak_memory_bytes": 5500000000,
+      "max_peak_memory_bytes": 6100000000,
+      "peak_memory_count": 3,
+      "peak_memory_source": "windows_job_commit"
     }
   }
 }
@@ -1711,6 +1786,12 @@ success = runner.run_tests()
 | `avg_duration` | Cumulative average duration (seconds), used for scheduling and regression baseline |
 | `last_duration` | Most recent run duration |
 | `run_count` | Historical run count |
+| `last_peak_memory_bytes` | Most recent process-group memory peak (bytes, commit basis; recorded when Windows memory management is enabled, including failed cases) |
+| `max_peak_memory_bytes` | Historical max memory peak; used by memory scheduling estimates |
+| `peak_memory_count` | Number of valid peak measurements |
+| `peak_memory_source` | Measurement source (`windows_job_commit` = Windows Job Object commit-memory peak) |
+
+Memory fields are optional: they are absent when measurement is disabled or fails; old-format history files load without migration.
 
 ### Regression Warning Example
 

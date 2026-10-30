@@ -86,6 +86,7 @@ def execute_sequence(
     resume: bool = False,
     env: Optional[Dict[str, str]] = None,
     case_outputs: Optional[List[str]] = None,
+    measure_memory: bool = False,
 ) -> Dict[str, Any]:
     """Execute a sequence test case (fail-fast).
 
@@ -136,6 +137,10 @@ def execute_sequence(
     failed_step = None
     step_results: List[Dict[str, Any]] = []
     case_assertion_results: List[Dict[str, Any]] = []
+    # ── 峰值聚合：取实际执行步骤的最大值（步骤串行执行，内存不同时占用，
+    #    不做求和）；resume 跳过的步骤不补造数据。 ──
+    peak_bytes = None
+    peak_source = None
 
     prefix = f"{print_prefix} " if print_prefix else ""
 
@@ -265,7 +270,13 @@ def execute_sequence(
             expectation=step_expected,
             update_baseline=update_baseline,
             error_analysis=error_analysis,
+            measure_memory=measure_memory,
         )
+
+        if result.get("peak_memory_bytes") is not None:
+            if peak_bytes is None or result["peak_memory_bytes"] > peak_bytes:
+                peak_bytes = result["peak_memory_bytes"]
+            peak_source = result.get("peak_memory_source")
 
         if result["output"].strip():
             logger.debug("  %sCommand output for %s:", prefix, step_name)
@@ -458,4 +469,6 @@ def execute_sequence(
         "flaky": last_result.get("flaky", False) if last_result else False,
         "assertion_results": assertion_results,
         "next_action_hint": None,
+        **({"peak_memory_bytes": peak_bytes,
+            "peak_memory_source": peak_source} if peak_bytes is not None else {}),
     }

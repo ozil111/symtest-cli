@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from .result import ExecutionResult
+from . import windows_job
 
 logger = logging.getLogger("symtest.core.execution.executor")
 
@@ -129,6 +130,7 @@ def execute_command(
     env: Optional[Union[Mapping[str, str], dict]] = None,
     *,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
+    measure_memory: bool = False,
 ) -> ExecutionResult:
     """Execute a single command once (no retry, no validation).
 
@@ -141,6 +143,10 @@ def execute_command(
                 os.environ; case-level ``env`` in *spec* takes the highest
                 precedence).
     :param output_max_chars: Max characters for trimmed output fields.
+    :param measure_memory: 为 True 时（仅 Windows）通过 Job Object 测量
+                 进程组提交内存峰值，写入 ``peak_memory_bytes`` /
+                 ``peak_memory_source``；测量失败回退普通 subprocess 路径，
+                 不影响执行与判定语义。
     :returns: ExecutionResult —— 纯执行事实；Popen/communicate 异常记录在
               ``error`` 字段而非抛出，交由编排层分类。
     """
@@ -184,30 +190,60 @@ def execute_command(
     if spec_env:
         current_env.update(spec_env)
 
+    job = None
     try:
-        process = subprocess.Popen(
-            cmd_list,
-            cwd=workspace if workspace else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
-            start_new_session=True,
-            env=current_env,
-        )
+        process = None
+        if measure_memory and windows_job.is_supported():
+            # Job Object 路径：挂起创建 → 绑定 Job → 恢复，整组进程
+            # （含后代）被统计提交内存峰值。失败回退普通 Popen。
+            try:
+                process, job = windows_job.start_in_job(
+                    cmd_list,
+                    cwd=workspace if workspace else None,
+                    env=current_env,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Job Object measurement unavailable for '%s' "
+                    "(falling back to plain subprocess): %s", name, exc,
+                )
+                job = None
+                process = None
 
+        if process is None:
+            process = subprocess.Popen(
+                cmd_list,
+                cwd=workspace if workspace else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+                start_new_session=True,
+                env=current_env,
+            )
+
+        deadline = time.perf_counter() + timeout_limit
         try:
             stdout, stderr = process.communicate(timeout=timeout_limit)
+            if job is not None:
+                remaining_ms = max(0, int((deadline - time.perf_counter()) * 1000))
+                if not windows_job.wait_job_complete(job, remaining_ms):
+                    raise subprocess.TimeoutExpired(cmd_list, timeout_limit)
         except subprocess.TimeoutExpired:
             # Kill the entire process group to avoid orphan processes.
             # Never killpg() PID 0 or 1 — they belong to init/system.
-            try:
-                if os.name == 'posix' and process.pid and process.pid > 1:
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    process.kill()
-            except (ProcessLookupError, PermissionError, OSError):
-                pass  # process already exited or cannot be killed
+            # Job 路径：TerminateJobObject 终止整组（含后代求解器）；
+            # 普通路径：POSIX killpg，Windows 只能杀直接子进程。
+            if job is not None:
+                windows_job.terminate_job(job)
+            else:
+                try:
+                    if os.name == 'posix' and process.pid and process.pid > 1:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass  # process already exited or cannot be killed
             stdout, stderr = process.communicate()  # reap the process
             result.timed_out = True
             result.output = _trim_output((stdout or "") + (stderr or ""), output_max_chars)
@@ -220,9 +256,20 @@ def execute_command(
             result.stdout = _trim_output(stdout, output_max_chars)
             result.stderr = _trim_output(stderr, output_max_chars)
             result.return_code = process.returncode
+
+        # ── Job 峰值读取（执行事实；测量不可用保持 None） ──
+        if job is not None:
+            # The entire group shares the command deadline, including children
+            # that redirected their output and outlived the direct child.
+            peak = windows_job.query_peak_memory_bytes(job)
+            if peak is not None:
+                result.peak_memory_bytes = peak
+                result.peak_memory_source = windows_job.PEAK_SOURCE
     except Exception as exc:
         result.error = str(exc)
     finally:
+        if job is not None:
+            windows_job.close_job(job)
         result.duration = time.perf_counter() - start_time
 
     return result

@@ -49,12 +49,17 @@ def save_history(history_dir: str, history: dict) -> None:
 
 
 def update_case(history: dict, name: str, duration: float) -> None:
-    """Update a single case's record using cumulative average."""
+    """Update a single case's record using cumulative average.
+
+    兼容"只有内存记录、没有耗时字段"的记录（``update_case_memory`` 可
+    先于任何 passed 运行创建记录）：缺失的 ``avg_duration`` / ``run_count``
+    按 0 处理，不抛 KeyError。
+    """
     cases = history.setdefault("cases", {})
     if name in cases:
         rec = cases[name]
-        old_avg = rec["avg_duration"]
-        count = rec["run_count"]
+        old_avg = rec.get("avg_duration", 0)
+        count = rec.get("run_count", 0)
         rec["avg_duration"] = (old_avg * count + duration) / (count + 1)
         rec["last_duration"] = duration
         rec["run_count"] = count + 1
@@ -64,6 +69,38 @@ def update_case(history: dict, name: str, duration: float) -> None:
             "last_duration": duration,
             "run_count": 1,
         }
+
+
+def update_case_memory(
+    history: dict, name: str, peak_bytes, source: Optional[str] = None,
+) -> None:
+    """Record one process-group memory-peak measurement (bytes).
+
+    与耗时的累计平均语义相互独立：
+
+    - 内存记录采用 ``last_peak_memory_bytes``（最近值）+
+      ``max_peak_memory_bytes``（历史最大）+ ``peak_memory_count``
+      （样本数）+ ``peak_memory_source``（测量来源，如
+      ``windows_job_commit``）；调度估算使用历史最大值，偶发高峰
+      不被平均稀释；
+    - 记录条件与耗时不同：任何获得有效测量的运行都可记录（含
+      failed / timeout），这些数据同样保护下一次调度决策；
+    - 允许产生"只有内存字段、没有 avg_duration"的记录，耗时读取方
+      （``update_case`` / ``check_regression``）均已兼容。
+
+    ``peak_bytes`` 非正数或 ``None`` 视为无有效测量，直接忽略。
+    """
+    if not peak_bytes or peak_bytes <= 0:
+        return
+    cases = history.setdefault("cases", {})
+    rec = cases.setdefault(name, {})
+    rec["last_peak_memory_bytes"] = peak_bytes
+    prev_max = rec.get("max_peak_memory_bytes")
+    if prev_max is None or peak_bytes > prev_max:
+        rec["max_peak_memory_bytes"] = peak_bytes
+    rec["peak_memory_count"] = rec.get("peak_memory_count", 0) + 1
+    if source:
+        rec["peak_memory_source"] = source
 
 
 def reset_cases(history: dict, case_names: set) -> int:
@@ -84,7 +121,7 @@ def check_regression(
     cases = history.get("cases", {})
     if name not in cases:
         return None
-    avg = cases[name]["avg_duration"]
+    avg = cases[name].get("avg_duration", 0)
     if avg <= 0:
         return None
     if duration > avg * threshold:

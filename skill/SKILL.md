@@ -305,6 +305,18 @@ symtest run test_cases.json --parallel --workers 4
 symtest run test_cases.json --parallel --execution-mode process
 ```
 
+On Windows in thread mode, `--history-dir` or a declared `min_memory_mb`
+enables opportunistic memory admission: a task starts only when commit margin
+covers its own estimated demand plus a reserve, available physical memory stays
+above a low watermark, and the minimum startup interval since the last grant has
+elapsed. Active tasks keep no full peak reservations — memory in use shows up in
+the system headroom — so occasional overcommit is accepted (zero-OOM not
+guaranteed). Admission parameters are `symtest.json` `run` keys
+(`memory_margin`, `memory_commit_reserve_mb`, `memory_physical_watermark_mb`,
+`memory_default_demand_mb`, `memory_min_start_interval_s`). A launcher and all
+descendants in its Job share the command's
+`timeout`, including descendants that redirect output and outlive the launcher.
+
 ### Output
 ```bash
 # Machine-readable JSON

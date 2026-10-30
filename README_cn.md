@@ -173,9 +173,14 @@ symtest run test_cases.json --parallel --workers 4
 symtest run test_cases.json --parallel --execution-mode process
 ```
 
-线程模式目前支持 CPU 令牌分配、求解器线程环境变量注入，以及基于预估时间或历史
-耗时的 LPT 调度。进程模式提供执行隔离，但尚未接入资源调度器。真实内存约束、
-priority 语义和更完整的资源管理仍是后续演进方向。
+线程模式支持 CPU 令牌分配、求解器线程环境变量注入，以及基于预估时间或历史
+耗时的 LPT 调度。在 Windows 上，启用 `--history-dir` 或声明 `min_memory_mb`
+后还会进入机会式内存准入：经 Job Object 测量每个 case 进程组的提交内存峰值并
+记入 history，启动前原子检查 CPU 令牌、提交余量（覆盖该 case 自身估算需求与
+保留量）、物理内存低水位和最小启动间隔，内存不足时排队而非并发启动。运行中
+任务不做完整峰值预留，接受偶发超限（不保证零 OOM）。
+进程模式提供执行隔离，但尚未接入资源调度器。Linux 内存调度、priority 语义
+和更完整的资源管理仍是后续演进方向。
 
 ## CI 与报告
 
