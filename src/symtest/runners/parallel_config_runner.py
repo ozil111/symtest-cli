@@ -30,7 +30,7 @@ _DEFAULT_COMMIT_RESERVE_MB = 2048
 _DEFAULT_PHYSICAL_WATERMARK_MB = 2048
 # 需求未知（无显式声明、无历史）case 的默认估算需求
 _DEFAULT_MEMORY_DEMAND_MB = 4096
-# 最小启动间隔：错开启动，防止多个任务同时看到充足余量而扎堆启动
+# 最小启动间隔：仅在活动任务峰值可能拥挤时错开启动
 _DEFAULT_MIN_START_INTERVAL_S = 1.0
 
 
@@ -312,7 +312,7 @@ class ParallelConfigRunner(ParallelRunner):
         - 每个命令经 Job Object 测量进程组提交内存峰值（执行层）；
         - thread 模式经 :class:`JointResourceManager` 做 CPU+内存联合
           准入：提交余量 ≥ 新任务估算需求 + 保留量，物理内存独立
-          低水位检查，授予间保持最小启动间隔；不再为运行中任务保留
+          低水位检查，仅在活动峰值可能拥挤时保持最小启动间隔；不再为运行中任务保留
           完整未来峰值，允许偶发超出内存（不保证零 OOM）；
         - 参数（安全系数 / 提交保留 / 物理水位 / 默认需求 / 启动
           间隔）由 ``symtest.json`` run 段配置键覆盖，默认值见模块

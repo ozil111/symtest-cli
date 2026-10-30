@@ -250,7 +250,10 @@ class TestOpportunisticAdmission:
 class TestMinStartInterval:
     def test_second_grant_waits_for_interval(self):
         """授予间保持最小启动间隔（错开启动）。"""
-        mgr, _ = make_manager(min_start_interval=0.5)
+        mgr, _ = make_manager(
+            min_start_interval=0.5,
+            snapshot=FakeSnapshotSource(avail_physical=64 * GB,
+                                        avail_commit=3 * GB, commit_limit=64 * GB))
         t1 = mgr.acquire(cpu=1, memory_bytes=1 * GB)
         got = threading.Event()
         holder = {}
@@ -269,6 +272,40 @@ class TestMinStartInterval:
         )
         mgr.release(t1)
         mgr.release(holder["t"])
+
+    def test_abundant_headroom_does_not_wait(self):
+        # A frozen clock and long interval make accidental unconditional spacing
+        # fail deterministically rather than relying on a wall-clock benchmark.
+        mgr, _ = make_manager(min_start_interval=60)
+        mgr._time_fn = lambda: 0.0
+        from symtest.core.resource_manager import _Waiter
+        tickets = []
+        for _ in range(4):
+            waiter = _Waiter(1, GB, False, False, "small")
+            with mgr._lock:
+                ticket = mgr._try_grant_locked(waiter)
+            assert ticket is not None
+            tickets.append(ticket)
+        for ticket in tickets:
+            mgr.release(ticket)
+
+    def test_release_removes_crowding_without_waiting_full_interval(self):
+        from symtest.core.resource_manager import _Waiter
+        source = FakeSnapshotSource(avail_physical=64 * GB,
+                                    avail_commit=3 * GB, commit_limit=64 * GB)
+        mgr, _ = make_manager(snapshot=source, min_start_interval=60)
+        mgr._time_fn = lambda: 0.0
+        held = mgr.acquire(1, GB)
+        waiter = _Waiter(1, GB, False, False, "next")
+        with mgr._lock:
+            assert mgr._try_grant_locked(waiter) is None
+            assert waiter.interval_deadline == 60
+        mgr.release(held)
+        with mgr._lock:
+            ticket = mgr._try_grant_locked(waiter)
+        assert ticket is not None
+        assert waiter.interval_deadline is None
+        mgr.release(ticket)
 
     def test_zero_interval_disables_spacing(self):
         mgr, _ = make_manager(min_start_interval=0.0)

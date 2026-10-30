@@ -1672,9 +1672,8 @@ the group and reports a timeout, without a fixed descendant cleanup grace period
 re-evaluated periodically):
 
 1. CPU tokens suffice;
-2. at least the minimum startup interval (default 1s) has elapsed since the last
-   start — staggered launches prevent several tasks from all seeing the same
-   ample headroom and starting simultaneously;
+2. only under potential peak crowding, the minimum startup interval (default 1s)
+   has elapsed since the last grant (see below);
 3. commit margin ≥ the new task's estimated demand + commit reserve
    (default 2048 MB);
 4. available physical memory ≥ the physical watermark (default 2048 MB; an
@@ -1705,7 +1704,9 @@ first version):
 | `memory_commit_reserve_mb` | int | 2048 | Commit reserve (MB) the margin must additionally cover |
 | `memory_physical_watermark_mb` | int | 2048 | Physical memory low-water mark (MB); below it new admissions pause |
 | `memory_default_demand_mb` | int | 4096 | Default demand estimate (MB) for cases with no history |
-| `memory_min_start_interval_s` | float | 1.0 | Minimum interval (seconds) between consecutive task starts; 0 disables |
+| `memory_min_start_interval_s` | float | 1.0 | Minimum startup interval (seconds) under potential peak crowding; 0 disables |
+
+The startup interval applies only while tasks are active and their summed estimated peaks plus the new demand and commit reserve exceed current commit headroom. Ample headroom or an empty active set permits immediate admission. This conservative signal may double-count allocated memory; it triggers spacing, never a hard reservation. With active tasks and unknown demand or headroom, spacing is retained conservatively.
 
 **Limitations and notes**:
 - Memory shortage waits indefinitely (this is the mechanism that prevents OOM

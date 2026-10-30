@@ -32,3 +32,8 @@ or above total RAM. Small-machine cases also verify that lowering the watermark
 or setting it to zero permits execution. They use injected snapshots rather
 than exhausting host memory.
 
+
+Conditional startup spacing tests cover immediate admission with ample commit
+headroom, staggered grants when overlapping peaks may crowd, removal of spacing
+after active tasks finish, and a batch of twelve short commands without per-case
+one-second delays.
