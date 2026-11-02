@@ -463,6 +463,10 @@ class TestWindowsMemoryManagement:
         from symtest.core.resource_manager import JointResourceManager
         from symtest.core.system_memory import MemorySnapshot
 
+        # GitHub Windows runner 只有 4 vCPU（safe_capacity = 4-2 = 2），
+        # CPU 令牌不足以支撑 3 并发；固定核数使断言与宿主机无关。
+        monkeypatch.setattr(os, "cpu_count", lambda: 8)
+
         fake = MemorySnapshot(
             total_physical_bytes=1000 * GB,
             avail_physical_bytes=1000 * GB,
@@ -498,9 +502,11 @@ class TestWindowsMemoryManagement:
         try:
             config_file = os.path.join(temp_dir, "abundant_config.json")
             _write_config(config_file, [
-                _sleep_case("a0", seconds=2, mem_mb=40 * 1024),
-                _sleep_case("a1", seconds=2, mem_mb=40 * 1024),
-                _sleep_case("a2", seconds=2, mem_mb=40 * 1024),
+                # sleep 3s：第三个任务因 1s 启动间隔最早 ~2s 准入，需要
+                # 第一个任务（~3s 结束）仍存活才能观察到 3 并发。
+                _sleep_case("a0", seconds=3, mem_mb=40 * 1024),
+                _sleep_case("a1", seconds=3, mem_mb=40 * 1024),
+                _sleep_case("a2", seconds=3, mem_mb=40 * 1024),
             ])
             runner = ParallelJSONRunner(
                 config_file, temp_dir, max_workers=3, execution_mode="thread",
