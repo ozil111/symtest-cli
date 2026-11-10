@@ -26,5 +26,5 @@ class ExecutionResult:
     timeout_limit: Optional[float] = None  # 生效的超时上限（执行事实）
     error: Optional[str] = None  # 执行层异常（如命令不存在）
     # ── 进程组内存峰值（执行事实，可选） ──
-    peak_memory_bytes: Optional[int] = None  # 提交内存口径峰值；None=未测量
-    peak_memory_source: Optional[str] = None  # 如 "windows_job_commit"
+    peak_memory_bytes: Optional[int] = None  # 平台后端口径峰值；None=未测量
+    peak_memory_source: Optional[str] = None  # "windows_job_commit" / "linux_cgroup_v2"

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from .result import ExecutionResult
-from . import windows_job
+from . import process_group
 
 logger = logging.getLogger("symtest.core.execution.executor")
 
@@ -143,10 +143,10 @@ def execute_command(
                 os.environ; case-level ``env`` in *spec* takes the highest
                 precedence).
     :param output_max_chars: Max characters for trimmed output fields.
-    :param measure_memory: 为 True 时（仅 Windows）通过 Job Object 测量
-                 进程组提交内存峰值，写入 ``peak_memory_bytes`` /
-                 ``peak_memory_source``；测量失败回退普通 subprocess 路径，
-                 不影响执行与判定语义。
+    :param measure_memory: 为 True 时经平台进程组后端（Windows Job
+                 Object / Linux cgroup v2）测量进程组内存峰值，写入
+                 ``peak_memory_bytes`` / ``peak_memory_source``；测量失败
+                 回退普通 subprocess 路径，不影响执行与判定语义。
     :returns: ExecutionResult —— 纯执行事实；Popen/communicate 异常记录在
               ``error`` 字段而非抛出，交由编排层分类。
     """
@@ -193,18 +193,19 @@ def execute_command(
     job = None
     try:
         process = None
-        if measure_memory and windows_job.is_supported():
-            # Job Object 路径：挂起创建 → 绑定 Job → 恢复，整组进程
-            # （含后代）被统计提交内存峰值。失败回退普通 Popen。
+        if measure_memory and process_group.is_supported():
+            # 进程组路径：Windows 挂起创建→绑定 Job→恢复；Linux shell
+            # 先迁移进 cgroup 再 exec。整组进程（含后代）被统计内存峰值。
+            # 失败回退普通 Popen。
             try:
-                process, job = windows_job.start_in_job(
+                process, job = process_group.start_group(
                     cmd_list,
                     cwd=workspace if workspace else None,
                     env=current_env,
                 )
             except Exception as exc:
                 logger.warning(
-                    "Job Object measurement unavailable for '%s' "
+                    "Process group measurement unavailable for '%s' "
                     "(falling back to plain subprocess): %s", name, exc,
                 )
                 job = None
@@ -227,15 +228,15 @@ def execute_command(
             stdout, stderr = process.communicate(timeout=timeout_limit)
             if job is not None:
                 remaining_ms = max(0, int((deadline - time.perf_counter()) * 1000))
-                if not windows_job.wait_job_complete(job, remaining_ms):
+                if not process_group.wait_group(job, remaining_ms):
                     raise subprocess.TimeoutExpired(cmd_list, timeout_limit)
         except subprocess.TimeoutExpired:
             # Kill the entire process group to avoid orphan processes.
             # Never killpg() PID 0 or 1 — they belong to init/system.
-            # Job 路径：TerminateJobObject 终止整组（含后代求解器）；
+            # 进程组路径：terminate 终止整组（含后代求解器）；
             # 普通路径：POSIX killpg，Windows 只能杀直接子进程。
             if job is not None:
-                windows_job.terminate_job(job)
+                process_group.terminate_group(job)
             else:
                 try:
                     if os.name == 'posix' and process.pid and process.pid > 1:
@@ -257,19 +258,19 @@ def execute_command(
             result.stderr = _trim_output(stderr, output_max_chars)
             result.return_code = process.returncode
 
-        # ── Job 峰值读取（执行事实；测量不可用保持 None） ──
+        # ── 组峰值读取（执行事实；测量不可用保持 None） ──
         if job is not None:
             # The entire group shares the command deadline, including children
             # that redirected their output and outlived the direct child.
-            peak = windows_job.query_peak_memory_bytes(job)
+            peak = process_group.query_peak_bytes(job)
             if peak is not None:
                 result.peak_memory_bytes = peak
-                result.peak_memory_source = windows_job.PEAK_SOURCE
+                result.peak_memory_source = process_group.peak_source()
     except Exception as exc:
         result.error = str(exc)
     finally:
         if job is not None:
-            windows_job.close_job(job)
+            process_group.close_group(job)
         result.duration = time.perf_counter() - start_time
 
     return result
