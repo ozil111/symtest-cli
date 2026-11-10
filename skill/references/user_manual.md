@@ -1667,6 +1667,11 @@ step sequences take the maximum across actually-executed steps.
 After the launcher exits, execution waits for all descendants in the Job to finish.
 The whole group shares the command's `timeout`; reaching that deadline terminates
 the group and reports a timeout, without a fixed descendant cleanup grace period.
+If pipe reading and the direct-process wait have completed but the Job drain query
+fails, a warning is logged and the command's output and return code are preserved,
+without reporting a timeout or rerunning the command; the peak is marked unknown.
+Descendant completion cannot be confirmed in this case; closing the Job still
+cleans up remaining processes.
 
 **Admission criteria** (all must hold to start; otherwise the task queues and is
 re-evaluated periodically):
