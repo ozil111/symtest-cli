@@ -4,8 +4,10 @@
 Real-subprocess tests (Windows only): grandchild peak capture, group kill on
 timeout, drain wait, and graceful fallback when the job backend fails.
 """
+import ctypes
 import sys
 import time
+from ctypes import wintypes
 from unittest.mock import Mock, patch
 
 import pytest
@@ -156,6 +158,36 @@ class TestDrainAndHandles:
 
 
 class TestFallback:
+    @pytest.mark.parametrize("return_code", [0, 3])
+    def test_completion_query_failure_preserves_command_result(self, return_code, caplog):
+        process = Mock(returncode=return_code)
+        process.communicate.return_value = ("out", "err")
+        peak = Mock(return_value=100)
+        terminate = Mock()
+        close = Mock()
+        with patch.multiple(
+            windows_job,
+            start_in_job=Mock(return_value=(process, 123)),
+            wait_job_complete=Mock(side_effect=windows_job.JobError("query failed")),
+            query_peak_memory_bytes=peak,
+            terminate_job=terminate,
+            close_job=close,
+        ), patch("symtest.core.execution.executor.subprocess.Popen") as popen:
+            result = execute_command(_py("pass"), measure_memory=True)
+        assert result.return_code == return_code
+        assert result.stdout == "out"
+        assert result.stderr == "err"
+        assert not result.timed_out
+        assert result.error is None
+        assert result.peak_memory_bytes is None
+        assert result.peak_memory_source is None
+        assert "query failed" in caplog.text
+        process.communicate.assert_called_once()
+        popen.assert_not_called()
+        terminate.assert_not_called()
+        peak.assert_not_called()
+        close.assert_called_once_with(123)
+
     def test_job_backend_failure_falls_back_to_plain_subprocess(self):
         """Job 后端失败 → 回退普通 Popen，执行不受影响、峰值未知。"""
         spec = _py("print('fallback')")
@@ -169,3 +201,58 @@ class TestFallback:
         assert "fallback" in result.output
         assert result.peak_memory_bytes is None
         assert result.error is None
+
+
+class TestCompletionQuery:
+    @pytest.mark.parametrize("error", [122, 234, None])
+    def test_resizes_incomplete_process_list(self, error):
+        sizes = []
+        assigned = 20000
+
+        def query(job, info_class, buf, size, returned):
+            sizes.append(size)
+            counts = ctypes.cast(buf, ctypes.POINTER(wintypes.DWORD))
+            if len(sizes) == 1:
+                counts[0], counts[1] = assigned, 1
+                return error is None  # also handle success with a partial list
+            assert size >= 2 * ctypes.sizeof(wintypes.DWORD) + assigned * ctypes.sizeof(ctypes.c_size_t)
+            counts[0], counts[1] = 0, 0
+            return True
+
+        kernel = Mock(QueryInformationJobObject=Mock(side_effect=query))
+        with patch.object(windows_job, "_kernel32", return_value=kernel), patch(
+            "ctypes.get_last_error", return_value=error,
+        ):
+            assert windows_job.wait_job_complete(123, 0) is True
+        assert len(sizes) == 2
+        assert sizes[1] > sizes[0]
+
+    def test_query_error_is_not_timeout(self):
+        kernel = Mock(QueryInformationJobObject=Mock(return_value=False))
+        with patch.object(windows_job, "_kernel32", return_value=kernel), patch(
+            "ctypes.get_last_error", return_value=5,
+        ), pytest.raises(windows_job.JobError, match="failed: 5"):
+            windows_job.wait_job_complete(123, 0)
+
+    def test_unexpected_query_exception_is_not_timeout(self):
+        with patch.object(windows_job, "_kernel32", side_effect=OSError("unavailable")):
+            with pytest.raises(windows_job.JobError, match="unavailable"):
+                windows_job.wait_job_complete(123, 0)
+
+    def test_repeated_buffer_failure_is_bounded(self):
+        kernel = Mock(QueryInformationJobObject=Mock(return_value=False))
+        with patch.object(windows_job, "_kernel32", return_value=kernel), patch(
+            "ctypes.get_last_error", return_value=234,
+        ), pytest.raises(windows_job.JobError, match="resize retries exhausted"):
+            windows_job.wait_job_complete(123, 0)
+        assert kernel.QueryInformationJobObject.call_count == 9
+
+    def test_active_group_at_deadline_is_timeout(self):
+        def query(job, info_class, buf, size, returned):
+            counts = ctypes.cast(buf, ctypes.POINTER(wintypes.DWORD))
+            counts[0], counts[1] = 1, 1
+            return True
+
+        kernel = Mock(QueryInformationJobObject=Mock(side_effect=query))
+        with patch.object(windows_job, "_kernel32", return_value=kernel):
+            assert windows_job.wait_job_complete(123, 0) is False

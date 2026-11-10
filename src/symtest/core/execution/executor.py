@@ -145,8 +145,8 @@ def execute_command(
     :param output_max_chars: Max characters for trimmed output fields.
     :param measure_memory: 为 True 时（仅 Windows）通过 Job Object 测量
                  进程组提交内存峰值，写入 ``peak_memory_bytes`` /
-                 ``peak_memory_source``；测量失败回退普通 subprocess 路径，
-                 不影响执行与判定语义。
+                 ``peak_memory_source``；Job 启动失败回退普通 subprocess，
+                 排空查询失败保留已取得的命令结果、峰值未知，不重新执行。
     :returns: ExecutionResult —— 纯执行事实；Popen/communicate 异常记录在
               ``error`` 字段而非抛出，交由编排层分类。
     """
@@ -191,6 +191,7 @@ def execute_command(
         current_env.update(spec_env)
 
     job = None
+    job_query_failed = False
     try:
         process = None
         if measure_memory and windows_job.is_supported():
@@ -227,7 +228,18 @@ def execute_command(
             stdout, stderr = process.communicate(timeout=timeout_limit)
             if job is not None:
                 remaining_ms = max(0, int((deadline - time.perf_counter()) * 1000))
-                if not windows_job.wait_job_complete(job, remaining_ms):
+                try:
+                    completed = windows_job.wait_job_complete(job, remaining_ms)
+                except windows_job.JobError as exc:
+                    # communicate already completed: keep its output/return code
+                    # rather than retrying the command or inventing a timeout.
+                    logger.warning(
+                        "Job completion query unavailable for '%s' "
+                        "(preserving command result; peak unknown): %s", name, exc,
+                    )
+                    job_query_failed = True
+                    completed = True
+                if not completed:
                     raise subprocess.TimeoutExpired(cmd_list, timeout_limit)
         except subprocess.TimeoutExpired:
             # Kill the entire process group to avoid orphan processes.
@@ -258,7 +270,7 @@ def execute_command(
             result.return_code = process.returncode
 
         # ── Job 峰值读取（执行事实；测量不可用保持 None） ──
-        if job is not None:
+        if job is not None and not job_query_failed:
             # The entire group shares the command deadline, including children
             # that redirected their output and outlived the direct child.
             peak = windows_job.query_peak_memory_bytes(job)

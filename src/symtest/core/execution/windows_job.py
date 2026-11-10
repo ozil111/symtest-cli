@@ -13,8 +13,8 @@
 - 超时经 ``TerminateJobObject`` 终止整组进程，消除只杀直接子进程的遗留；
 - Job 设置了 ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``：SymTest 自身异常
   退出时组内进程随句柄关闭被清理，防止孤儿求解器；
-- 任何 API 失败以 :class:`JobError` 抛出，调用方回退普通 subprocess 路径，
-  测量不可用不影响执行与判定语义。
+- 启动 API 失败以 :class:`JobError` 抛出，调用方回退普通 subprocess；
+  排空查询失败同样抛出 JobError，调用方保留已执行命令的结果，不重新执行。
 """
 import ctypes
 import logging
@@ -39,7 +39,7 @@ _INFINITE_MS = 0xFFFFFFFF
 
 
 class JobError(Exception):
-    """Job Object 操作失败（调用方应回退普通 subprocess 路径）。"""
+    """Job Object 操作失败（与命令超时分开处理）。"""
 
 
 # ---------------------------------------------------------------------------
@@ -207,27 +207,29 @@ def wait_job_complete(job: int, timeout_ms: int) -> bool:
     归零判断。已终止的进程立即移出 Job 成员列表，与句柄是否关闭无关。
 
     :returns: True 已排空；False 超时（后代进程仍在运行）。
+    :raises JobError: 无法查询排空状态，包括缓冲区扩容重试耗尽。
     """
     import time as _time
 
     class _JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
         _fields_ = [
             ("NumberOfAssignedProcesses", wintypes.DWORD),
-            ("NumberOfProcessIdsInJob", wintypes.DWORD),
-            ("ProcessIdList", wintypes.DWORD * 1),  # 变长，实际按缓冲区大小
+            ("NumberOfProcessIdsInList", wintypes.DWORD),
+            ("ProcessIdList", ctypes.c_size_t * 1),  # ULONG_PTR，变长数组
         ]
 
     _JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
     _POLL_INTERVAL_S = 0.1
-    # 64 KiB 缓冲区可容纳约 1.6 万个 PID，覆盖大规模 MPI 场景
+    # 初始缓冲区 64 KiB；不足时按 API 返回的进程数扩容。
     buf_size = 65536
-    buf = ctypes.create_string_buffer(buf_size)
-    header = ctypes.cast(
-        buf, ctypes.POINTER(_JOBOBJECT_BASIC_PROCESS_ID_LIST)).contents
     deadline = _time.monotonic() + timeout_ms / 1000.0
 
     try:
         kernel32 = _kernel32()
+        buf = ctypes.create_string_buffer(buf_size)
+        header = ctypes.cast(
+            buf, ctypes.POINTER(_JOBOBJECT_BASIC_PROCESS_ID_LIST)).contents
+        resize_attempts = 0
         while True:
             ok = kernel32.QueryInformationJobObject(
                 job,
@@ -236,20 +238,37 @@ def wait_job_complete(job: int, timeout_ms: int) -> bool:
                 buf_size,
                 None,
             )
-            if not ok:
-                logger.warning(
-                    "QueryInformationJobObject(process id list) failed: %s",
-                    ctypes.get_last_error(),
+            error = ctypes.get_last_error() if not ok else 0
+            if not ok and error not in (122, 234):  # INSUFFICIENT_BUFFER / MORE_DATA
+                raise JobError(
+                    f"QueryInformationJobObject(process id list) failed: {error}"
                 )
-                return False
+            if not ok or header.NumberOfProcessIdsInList < header.NumberOfAssignedProcesses:
+                # The group can grow between queries. Bound retries without
+                # confusing an unavailable observation with an expired deadline.
+                if resize_attempts >= 8:
+                    raise JobError("process id list buffer resize retries exhausted")
+                resize_attempts += 1
+                buf_size = max(
+                    buf_size * 2,
+                    _JOBOBJECT_BASIC_PROCESS_ID_LIST.ProcessIdList.offset
+                    + header.NumberOfAssignedProcesses * ctypes.sizeof(ctypes.c_size_t),
+                )
+                buf = ctypes.create_string_buffer(buf_size)
+                header = ctypes.cast(
+                    buf, ctypes.POINTER(_JOBOBJECT_BASIC_PROCESS_ID_LIST)).contents
+                continue
+            resize_attempts = 0
             if header.NumberOfAssignedProcesses == 0:
                 return True
-            if _time.monotonic() >= deadline:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
                 return False
-            _time.sleep(_POLL_INTERVAL_S)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("wait_job_complete raised: %s", exc)
-        return False
+            _time.sleep(min(_POLL_INTERVAL_S, remaining))
+    except JobError:
+        raise
+    except Exception as exc:
+        raise JobError(f"wait_job_complete failed: {exc}") from exc
 
 
 def query_peak_memory_bytes(job: int) -> Optional[int]:
