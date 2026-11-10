@@ -90,7 +90,7 @@ class ParallelConfigRunner(ParallelRunner):
             if execution_mode == "thread" else None
         )
 
-        # Windows 内存管理（测量 + CPU/内存联合准入）；
+        # 内存管理（测量 + CPU/内存联合准入，Windows/Linux）；
         # 在 load_test_cases 解析出用例后按条件启用，见
         # ``_setup_memory_management``。未启用时保持原 CPU-only 路径。
         self._memory_enabled = False
@@ -290,44 +290,48 @@ class ParallelConfigRunner(ParallelRunner):
 
             self._assign_relative_cpu_cores()
 
-            # Windows 内存管理（测量 + 联合准入）：在用例解析与 history
+            # 内存管理（测量 + 联合准入）：在用例解析与 history
             # 读取完成后决定是否启用。
             self._setup_memory_management(history_cases)
         except Exception as e:
             sys.exit(f"Failed to load configuration file: {str(e)}")
 
     # ------------------------------------------------------------------
-    #  Windows memory management (measurement + joint admission)
+    #  Memory management (measurement + joint admission, Windows/Linux)
     # ------------------------------------------------------------------
 
     def _setup_memory_management(self, history_cases: Dict[str, Any]) -> None:
-        """按条件启用 Windows 内存管理（测量 + 机会式准入）。
+        """按条件启用内存管理（测量 + 机会式准入，Windows / Linux）。
 
         启用条件（全部满足）：
 
-        - Windows 平台（本轮不实现 Linux cgroup）；
         - thread 模式（process 模式不接入资源调度，行为不变）；
         - 启用了 ``--history-dir`` 或有 case 显式声明 ``min_memory_mb``——
-          两者都没有时不进入新的内存管理路径，行为与旧版本完全一致。
+          两者都没有时不进入新的内存管理路径，行为与旧版本完全一致；
+        - 系统内存快照可读（Linux 读 /proc/meminfo 与 cgroup 限额，
+          Windows 读 GlobalMemoryStatusEx/GetPerformanceInfo）。
 
         启用后（机会式准入，2026-10-29 方案）：
 
-        - 每个命令经 Job Object 测量进程组提交内存峰值（执行层）；
+        - 每个命令经平台进程组后端测量整组内存峰值（执行层）：
+          Windows Job Object（提交口径）或 Linux cgroup v2 的
+          ``memory.peak``（cgroup 记账口径，需委派权限，无权限时
+          自动降级为不测量，准入仍可用手动/默认需求）；
         - thread 模式经 :class:`JointResourceManager` 做 CPU+内存联合
-          准入：提交余量 ≥ 新任务估算需求 + 保留量，物理内存独立
-          低水位检查，仅在活动峰值可能拥挤时保持最小启动间隔；不再为运行中任务保留
-          完整未来峰值，允许偶发超出内存（不保证零 OOM）；
-        - 参数（安全系数 / 提交保留 / 物理水位 / 默认需求 / 启动
-          间隔）由 ``symtest.json`` run 段配置键覆盖，默认值见模块
-          常量。
+          准入：有效余量 ≥ 新任务估算需求 + 保留量，物理低水位独立
+          检查，仅在活动峰值可能拥挤时保持最小启动间隔；不再为运行中
+          任务保留完整未来峰值，允许偶发超出内存（不保证零 OOM）；
+        - 参数（安全系数 / 保留量 / 物理水位 / 默认需求 / 启动间隔）
+          由 ``symtest.json`` run 段配置键覆盖，默认值见模块常量；
+        - 历史峰值按来源隔离：Linux 读 ``max_peak_memory_bytes_linux``，
+          Windows 读 ``max_peak_memory_bytes``，不跨平台混用。
         """
         declared_any = any(
             c.resources and "min_memory_mb" in c.resources
             for c in self.test_cases
         )
         self._memory_enabled = (
-            os.name == "nt"
-            and self.execution_mode == "thread"
+            self.execution_mode == "thread"
             and (self.history_dir is not None or declared_any)
         )
         if not self._memory_enabled:
@@ -341,6 +345,22 @@ class ParallelConfigRunner(ParallelRunner):
             )
             self._memory_enabled = False
             return
+
+        # Linux：报告整组峰值测量能力（无法创建 cgroup 时准入仍启用，
+        # 只是无法学习每 case 的真实峰值）。
+        if os.name != "nt":
+            from ..core.execution import process_group
+            if process_group.is_supported():
+                logger.info(
+                    "✅ [Resource Manager] cgroup v2 whole-group peak "
+                    "measurement enabled (per-command cgroups).",
+                )
+            else:
+                logger.warning(
+                    "✅ [Resource Manager] cgroup v2 unavailable — cannot "
+                    "learn per-case whole-group memory peaks; admission "
+                    "falls back to manual/default demand estimates.",
+                )
 
         self._memory_history = history_cases or {}
         self._resource_manager = JointResourceManager(
@@ -367,13 +387,16 @@ class ParallelConfigRunner(ParallelRunner):
         )
 
     def _estimate_memory_bytes(self, case: TestCase) -> Optional[int]:
-        """估算 case 的内存需求（字节，历史提交峰值口径）。
+        """估算 case 的内存需求（字节）。
 
         优先级：
 
         1. 显式 ``min_memory_mb``：直接作为需求（用户判断优先）；
         2. history 历史最大峰值 × 安全系数（峰值口径天然只增，
-           用最大值避免偶发高峰被平均稀释后再次 OOM）；
+           用最大值避免偶发高峰被平均稀释后再次 OOM）。**按来源
+           隔离读取**：Windows 读提交峰值（``max_peak_memory_bytes``），
+           Linux 读 cgroup 峰值（``max_peak_memory_bytes_linux``），
+           两套口径数值不可比，不跨平台混用；
         3. 两者皆无 → 可配置默认需求（不再整池独占；首次估算
            不准的风险明确接受，运行后更新历史）。
         """
@@ -382,7 +405,10 @@ class ParallelConfigRunner(ParallelRunner):
         if declared:
             return int(float(declared) * 1024 * 1024)
         record = (self._memory_history or {}).get(case.name) or {}
-        max_peak = record.get("max_peak_memory_bytes")
+        if os.name == "nt":
+            max_peak = record.get("max_peak_memory_bytes")
+        else:
+            max_peak = record.get("max_peak_memory_bytes_linux")
         if max_peak:
             return int(max_peak * self._memory_margin)
         return self._memory_default_demand_mb * 1024 * 1024
@@ -508,8 +534,9 @@ class ParallelConfigRunner(ParallelRunner):
         tokens_acquired = 0
         task_env = None
 
-        # Direct callers still acquire synchronously; batch dispatch already
-        # acquired a ticket before submitting the case to a worker.
+        # 2. 联合资源池（内存管理启用时）：CPU + 内存准入，估算来源见
+        #    _estimate_memory_bytes；直接调用方仍在此同步获取，批量派发
+        #    已在提交 worker 前取得 ticket。
         if self._memory_enabled and self._resource_manager is not None:
             memory_bytes = self._estimate_memory_bytes(case)
             ticket = self._resource_manager.acquire(

@@ -95,7 +95,7 @@ class _THREADENTRY32(ctypes.Structure):
 
 
 def is_supported() -> bool:
-    """仅 Windows 平台可用（本轮不实现 Linux cgroup）。"""
+    """仅 Windows 平台可用（Linux 由 linux_cgroup 模块实现）。"""
     import os
     return os.name == "nt"
 
