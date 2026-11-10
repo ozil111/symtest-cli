@@ -1,9 +1,10 @@
 from abc import ABC
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, Future
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Union, Set
 from collections import deque
 import time
 import threading
+import traceback
 import logging
 from .base_runner import BaseRunner
 from .test_case import TestCase
@@ -185,8 +186,33 @@ class ParallelRunner(BaseRunner):
             )
         return ThreadPoolExecutor(max_workers=self.max_workers)
 
+    def _completed_cases(self, executor, ready):
+        """Yield completed futures, allowing callers to add newly ready cases."""
+        active = {}
+        while ready or active:
+            for index, case in ready.items():
+                if self.execution_mode == "process":
+                    future = executor.submit(
+                        run_test_in_process,
+                        index,
+                        case.to_dict(),
+                        str(self.workspace) if self.workspace else None,
+                        update_baseline=self.update_baseline,
+                        error_analysis=self.error_analysis,
+                        resume=self.resume,
+                    )
+                else:
+                    future = executor.submit(self._run_test_with_index, index, case)
+                active[future] = (index, case)
+            ready.clear()
+            for future in as_completed(active):
+                index, case = active.pop(future)
+                yield future, index, case
+                if ready:
+                    break
+
     def _run_tests_flat(self) -> bool:
-        """Original flat submission (no depends_on), kept for backward compat."""
+        """Run cases without dependencies."""
         logger.info("Starting parallel test execution... Total tests: %d", self.results["total"])
         logger.info("Execution mode: %s, Max workers: %s", self.execution_mode, self.max_workers or "auto")
         logger.info("=" * 50)
@@ -194,40 +220,22 @@ class ParallelRunner(BaseRunner):
         start_time = time.time()
 
         with self._make_executor() as executor:
-            # 提交所有测试任务
-            if self.execution_mode == "process":
-                # 进程模式：使用独立的工作器函数（v2 wire dict，含 env）
-                future_to_case = {
-                    executor.submit(
-                        run_test_in_process,
-                        i,
-                        case.to_dict(),
-                        str(self.workspace) if self.workspace else None,
-                        update_baseline=self.update_baseline,
-                        error_analysis=self.error_analysis,
-                        resume=self.resume,
-                    ): (i, case)
-                    for i, case in enumerate(self.test_cases, 1)
-                }
-            else:
-                # 线程模式：使用实例方法
-                future_to_case = {
-                    executor.submit(self._run_test_with_index, i, case): (i, case) 
-                    for i, case in enumerate(self.test_cases, 1)
-                }
-            
-            # 收集结果
-            for future in as_completed(future_to_case):
-                test_index, case = future_to_case[future]
+            ready = dict(enumerate(self.test_cases, 1))
+            for future, test_index, case in self._completed_cases(executor, ready):
                 try:
                     result = future.result()
                     self._update_results(result, test_index, case)
                 except Exception as exc:
+                    tb = traceback.format_exc()
+                    logger.error(
+                        "Test execution raised unexpected exception (%s):\n%s",
+                        case.name, tb,
+                    )
                     error_result = {
                         "name": case.name,
                         "status": "failed",
-                        "message": f"Test execution failed: {str(exc)}",
-                        "output": "",
+                        "message": f"Test execution failed: {exc!r}",
+                        "output": tb,
                         "command": "",
                         "return_code": None
                     }
@@ -278,26 +286,7 @@ class ParallelRunner(BaseRunner):
         processed: Set[str] = set()
         dep_results: Dict[str, bool] = {}  # True = dep satisfied
 
-        # Active futures
-        active_futures: Dict[Future, TestCase] = {}
-        total = len(cases)
-
-        def _submit(case: TestCase) -> None:
-            idx = name_to_index.get(case.name, 0)
-            if self.execution_mode == "process":
-                # v2 wire dict（case.to_dict()），process_worker 负责重建对象
-                future = executor.submit(
-                    run_test_in_process,
-                    idx,
-                    case.to_dict(),
-                    str(self.workspace) if self.workspace else None,
-                    update_baseline=self.update_baseline,
-                    error_analysis=self.error_analysis,
-                    resume=self.resume,
-                )
-            else:
-                future = executor.submit(self._run_test_with_index, idx, case)
-            active_futures[future] = case
+        ready = {name_to_index[c.name]: c for c in cases if in_degree[c.name] == 0}
 
         def _on_case_completed(case: TestCase, result: Dict[str, Any]) -> None:
             """Process one completed case: record result, notify dependents, cascade skips."""
@@ -330,7 +319,7 @@ class ParallelRunner(BaseRunner):
                         if d in name_to_case
                     )
                     if all_satisfied:
-                        _submit(dep_case)
+                        ready[name_to_index[dep_name]] = dep_case
 
         def _cascade_skip(case_name: str, failed_by: str) -> None:
             """BFS cascade: mark case_name and all transitive dependents as skipped."""
@@ -374,30 +363,24 @@ class ParallelRunner(BaseRunner):
                 )
             return ""
 
-        # Submit all cases with zero in-degree
-        for c in cases:
-            if in_degree[c.name] == 0:
-                _submit(c)
-
-        # Main loop: process futures one at a time
-        while len(processed) < total:
-            if not active_futures:
-                break  # All submitted, all done
-            for future in as_completed(list(active_futures.keys())):
-                case = active_futures.pop(future)
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    result = {
-                        "name": case.name,
-                        "status": "failed",
-                        "message": f"Test execution failed: {str(exc)}",
-                        "output": "",
-                        "command": _case_command_str(case),
-                        "return_code": None,
-                    }
-                _on_case_completed(case, result)
-                break  # Process one future, then re-check queue
+        for future, _, case in self._completed_cases(executor, ready):
+            try:
+                result = future.result()
+            except Exception as exc:
+                tb = traceback.format_exc()
+                logger.error(
+                    "Test execution raised unexpected exception (%s):\n%s",
+                    case.name, tb,
+                )
+                result = {
+                    "name": case.name,
+                    "status": "failed",
+                    "message": f"Test execution failed: {exc!r}",
+                    "output": tb,
+                    "command": _case_command_str(case),
+                    "return_code": None,
+                }
+            _on_case_completed(case, result)
 
     def _update_results_skipped(self, result: Dict[str, Any], test_index: int, case_name: str) -> None:
         """Thread-safe result update for skipped cases (no xfail processing)."""
@@ -452,4 +435,4 @@ class ParallelRunner(BaseRunner):
     def run_tests_sequential(self) -> bool:
         """回退到顺序执行模式"""
         logger.info("Falling back to sequential execution...")
-        return super().run_tests() 
+        return super().run_tests()

@@ -7,7 +7,14 @@ from typing import List, Dict, Any, Optional, Set
 from .test_case import TestCase
 from .validation.assertions import Assertions
 from .setup import SetupManager, EnvironmentSetup
-from .history_store import load_history, update_case, check_regression, save_history, reset_cases
+from .history_store import (
+    load_history,
+    update_case,
+    update_case_memory,
+    check_regression,
+    save_history,
+    reset_cases,
+)
 from .last_run_store import update_last_run, get_last_failed_names
 from ..file_comparator.factory import ComparatorFactory
 
@@ -394,6 +401,18 @@ class BaseRunner(ABC):
             if warning:
                 logger.warning(warning)
             update_case(history, result["name"], duration)
+
+        # ── 内存峰值记录：条件与耗时不同 ──
+        # 任何获得有效测量的运行都可记录（含 failed / timeout）——这些
+        # 数据同样保护下一次调度决策；无可测量（未启用/非 Windows/测量
+        # 失败）的 case 不产生任何字段，行为与旧版本一致。
+        for result in self.results["details"]:
+            peak = result.get("peak_memory_bytes")
+            if peak:
+                update_case_memory(
+                    history, result["name"], peak,
+                    result.get("peak_memory_source"),
+                )
         save_history(self.history_dir, history)
 
     def _run_sequence(self, case: TestCase) -> Dict[str, Any]:

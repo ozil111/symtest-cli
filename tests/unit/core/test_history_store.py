@@ -12,8 +12,10 @@ from symtest.core.history_store import (
     check_regression,
     ensure_symtest,
     load_history,
+    reset_cases,
     save_history,
     update_case,
+    update_case_memory,
 )
 
 
@@ -138,3 +140,71 @@ class TestCheckRegression:
         }}
         # 15.0 == 10.0 * 1.5, NOT strictly greater
         assert check_regression(history, "a", 15.0) is None
+
+
+class TestUpdateCaseMemory:
+    def test_first_measurement(self):
+        history = {"version": 1, "cases": {}}
+        update_case_memory(history, "case_a", 500, "windows_job_commit")
+        rec = history["cases"]["case_a"]
+        assert rec["last_peak_memory_bytes"] == 500
+        assert rec["max_peak_memory_bytes"] == 500
+        assert rec["peak_memory_count"] == 1
+        assert rec["peak_memory_source"] == "windows_job_commit"
+
+    def test_max_tracked_across_runs(self):
+        history = {"version": 1, "cases": {}}
+        update_case_memory(history, "a", 500)
+        update_case_memory(history, "a", 300)
+        update_case_memory(history, "a", 800)
+        rec = history["cases"]["a"]
+        assert rec["last_peak_memory_bytes"] == 800
+        # 调度估算使用历史最大值：偶发高峰不被平均稀释
+        assert rec["max_peak_memory_bytes"] == 800
+        assert rec["peak_memory_count"] == 3
+
+    def test_invalid_peak_ignored(self):
+        history = {"version": 1, "cases": {}}
+        update_case_memory(history, "a", None)
+        update_case_memory(history, "a", 0)
+        update_case_memory(history, "a", -100)
+        assert history["cases"] == {}
+
+    def test_merges_into_existing_duration_record(self):
+        history = {"version": 1, "cases": {
+            "a": {"avg_duration": 5.0, "last_duration": 5.0, "run_count": 2}
+        }}
+        update_case_memory(history, "a", 500, "windows_job_commit")
+        rec = history["cases"]["a"]
+        assert rec["avg_duration"] == 5.0  # 耗时字段不受影响
+        assert rec["max_peak_memory_bytes"] == 500
+
+
+class TestMemoryOnlyRecordCompat:
+    """只有内存字段、没有耗时字段的记录（失败 case 先行记录峰值）。"""
+
+    def _memory_only_history(self):
+        return {"version": 1, "cases": {
+            "a": {"last_peak_memory_bytes": 500,
+                  "max_peak_memory_bytes": 500,
+                  "peak_memory_count": 1,
+                  "peak_memory_source": "windows_job_commit"},
+        }}
+
+    def test_update_case_tolerates_missing_duration_fields(self):
+        history = self._memory_only_history()
+        update_case(history, "a", 3.0)
+        rec = history["cases"]["a"]
+        assert rec["avg_duration"] == 3.0
+        assert rec["run_count"] == 1
+        assert rec["max_peak_memory_bytes"] == 500  # 内存字段保留
+
+    def test_check_regression_tolerates_missing_duration(self):
+        history = self._memory_only_history()
+        assert check_regression(history, "a", 100.0) is None
+
+    def test_reset_cases_removes_memory_only_record(self):
+        history = self._memory_only_history()
+        cleared = reset_cases(history, {"a"})
+        assert cleared == 1
+        assert history["cases"] == {}

@@ -203,6 +203,36 @@ class TestLoadProjectConfigExplicit:
         with pytest.raises(ProjectConfigError, match="'run.workers' expects int"):
             load_project_config(tmp_path, explicit_path=str(path))
 
+    def test_memory_keys_type_checked(self, tmp_path):
+        # 机会式内存准入参数：类型校验与其他 run 键一致
+        path = write_explicit_defaults(tmp_path, {
+            "run": {"memory_margin": "1.5"},
+        })
+
+        with pytest.raises(ProjectConfigError,
+                           match="'run.memory_margin' expects float"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+        path = write_explicit_defaults(tmp_path, {
+            "run": {"memory_commit_reserve_mb": 2048.5},
+        })
+
+        with pytest.raises(ProjectConfigError,
+                           match="'run.memory_commit_reserve_mb' expects int"):
+            load_project_config(tmp_path, explicit_path=str(path))
+
+    def test_memory_keys_loaded(self, tmp_path):
+        path = write_explicit_defaults(tmp_path, {
+            "run": {"memory_margin": 1.3, "memory_default_demand_mb": 6144,
+                    "memory_min_start_interval_s": 2},
+        })
+
+        config = load_project_config(tmp_path, explicit_path=str(path))
+
+        assert config["run"]["memory_margin"] == 1.3
+        assert config["run"]["memory_default_demand_mb"] == 6144
+        assert config["run"]["memory_min_start_interval_s"] == 2
+
     def test_non_object_section_raises(self, tmp_path):
         path = write_explicit_defaults(tmp_path, {"run": True})
 
@@ -240,6 +270,32 @@ class TestMergeProjectConfig:
         assert args.text_report is None
         assert args.html_report is None
         assert args.junit_xml is None
+
+    def test_memory_admission_keys_merge_from_config(self):
+        config = {"run": {
+            "memory_margin": 1.5,
+            "memory_commit_reserve_mb": 4096,
+            "memory_physical_watermark_mb": 1024,
+            "memory_default_demand_mb": 8192,
+            "memory_min_start_interval_s": 2.5,
+        }}
+        args = merge_project_config(make_args(), config, None)
+
+        assert args.memory_margin == 1.5
+        assert args.memory_commit_reserve_mb == 4096
+        assert args.memory_physical_watermark_mb == 1024
+        assert args.memory_default_demand_mb == 8192
+        assert args.memory_min_start_interval_s == 2.5
+
+    def test_memory_admission_keys_absent_stay_none(self):
+        # 未配置时保持 None → run_tests 不传，runner 应用内置默认值
+        args = merge_project_config(make_args(), {}, None)
+
+        assert args.memory_margin is None
+        assert args.memory_commit_reserve_mb is None
+        assert args.memory_physical_watermark_mb is None
+        assert args.memory_default_demand_mb is None
+        assert args.memory_min_start_interval_s is None
 
     def test_project_config_wins_over_builtin(self):
         config = {
@@ -429,6 +485,30 @@ class TestRunTestsProjectConfig:
         assert result
         assert captured["with_deps"] is False
         assert captured["error_analysis_all"] is True
+
+    def test_memory_options_reach_parallel_runner(self, tmp_path, monkeypatch):
+        (tmp_path / "cases.json").write_text('{"test_cases": []}', encoding="utf-8")
+        write_project_config(tmp_path, {
+            "run": {"config_file": "cases.json", "parallel": True,
+                    "memory_margin": 1.5, "memory_min_start_interval_s": 2.0},
+        })
+        captured = {}
+
+        class CapturingRunner(DummyRunner):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured.update(kwargs)
+
+        monkeypatch.setattr("symtest.commands.run.ParallelJSONRunner",
+                            CapturingRunner)
+        result = cli.run_tests(make_args(workspace=str(tmp_path)))
+
+        assert result
+        assert captured["memory_margin"] == 1.5
+        assert captured["memory_min_start_interval_s"] == 2.0
+        # 未配置的键不传 → runner 应用内置默认值
+        assert "memory_commit_reserve_mb" not in captured
+        assert "memory_default_demand_mb" not in captured
 
     def test_text_report_written_from_project_config(self, tmp_path, monkeypatch):
         write_project_config(tmp_path, {

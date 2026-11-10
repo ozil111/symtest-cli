@@ -38,12 +38,14 @@ def _execute_command_once(
     update_baseline: bool = False,
     error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
+    measure_memory: bool = False,
 ) -> TestResultData:
     """Compose one attempt: execute → validate → (optional) baseline accept."""
     start_time = time.perf_counter()
 
     exec_result = execute_command(
         case, workspace, env, output_max_chars=output_max_chars,
+        measure_memory=measure_memory,
     )
 
     result = TestResult(
@@ -53,6 +55,8 @@ def _execute_command_once(
         stdout=exec_result.stdout,
         stderr=exec_result.stderr,
         return_code=exec_result.return_code,
+        peak_memory_bytes=exec_result.peak_memory_bytes,
+        peak_memory_source=exec_result.peak_memory_source,
     )
 
     if exec_result.error is not None:
@@ -115,6 +119,7 @@ def execute_single_test_case(
     update_baseline: bool = False,
     error_analysis: bool = False,
     output_max_chars: int = DEFAULT_OUTPUT_MAX_CHARS,
+    measure_memory: bool = False,
 ) -> TestResultData:
     """
     Stateless execution of a single test case with optional retry.
@@ -128,6 +133,8 @@ def execute_single_test_case(
         update_baseline: If True, accept comparison failures as new baselines
                          （accept 步骤在编排层执行，Validator 只读）。
         output_max_chars: Max characters for output in result dict.
+        measure_memory: 为 True 时测量进程组内存峰值（见 executor）；
+                        retry 时 case 峰值取所有 attempt 的最大值。
 
     ``retry_count`` (defaults to 0) controls how many additional times the
     command is re-run after the first failure.  ``retry_count=0`` means no
@@ -138,6 +145,10 @@ def execute_single_test_case(
     total_duration = 0.0
     last_result: Optional[TestResultData] = None
     attempt_history: List[Dict[str, Any]] = []
+    # retry 各 attempt 的峰值聚合：case 峰值取最大值（峰值口径天然只增，
+    # 取最大值避免单次偶发低估被平均稀释）。
+    peak_bytes: Optional[int] = None
+    peak_source: Optional[str] = None
 
     expectation = expectation if expectation is not None else {}
 
@@ -147,6 +158,7 @@ def execute_single_test_case(
             update_baseline=update_baseline,
             error_analysis=error_analysis,
             output_max_chars=output_max_chars,
+            measure_memory=measure_memory,
         )
         total_duration += result["duration"]
         attempt_history.append({
@@ -155,6 +167,10 @@ def execute_single_test_case(
             "message": result.get("message", ""),
             "duration": result["duration"],
         })
+        if result.get("peak_memory_bytes") is not None:
+            if peak_bytes is None or result["peak_memory_bytes"] > peak_bytes:
+                peak_bytes = result["peak_memory_bytes"]
+            peak_source = result.get("peak_memory_source")
         last_result = result
 
         if result["status"] == "passed":
@@ -170,6 +186,10 @@ def execute_single_test_case(
         last_result["duration"] = total_duration
         last_result["attempts"] = len(attempt_history)
         last_result["attempt_history"] = attempt_history
+        # ── 峰值聚合（attempt 级 → case 级；无可选字段时保持旧形态） ──
+        if peak_bytes is not None:
+            last_result["peak_memory_bytes"] = peak_bytes
+            last_result["peak_memory_source"] = peak_source
         if retry_count > 0 and last_result["status"] == "passed" and len(attempt_history) > 1:
             last_result["flaky"] = True
 
