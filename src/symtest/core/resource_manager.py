@@ -72,7 +72,7 @@ class _Waiter:
 
     __slots__ = ("cpu", "need_mem", "unknown_demand", "structurally_impossible",
                  "label", "event", "ticket", "logged", "deny_reason",
-                 "interval_deadline")
+                 "interval_deadline", "waiting_since", "next_wait_log")
 
     def __init__(self, cpu: int, need_mem: int, unknown_demand: bool,
                  structurally_impossible: bool, label: str):
@@ -86,6 +86,8 @@ class _Waiter:
         self.logged = False
         self.deny_reason = ""
         self.interval_deadline: Optional[float] = None
+        self.waiting_since: Optional[float] = None
+        self.next_wait_log: Optional[float] = None
 
 
 class JointResourceManager:
@@ -135,9 +137,9 @@ class JointResourceManager:
     # 获取 / 释放
     # ------------------------------------------------------------------
 
-    def acquire(self, cpu: int, memory_bytes: Optional[int],
-                label: str = "") -> ResourceTicket:
-        """获取 CPU + 内存准入；不满足时排队等待（无超时降级）。
+    def make_request(self, cpu: int, memory_bytes: Optional[int],
+                     label: str = "") -> _Waiter:
+        """Prepare an admission request for one or more attempts.
 
         :param cpu: 需要的 CPU 令牌数（自动钳制到池容量）。
         :param memory_bytes: 估算内存需求（字节，历史提交峰值口径）；
@@ -170,43 +172,74 @@ class JointResourceManager:
                     if snap.commit_limit_bytes else "unknown",
                 )
 
-        waiter = _Waiter(cpu, need_mem, unknown_demand,
-                         structurally_impossible, label)
+        return _Waiter(cpu, need_mem, unknown_demand,
+                       structurally_impossible, label)
+
+    def try_acquire(self, waiter: _Waiter) -> Optional[ResourceTicket]:
+        """Attempt admission once; the caller retains denied requests."""
+        with self._lock:
+            ticket = self._try_grant_locked(waiter)
+        if ticket is not None:
+            self._log_admitted(waiter, ticket)
+        elif waiter.waiting_since is None:
+            waiter.waiting_since = self._time_fn()
+            waiter.next_wait_log = waiter.waiting_since + 12 * self._poll_interval
+            self._log_waiting(waiter)
+        elif self._time_fn() >= waiter.next_wait_log:
+            now = self._time_fn()
+            logger.info(
+                "  [Scheduler] Task '%s' still waiting (cpu=%d, "
+                "mem=%.1f GiB, waited ~%ds): %s.",
+                waiter.label, waiter.cpu, waiter.need_mem / 1024 ** 3,
+                now - waiter.waiting_since, waiter.deny_reason,
+            )
+            waiter.next_wait_log = now + 12 * self._poll_interval
+        return ticket
+
+    def retry_delay(self, waiter: _Waiter) -> float:
+        """Time before polling again, shortened by a startup deadline."""
+        deadline = waiter.interval_deadline
+        if deadline is None:
+            return self._poll_interval
+        return max(0.02, min(self._poll_interval, deadline - self._time_fn()))
+
+    @staticmethod
+    def _log_admitted(waiter: _Waiter, ticket: ResourceTicket) -> None:
+        logger.info(
+            "  [Scheduler] Task '%s' admitted: %d cpu + %.1f GiB "
+            "est. demand. Running...",
+            waiter.label, ticket.cpu, ticket.memory_bytes / 1024 ** 3,
+        )
+
+    @staticmethod
+    def _log_waiting(waiter: _Waiter) -> None:
+        logger.info(
+            "  [Scheduler] Task '%s' waiting (cpu=%d, mem=%.1f GiB): %s.",
+            waiter.label, waiter.cpu, waiter.need_mem / 1024 ** 3,
+            waiter.deny_reason,
+        )
+
+    def acquire(self, cpu: int, memory_bytes: Optional[int],
+                label: str = "") -> ResourceTicket:
+        """获取 CPU + 内存准入；不满足时排队等待（无超时降级）。"""
+        waiter = self.make_request(cpu, memory_bytes, label)
         polls = 0
         while True:
             with self._lock:
                 ticket = self._try_grant_locked(waiter)
                 if ticket is not None:
-                    logger.info(
-                        "  [Scheduler] Task '%s' admitted: %d cpu + %.1f GiB "
-                        "est. demand. Running...",
-                        label, ticket.cpu, ticket.memory_bytes / 1024 ** 3,
-                    )
+                    self._log_admitted(waiter, ticket)
                     return ticket
                 if not waiter.logged:
                     waiter.logged = True
-                    logger.info(
-                        "  [Scheduler] Task '%s' waiting (cpu=%d, mem=%.1f "
-                        "GiB): %s.",
-                        label, waiter.cpu, waiter.need_mem / 1024 ** 3,
-                        waiter.deny_reason,
-                    )
+                    self._log_waiting(waiter)
                     self._waiters.append(waiter)
             # release 唤醒（event set）；超时唤醒用于重评系统内存快照
             # （外部内存释放不触发本池的任何信号）。被启动间隔阻塞时
             # 按剩余间隔唤醒，让实际间距接近配置值。
-            timeout = self._poll_interval
-            if waiter.interval_deadline is not None:
-                timeout = max(0.02, min(
-                    timeout, waiter.interval_deadline - self._time_fn()))
-            if waiter.event.wait(timeout=timeout):
+            if waiter.event.wait(timeout=self.retry_delay(waiter)):
                 assert waiter.ticket is not None
-                logger.info(
-                    "  [Scheduler] Task '%s' admitted: %d cpu + %.1f GiB "
-                    "est. demand. Running...",
-                    label, waiter.ticket.cpu,
-                    waiter.ticket.memory_bytes / 1024 ** 3,
-                )
+                self._log_admitted(waiter, waiter.ticket)
                 return waiter.ticket
             polls += 1
             # 心跳：等待中的任务每 12 个轮询周期（默认 60s）提醒一次，

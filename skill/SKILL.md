@@ -317,6 +317,9 @@ guaranteed). Admission parameters are `symtest.json` `run` keys
 descendants in its Job share the command's
 `timeout`, including descendants that redirect output and outlive the launcher.
 
+Cases waiting for admission stay in the scheduler queue, leaving workers free
+for later eligible cases whose dependencies are satisfied.
+
 The startup interval applies only while tasks are active and their summed estimated peaks plus the new demand and commit reserve exceed current commit headroom. Ample headroom or an empty active set permits immediate admission. This conservative signal may double-count allocated memory; it triggers spacing, never a hard reservation. With active tasks and unknown demand or headroom, spacing is retained conservatively.
 
 ### Output
