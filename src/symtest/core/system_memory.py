@@ -94,7 +94,7 @@ def _own_cgroup_relpath() -> Optional[str]:
 
 
 def _cgroup_limits() -> tuple:
-    """对当前组及全部祖先组计算 (最小组限额, 最小组余量)。
+    """对当前组及全部祖先组计算 (最小组限额, 最小组余量)，单位为字节。
 
     仅统计存在 ``memory.max`` 且值非 "max" 的层；缺文件或无限额的层
     不参与钳制。返回 ``(None, None)`` 表示无任何限额。
@@ -109,19 +109,19 @@ def _cgroup_limits() -> tuple:
         group_dir = _CGROUP_ROOT.joinpath(*nodes[: i + 1])
         try:
             text = (group_dir / "memory.max").read_text(encoding="utf-8")
-            limit_kb = int(text.strip())
+            limit_bytes = int(text.strip())
         except (OSError, ValueError):
             continue  # 无该文件（如根组）/ "max"（无限额）/ 读取失败
-        if min_limit is None or limit_kb < min_limit:
-            min_limit = limit_kb
+        if min_limit is None or limit_bytes < min_limit:
+            min_limit = limit_bytes
         try:
-            current_kb = int((group_dir / "memory.current")
-                             .read_text(encoding="utf-8").strip())
+            current_bytes = int((group_dir / "memory.current")
+                                .read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
-            current_kb = 0
-        margin_kb = max(0, limit_kb - current_kb)
-        if min_margin is None or margin_kb < min_margin:
-            min_margin = margin_kb
+            current_bytes = 0
+        margin_bytes = max(0, limit_bytes - current_bytes)
+        if min_margin is None or margin_bytes < min_margin:
+            min_margin = margin_bytes
     return min_limit, min_margin
 
 
@@ -131,22 +131,21 @@ def _read_linux_snapshot() -> MemorySnapshot:
     total_kb = meminfo.get("MemTotal")
     if not total_kb:
         raise ValueError("MemTotal missing from /proc/meminfo")
-    avail_kb = meminfo.get("MemAvailable", 0)
+    total_bytes = total_kb * 1024
+    available_bytes = meminfo.get("MemAvailable", 0) * 1024
 
-    limit_kb, margin_kb = _cgroup_limits()
-    effective_kb = avail_kb
-    if margin_kb is not None:
-        effective_kb = min(effective_kb, margin_kb)
-    if limit_kb is not None:
-        total_kb = min(total_kb, limit_kb)
+    limit_bytes, margin_bytes = _cgroup_limits()
+    if margin_bytes is not None:
+        available_bytes = min(available_bytes, margin_bytes)
+    if limit_bytes is not None:
+        total_bytes = min(total_bytes, limit_bytes)
 
-    effective = effective_kb * 1024
     return MemorySnapshot(
-        total_physical_bytes=int(total_kb * 1024),
-        avail_physical_bytes=int(max(effective, 0)),
+        total_physical_bytes=total_bytes,
+        avail_physical_bytes=available_bytes,
         # Linux 无系统级提交上限概念：单一有效预算同时充当两种角色
-        avail_commit_bytes=int(max(effective, 0)),
-        commit_limit_bytes=int(total_kb * 1024),
+        avail_commit_bytes=available_bytes,
+        commit_limit_bytes=total_bytes,
     )
 
 

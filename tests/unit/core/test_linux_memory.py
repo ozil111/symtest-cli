@@ -22,14 +22,14 @@ def _write_meminfo(path, total_kb, avail_kb=None):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _make_group(root, rel, max_content=None, current_kb=None):
-    """在假 cgroup 树中建组；max_content 为 "max" 或 kB 整数。"""
+def _make_group(root, rel, max_content=None, current_bytes=None):
+    """在假 cgroup 树中建组；max_content 为 "max" 或字节数。"""
     group = root / rel if rel else root
     group.mkdir(parents=True, exist_ok=True)
     if max_content is not None:
         (group / "memory.max").write_text(f"{max_content}\n", encoding="utf-8")
-    if current_kb is not None:
-        (group / "memory.current").write_text(f"{current_kb}\n",
+    if current_bytes is not None:
+        (group / "memory.current").write_text(f"{current_bytes}\n",
                                               encoding="utf-8")
 
 
@@ -83,8 +83,8 @@ class TestSnapshotWithoutCgroupLimit:
         snap = _linux_snapshot(
             tmp_path, 16000000, 9000000, rel="a/b",
             groups=[
-                {"rel": "a", "max": "max", "current": 100000},
-                {"rel": "a/b", "max": "max", "current": 50000},
+                {"rel": "a", "max": "max", "current": 100000 * KB},
+                {"rel": "a/b", "max": "max", "current": 50000 * KB},
             ],
         )
         assert snap.avail_physical_bytes == 9000000 * KB
@@ -102,11 +102,11 @@ class TestSnapshotWithCgroupLimit:
         snap = _linux_snapshot(
             tmp_path, 16000000, 9000000, rel="a/b",
             groups=[
-                {"rel": "a", "max": 8000000, "current": 3000000},
-                {"rel": "a/b", "max": 6000000, "current": 2000000},
+                {"rel": "a", "max": 8000000 * KB, "current": 3000000 * KB},
+                {"rel": "a/b", "max": 6000000 * KB, "current": 2000000 * KB},
             ],
         )
-        # 最紧层：a/b 余 4000000 kB（a 余 5000000 kB、MemAvailable 9 GiB）
+        # 最紧层：a/b 余 4000000 KiB（a 余 5000000 KiB，宿主机余 9000000 KiB）
         assert snap.avail_physical_bytes == 4000000 * KB
         assert snap.avail_commit_bytes == 4000000 * KB
         # 总量与"提交上限"均钳制到最小组限额
@@ -117,7 +117,7 @@ class TestSnapshotWithCgroupLimit:
         """宿主机余量更紧时（其他消费者占用）以 MemAvailable 为准。"""
         snap = _linux_snapshot(
             tmp_path, 16000000, 1000000, rel="a",
-            groups=[{"rel": "a", "max": 8000000, "current": 1000000}],
+            groups=[{"rel": "a", "max": 8000000 * KB, "current": 1000000 * KB}],
         )
         assert snap.avail_physical_bytes == 1000000 * KB
 
@@ -125,7 +125,7 @@ class TestSnapshotWithCgroupLimit:
         """组缺 memory.current：按 0 使用计算余量。"""
         snap = _linux_snapshot(
             tmp_path, 16000000, 9000000, rel="a",
-            groups=[{"rel": "a", "max": 3000000, "current": None}],
+            groups=[{"rel": "a", "max": 3000000 * KB, "current": None}],
         )
         assert snap.avail_physical_bytes == 3000000 * KB
 
@@ -134,8 +134,8 @@ class TestSnapshotWithCgroupLimit:
         snap = _linux_snapshot(
             tmp_path, 16000000, 9000000, rel="a/b",
             groups=[
-                {"rel": "a", "max": None, "current": 100},
-                {"rel": "a/b", "max": 2000000, "current": 500000},
+                {"rel": "a", "max": None, "current": 100 * KB},
+                {"rel": "a/b", "max": 2000000 * KB, "current": 500000 * KB},
             ],
         )
         assert snap.avail_physical_bytes == 1500000 * KB
@@ -144,7 +144,7 @@ class TestSnapshotWithCgroupLimit:
     def test_over_limit_group_clamps_to_zero(self, tmp_path):
         snap = _linux_snapshot(
             tmp_path, 16000000, 9000000, rel="a",
-            groups=[{"rel": "a", "max": 1000000, "current": 1200000}],
+            groups=[{"rel": "a", "max": 1000000 * KB, "current": 1200000 * KB}],
         )
         assert snap.avail_physical_bytes == 0
         assert snap.usable  # 快照只描述事实，判定交给调度层
