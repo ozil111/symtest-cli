@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Union, Set
 from collections import deque
 import time
 import threading
+import traceback
 import logging
 from .base_runner import BaseRunner
 from .test_case import TestCase
@@ -223,11 +224,16 @@ class ParallelRunner(BaseRunner):
                     result = future.result()
                     self._update_results(result, test_index, case)
                 except Exception as exc:
+                    tb = traceback.format_exc()
+                    logger.error(
+                        "Test execution raised unexpected exception (%s):\n%s",
+                        case.name, tb,
+                    )
                     error_result = {
                         "name": case.name,
                         "status": "failed",
-                        "message": f"Test execution failed: {str(exc)}",
-                        "output": "",
+                        "message": f"Test execution failed: {exc!r}",
+                        "output": tb,
                         "command": "",
                         "return_code": None
                     }
@@ -388,11 +394,16 @@ class ParallelRunner(BaseRunner):
                 try:
                     result = future.result()
                 except Exception as exc:
+                    tb = traceback.format_exc()
+                    logger.error(
+                        "Test execution raised unexpected exception (%s):\n%s",
+                        case.name, tb,
+                    )
                     result = {
                         "name": case.name,
                         "status": "failed",
-                        "message": f"Test execution failed: {str(exc)}",
-                        "output": "",
+                        "message": f"Test execution failed: {exc!r}",
+                        "output": tb,
                         "command": _case_command_str(case),
                         "return_code": None,
                     }
