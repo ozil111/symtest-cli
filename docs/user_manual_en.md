@@ -1755,7 +1755,7 @@ The startup interval applies only while tasks are active and their summed estima
 - Physical watermark validation: when total physical memory is known, a nonzero watermark must be strictly below it; otherwise initialization raises `ValueError` instead of waiting forever. Lower `memory_physical_watermark_mb`, or set it to 0 to disable this check.
 - estimated demand plus reserve exceeding the system commit limit (structurally unsatisfiable, e.g. a small pagefile / a small cgroup limit) warn and skip that check (physical watermark and startup interval still apply), leaving the problem to the case's own failure;
 - process mode (`--execution-mode process`) does not yet participate in memory scheduling or peak measurement;
-- on Linux without cgroup v2 delegation rights (cannot create sub-groups under the process's own group) or on kernels without `memory.peak`, measurement degrades to off: admission still runs on manual/default demands, and the startup log clearly states that whole-group peaks cannot be learned; no `memory.max` hard limit, no auto-retry, no proactive kills;
+- On Linux, if the measurement subgroup cannot be created, the kernel lacks `memory.peak`, or process migration fails, the command runs once as a plain subprocess and the whole-group peak is unknown. Admission still uses declared or default demand. There is no `memory.max` hard limit or proactive termination.
 - measurement failure falls back to the plain execution path with the peak marked
   unknown; test verdicts are unaffected.
 

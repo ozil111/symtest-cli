@@ -3,7 +3,7 @@
 
 一次命令执行绑定一个独立 cgroup：
 
-``创建组目录 → shell 将自身 pid 写入 cgroup.procs 后 exec 命令
+``创建组目录 → shell 将自身 pid 写入 cgroup.procs → 确认迁移后 exec 命令
 → communicate/超时 → 排空等待 → 读取 memory.peak → 清理组目录``
 
 - shell 先把**自身 pid** 写入 ``cgroup.procs`` 再 ``exec`` 命令：写入时刻
@@ -198,12 +198,11 @@ def start_in_cgroup(
 ) -> Tuple[subprocess.Popen, CgroupHandle]:
     """在新建 cgroup 中启动命令（整组进程从执行起就在组内）。
 
-    实现：``/bin/sh -c 'echo $$ > <组>/cgroup.procs && exec "$@"'``——
-    shell 尚无后代时先迁移自身，再 exec 成命令进程；后代继承组成员
+    shell 尚无后代时先迁移自身，向调用方确认后再 exec 成命令进程；后代继承组成员
     身份（"脚本 → 启动器 → 求解器"整组被统计）。
 
     :returns: ``(Popen, handle)``；调用方负责 ``close_group``。
-    :raises CgroupError: 组目录创建失败（如无委派权限）。
+    :raises CgroupError: 组目录创建或进程迁移失败（如无委派权限）。
     """
     base = _own_cgroup_dir()
     if base is None:
@@ -216,9 +215,10 @@ def start_in_cgroup(
             f"cannot create cgroup {group_dir}: {exc}") from exc
 
     procs_file = shlex.quote(str(group_dir / "cgroup.procs"))
-    # "$@" 经 sh 位置参数传入原始命令，不与脚本内容混淆；&& 确保
-    # 迁移失败时不执行命令（进程组外执行会造成漏统计，宁可失败回退）。
-    script = f'echo $$ > {procs_file} && exec "$@"'
+    # 迁移成功才在 stdout 发送一个确认字节，然后执行原命令。
+    # 抑制迁移失败的 shell 诊断，避免确认前阻塞于 stderr 管道。
+    script = (f'{{ printf "%s\\n" "$$" > {procs_file}; }} 2>/dev/null'
+              ' && printf 1 && exec "$@"')
     try:
         process = subprocess.Popen(
             ["/bin/sh", "-c", script, "sh", *cmd_list],
@@ -233,6 +233,13 @@ def start_in_cgroup(
     except Exception:
         _safe_rmdir(group_dir)
         raise
+    # 直接读 fd，避免文本流预读命令输出（communicate 会直接读管道）。
+    if os.read(process.stdout.fileno(), 1) != b"1":
+        try:
+            process.communicate()
+        finally:
+            _safe_rmdir(group_dir)
+        raise CgroupError(f"cannot migrate process to cgroup {group_dir}")
     return process, CgroupHandle(group_dir, process.pid)
 
 

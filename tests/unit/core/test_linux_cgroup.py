@@ -324,34 +324,36 @@ class TestExecutorIntegration:
         root, group_dir = _fake_tree(monkeypatch, tmp_path)
         spec = ExecutionSpec(
             name="cg-rc", command=sys.executable,
-            args=["-c", "import sys; print('out'); sys.exit(3)"],
+            args=["-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"],
         )
         result = execute_command(
             spec, measure_memory=True,
             env={"PEAK_FILE": str(group_dir / "memory.peak")},
         )
         assert result.return_code == 3
-        assert "out" in result.output
+        assert result.stdout == "out\n"
+        assert result.stderr == "err\n"
 
-    def test_backend_failure_falls_back_to_plain_subprocess(
-            self, monkeypatch, tmp_path):
-        """后端异常 → 回退普通 Popen，执行不受影响、峰值未知。"""
-        from unittest.mock import patch
+    def test_migration_failure_falls_back_to_plain_subprocess(
+            self, monkeypatch, tmp_path, caplog):
+        _, group_dir = _fake_tree(monkeypatch, tmp_path)
+        mkdir = type(group_dir).mkdir
 
+        def mkdir_with_unwritable_procs(path, *args, **kwargs):
+            mkdir(path, *args, **kwargs)
+            if path == group_dir:
+                mkdir(path / "cgroup.procs")  # 重定向到目录一定失败（包括 root）。
+
+        monkeypatch.setattr(type(group_dir), "mkdir", mkdir_with_unwritable_procs)
+        marker = tmp_path / "runs"
         spec = ExecutionSpec(
             name="cg-fallback", command=sys.executable,
-            args=["-c", "print('fallback')"],
+            args=["-c", "import sys; open(sys.argv[1], 'a').write('run\\n')", str(marker)],
         )
-
-        def _boom(*args, **kwargs):
-            raise linux_cgroup.CgroupError("simulated backend failure")
-
-        with patch.object(linux_cgroup, "start_in_cgroup",
-                          side_effect=_boom), \
-                patch.object(linux_cgroup, "is_supported", return_value=True):
-            result = execute_command(spec, measure_memory=True)
+        result = execute_command(spec, measure_memory=True)
         assert result.return_code == 0
-        assert "fallback" in result.output
+        assert marker.read_text(encoding="utf-8") == "run\n"
+        assert "cannot migrate process to cgroup" in caplog.text
         assert result.peak_memory_bytes is None
         assert result.error is None
 
