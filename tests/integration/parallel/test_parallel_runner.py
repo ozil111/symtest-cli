@@ -239,6 +239,58 @@ def _sleep_case(name, seconds=2, mem_mb=None):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 class TestWindowsMemoryManagement:
+    @pytest.mark.parametrize("with_dependencies", [False, True])
+    def test_memory_waiters_leave_workers_free(self, tmp_path, monkeypatch, with_dependencies):
+        from symtest.runners import parallel_config_runner as runner_module
+        from symtest.core.resource_manager import JointResourceManager
+        from symtest.core.system_memory import MemorySnapshot
+
+        memory_released = False
+        release_case = "dependent" if with_dependencies else "small"
+        low_commit_reads = 0
+
+        def snapshot():
+            nonlocal low_commit_reads
+            if not memory_released:
+                low_commit_reads += 1
+            # Allow the old blocking implementation to exit and fail the
+            # assertion even if it never starts the small case under pressure.
+            headroom = 12 if memory_released or low_commit_reads > 30 else 6
+            return MemorySnapshot(16 * GB, 12 * GB, headroom * GB, 32 * GB)
+
+        def execute_and_release_memory(spec, *args, **kwargs):
+            nonlocal memory_released
+            if spec.name == release_case:
+                memory_released = True
+            return {"name": spec.name, "status": "passed", "output": ""}
+
+        monkeypatch.setattr(os, "cpu_count", lambda: 8)
+        monkeypatch.setattr(runner_module, "read_memory_snapshot", snapshot)
+        monkeypatch.setattr(runner_module, "execute_single_test_case", execute_and_release_memory)
+        monkeypatch.setattr(
+            runner_module, "JointResourceManager",
+            lambda **kwargs: JointResourceManager(poll_interval=0.02, **kwargs),
+        )
+
+        cases = [
+            _sleep_case("large1", seconds=0, mem_mb=8192),
+            _sleep_case("large2", seconds=0, mem_mb=8192),
+            _sleep_case("small", seconds=0, mem_mb=1024),
+        ]
+        if with_dependencies:
+            dependent = _sleep_case("dependent", seconds=0, mem_mb=1024)
+            dependent["scheduling"]["depends_on"] = ["small"]
+            cases.append(dependent)
+        config = tmp_path / "cases.json"
+        _write_config(config, cases)
+        runner = ParallelJSONRunner(str(config), str(tmp_path), max_workers=2)
+
+        assert runner.run_tests()
+        assert runner.results["passed"] == len(cases)
+        assert memory_released and low_commit_reads <= 30
+        first_cases = ["small", "dependent"] if with_dependencies else ["small"]
+        assert [d["name"] for d in runner.results["details"][:len(first_cases)]] == first_cases
+
     def test_short_case_batch_has_no_per_case_startup_delay(self, tmp_path, monkeypatch):
         """A dozen tiny cases must not incur eleven one-second launch gaps."""
         from symtest.core.system_memory import MemorySnapshot
@@ -337,8 +389,15 @@ class TestWindowsMemoryManagement:
         assert runner._memory_enabled
         assert runner.results["details"][0]["peak_memory_bytes"] > 0
 
-    def test_peaks_measured_and_recorded(self):
+    def test_peaks_measured_and_recorded(self, monkeypatch):
         """启用内存管理（thread + Windows + history）→ 结果与 history 均有峰值。"""
+        from symtest.core.system_memory import MemorySnapshot
+
+        # Exercise real Job Object measurement independently of host headroom.
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: MemorySnapshot(16 * GB, 12 * GB, 12 * GB, 32 * GB),
+        )
         temp_dir = tempfile.mkdtemp()
         try:
             config_file = os.path.join(temp_dir, "mem_config.json")
@@ -407,8 +466,10 @@ class TestWindowsMemoryManagement:
             )
 
         class TrackingManager(JointResourceManager):
-            def acquire(self, *args, **kwargs):
-                ticket = super().acquire(*args, **kwargs)
+            def try_acquire(self, request):
+                ticket = super().try_acquire(request)
+                if ticket is None:
+                    return None
                 state["demand"] += ticket.memory_bytes
                 state["active"] += 1
                 state["max_active"] = max(state["max_active"],
@@ -477,8 +538,10 @@ class TestWindowsMemoryManagement:
         clock = time.perf_counter
 
         class TrackingManager(JointResourceManager):
-            def acquire(self, *args, **kwargs):
-                ticket = super().acquire(*args, **kwargs)
+            def try_acquire(self, request):
+                ticket = super().try_acquire(request)
+                if ticket is None:
+                    return None
                 state["active"] += 1
                 state["max_active"] = max(state["max_active"],
                                            state["active"])

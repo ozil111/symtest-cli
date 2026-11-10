@@ -7,6 +7,9 @@ logic into ``ParallelConfigRunner``, accepting a ``config_loader`` callable.
 import sys
 import os
 import logging
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, wait
+from itertools import chain
 from typing import Optional, Dict, Any, Callable, BinaryIO, List
 
 from ..core.parallel_runner import ParallelRunner, AtomicSemaphore
@@ -15,7 +18,7 @@ from ..core.orchestration.sequence import execute_sequence
 from ..config.prepared import prepare_config
 from ..core.test_case import TestCase
 from ..core.orchestration.single import execute_single_test_case
-from ..core.resource_manager import JointResourceManager
+from ..core.resource_manager import JointResourceManager, ResourceTicket
 from ..core.system_memory import read_memory_snapshot
 from ..core.types import TestCaseData
 from ..utils.path_resolver import PathResolver
@@ -388,6 +391,94 @@ class ParallelConfigRunner(ParallelRunner):
     #  Execution
     # ------------------------------------------------------------------
 
+    def _completed_cases(self, executor, ready):
+        manager = self._resource_manager if self._memory_enabled else None
+        if manager is None:
+            yield from super()._completed_cases(executor, ready)
+            return
+
+        active = {}
+        requests = {}
+        while ready or active:
+            retry_delay = None
+            dispatched = []
+            # Reconsider previously blocked larger requests first, but scan
+            # past any that still cannot start. Only admitted cases use slots.
+            waiting = sorted(requests, key=lambda i: -requests[i].need_mem)
+            new = (index for index in ready if index not in requests)
+            for index in chain(waiting, new):
+                if len(active) >= self.max_workers:
+                    retry_delay = None
+                    break
+                case = ready[index]
+                try:
+                    request = requests.get(index)
+                    if request is None:
+                        request = manager.make_request(
+                            self._required_cores(case),
+                            self._estimate_memory_bytes(case), case.name,
+                        )
+                        requests[index] = request
+                    ticket = manager.try_acquire(request)
+                except Exception as exc:
+                    future = Future()
+                    future.set_exception(exc)
+                else:
+                    if ticket is None:
+                        delay = manager.retry_delay(request)
+                        retry_delay = delay if retry_delay is None else min(retry_delay, delay)
+                        continue
+                    try:
+                        future = executor.submit(self._run_admitted_test, case, ticket)
+                    except BaseException:
+                        manager.release(ticket, case.name)
+                        raise
+                active[future] = (index, case)
+                dispatched.append(index)
+
+            for index in dispatched:
+                del ready[index]
+                requests.pop(index, None)
+
+            if not active:
+                # External memory changes do not generate completion events.
+                assert retry_delay is not None
+                time.sleep(retry_delay)
+                continue
+            done, _ = wait(active, timeout=retry_delay, return_when=FIRST_COMPLETED)
+            for future in done:
+                index, case = active.pop(future)
+                yield future, index, case
+
+    def _required_cores(self, case: TestCase) -> int:
+        return min((case.resources or {}).get("cpu_cores", 1), self.safe_capacity)
+
+    def _run_admitted_test(self, case: TestCase, ticket: ResourceTicket) -> Dict[str, Any]:
+        try:
+            if case.steps:
+                return self._run_sequence(case, measure_memory=True)
+            spec = case.execution
+            command_preview = f"{spec.command} {' '.join(spec.args)}".strip()
+            logger.info("  [Worker] Executing command: %s", command_preview)
+            result = execute_single_test_case(
+                spec,
+                str(self.workspace) if self.workspace else None,
+                env={
+                    "OMP_NUM_THREADS": str(ticket.cpu),
+                    "MKL_NUM_THREADS": str(ticket.cpu),
+                    "NPROC": str(ticket.cpu),
+                },
+                expectation=case.expected,
+                update_baseline=self.update_baseline,
+                error_analysis=self.error_analysis,
+                measure_memory=True,
+            )
+            if result["status"] != "passed" and result.get("message"):
+                logger.error("  [Worker] Error for %s: %s", case.name, result["message"])
+            return result
+        finally:
+            self._resource_manager.release(ticket, case.name)
+
     def _run_sequence(self, case: TestCase,
                       measure_memory: bool = False) -> Dict[str, Any]:
         """Run a sequence test case with fail-fast semantics."""
@@ -412,58 +503,19 @@ class ParallelConfigRunner(ParallelRunner):
         CPU core usage and sets ``OMP_NUM_THREADS`` / ``MKL_NUM_THREADS``
         environment variables accordingly.
         """
-        # 1. Determine required core count
-        required_cores = 1
-        if case.resources and "cpu_cores" in case.resources:
-            required_cores = case.resources["cpu_cores"]
-
-        if required_cores > self.safe_capacity:
-            required_cores = self.safe_capacity
+        required_cores = self._required_cores(case)
 
         tokens_acquired = 0
         task_env = None
 
-        # 2. 联合资源池（Windows 内存管理启用时）：CPU + 内存原子准入，
-        #    内存不足排队等待（无降级）；估算来源见 _estimate_memory_bytes。
+        # Direct callers still acquire synchronously; batch dispatch already
+        # acquired a ticket before submitting the case to a worker.
         if self._memory_enabled and self._resource_manager is not None:
             memory_bytes = self._estimate_memory_bytes(case)
             ticket = self._resource_manager.acquire(
                 required_cores, memory_bytes, case.name,
             )
-            try:
-                task_env = {
-                    "OMP_NUM_THREADS": str(ticket.cpu),
-                    "MKL_NUM_THREADS": str(ticket.cpu),
-                    "NPROC": str(ticket.cpu),
-                }
-                if case.steps:
-                    return self._run_sequence(
-                        case, measure_memory=True,
-                    )
-                spec = case.execution
-                command_preview = (
-                    f"{spec.command} {' '.join(spec.args)}".strip()
-                )
-                logger.info(
-                    "  [Worker] Executing command: %s", command_preview,
-                )
-                result = execute_single_test_case(
-                    spec,
-                    str(self.workspace) if self.workspace else None,
-                    env=task_env,
-                    expectation=case.expected,
-                    update_baseline=self.update_baseline,
-                    error_analysis=self.error_analysis,
-                    measure_memory=True,
-                )
-                if result["status"] != "passed" and result.get("message"):
-                    logger.error(
-                        "  [Worker] Error for %s: %s",
-                        case.name, result["message"],
-                    )
-                return result
-            finally:
-                self._resource_manager.release(ticket, case.name)
+            return self._run_admitted_test(case, ticket)
 
         # 3. Acquire resource tokens (thread mode only)
         if self.execution_mode == "thread" and self.cpu_semaphore is not None:

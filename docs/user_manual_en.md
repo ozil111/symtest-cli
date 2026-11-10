@@ -1686,6 +1686,8 @@ the old policy's double counting that squeezed concurrency down to 1. Under memo
 pressure only new admissions pause; running tasks continue. Every denial records
 its concrete reason (demand / reserve / headroom / watermark figures) in the
 scheduler log for attribution.
+Cases waiting for admission stay in the scheduler queue. Later eligible cases
+whose dependencies are satisfied can run first.
 
 **Demand estimate priority**:
 
