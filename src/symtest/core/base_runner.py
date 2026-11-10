@@ -404,7 +404,7 @@ class BaseRunner(ABC):
 
         # ── 内存峰值记录：条件与耗时不同 ──
         # 任何获得有效测量的运行都可记录（含 failed / timeout）——这些
-        # 数据同样保护下一次调度决策；无可测量（未启用/非 Windows/测量
+        # 数据同样保护下一次调度决策；无可测量（未启用/后端不支持/测量
         # 失败）的 case 不产生任何字段，行为与旧版本一致。
         for result in self.results["details"]:
             peak = result.get("peak_memory_bytes")

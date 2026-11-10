@@ -1642,7 +1642,7 @@ Only effective in thread mode. Configured via the `scheduling.resources` field; 
 |---|---|
 | `cpu_cores` | Required CPU core count, default 1. The framework uses semaphores to control allocation; tasks exceeding the limit wait in queue |
 | `estimated_time` | Estimated duration (seconds), used for LPT scheduling (long tasks start first) |
-| `min_memory_mb` | Memory demand estimate (MB). Used directly as the admission demand estimate when Windows memory management is enabled; informational otherwise |
+| `min_memory_mb` | Memory demand estimate (MB). Used directly as the admission demand estimate when memory management is enabled; informational otherwise |
 | `priority` | Priority 0-10, currently used for informational labeling only |
 
 Framework behavior:
@@ -1650,28 +1650,55 @@ Framework behavior:
 - Automatically injects `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `NPROC` environment variables when a task starts, preventing solver thread runaway
 - Schedules by `estimated_time` in descending order (LPT strategy); if `--history-dir` is enabled, prefers historical `avg_duration` for ordering
 
-### Windows Memory-Aware Scheduling (Opportunistic Admission)
+### Memory-Aware Scheduling (Opportunistic Admission, Windows / Linux)
 
 Large-scale parallel solvers (e.g. Abaqus) occasionally fail from memory exhaustion.
-On **Windows in thread mode**, once `--history-dir` is enabled or `min_memory_mb` is
-declared, the framework switches to opportunistic memory admission: whether to start
-a new task is decided from historical demand and the current memory pressure,
-reducing parallel memory failures; occasional overcommit is allowed and zero-OOM is
-not guaranteed.
+In **thread mode** (Windows or Linux), once `--history-dir` is enabled or
+`min_memory_mb` is declared, the framework switches to opportunistic memory
+admission: whether to start a new task is decided from historical demand and the
+current memory pressure, reducing parallel memory failures; occasional overcommit
+is allowed and zero-OOM is not guaranteed.
 
-**Peak measurement**: every command runs inside a Windows Job Object
-(created suspended → assigned → resumed), so the launcher and all its descendant
-processes (the solvers) are tracked as one group for the **commit-memory peak**
-(commit basis, not physical-memory peak). Retries take the maximum across attempts;
-step sequences take the maximum across actually-executed steps.
-After the launcher exits, execution waits for all descendants in the Job to finish.
-The whole group shares the command's `timeout`; reaching that deadline terminates
-the group and reports a timeout, without a fixed descendant cleanup grace period.
-If pipe reading and the direct-process wait have completed but the Job drain query
-fails, a warning is logged and the command's output and return code are preserved,
-without reporting a timeout or rerunning the command; the peak is marked unknown.
-Descendant completion cannot be confirmed in this case; closing the Job still
-cleans up remaining processes.
+**Peak measurement** (backend chosen per platform):
+
+- **Windows**: every command runs inside a Job Object (created suspended →
+  assigned → resumed), so the launcher and all its descendant processes (the
+  solvers) are tracked as one group for the **commit-memory peak** (commit
+  basis, not physical-memory peak). If pipe reading and the direct-process
+  wait have completed but the Job drain query fails, a warning is logged and
+  the command's output and return code are preserved, without reporting a
+  timeout or rerunning the command; the peak is marked unknown. Descendant
+  completion cannot be confirmed in this case; closing the Job still cleans
+  up remaining processes;
+- **Linux**: every command runs in its own cgroup v2 sub-group (requires
+  cgroup v2 with delegation rights and a kernel ≥ 6.8 providing
+  `memory.peak`) — the wrapping shell writes its own pid into
+  `cgroup.procs` before `exec`, so the command and all its descendants are
+  group members from the very start; the recorded `memory.peak` uses the
+  **cgroup v2 accounting basis** (anonymous memory, file cache and some
+  kernel memory), which is not a physical-memory peak and is numerically
+  not comparable with the Windows commit basis.
+
+Semantics shared by both platforms: retries take the maximum across attempts;
+step sequences take the maximum across actually-executed steps. After the
+launcher exits, execution waits for all descendants in the group to finish.
+The whole group shares the command's `timeout`; reaching that deadline
+terminates the group and reports a timeout, without a fixed descendant cleanup
+grace period. On Linux without cgroup rights, measurement degrades to off
+(see "Limitations and notes" below).
+
+**System headroom snapshot** (per platform):
+
+- **Windows**: available physical memory (`GlobalMemoryStatusEx`) and the
+  commit margin (`GetPerformanceInfo`) are modelled separately;
+- **Linux**: `MemAvailable` from `/proc/meminfo` is the baseline; when running
+  inside a limited cgroup v2, the smallest `memory.max − memory.current`
+  margin over the current group and all ancestors is additionally taken,
+  min-combined with `MemAvailable` (the **effective margin**) — so that
+  container/limited environments do not merely see host memory. Linux has no
+  system-level commit-limit concept: the effective margin also plays the
+  commit-margin role, and the total is clamped to `min(MemTotal, smallest
+  group limit)`.
 
 **Admission criteria** (all must hold to start; otherwise the task queues and is
 re-evaluated periodically):
@@ -1679,25 +1706,31 @@ re-evaluated periodically):
 1. CPU tokens suffice;
 2. only under potential peak crowding, the minimum startup interval (default 1s)
    has elapsed since the last grant (see below);
-3. commit margin ≥ the new task's estimated demand + commit reserve
-   (default 2048 MB);
+3. effective margin ≥ the new task's estimated demand + reserve (default
+   2048 MB; the commit margin on Windows, the effective margin on Linux —
+   same config key);
 4. available physical memory ≥ the physical watermark (default 2048 MB; an
    independent pressure check unrelated to the task's demand).
 
-The commit and physical budgets are checked separately and never mixed. **No full
-peak reservations**: memory already in use shows up naturally in the system
-headroom, so the headroom check only covers the new task's own demand — avoiding
-the old policy's double counting that squeezed concurrency down to 1. Under memory
-pressure only new admissions pause; running tasks continue. Every denial records
-its concrete reason (demand / reserve / headroom / watermark figures) in the
-scheduler log for attribution.
+The commit and physical budgets are checked separately and never mixed (on
+Linux both checks draw from the same single budget, each keeping its own
+semantics). **No full peak reservations**: memory already in use shows up
+naturally in the system headroom, so the headroom check only covers the new
+task's own demand — avoiding the old policy's double counting that squeezed
+concurrency down to 1. Under memory pressure only new admissions pause;
+running tasks continue. Every denial records its concrete reason
+(demand / reserve / headroom / watermark figures) in the scheduler log for
+attribution.
 Cases waiting for admission stay in the scheduler queue. Later eligible cases
 whose dependencies are satisfied can run first.
 
 **Demand estimate priority**:
 
 1. explicitly declared `min_memory_mb` (user judgment wins);
-2. the historical max peak from history × safety factor (default 1.2);
+2. the historical max peak from history × safety factor (default 1.2).
+   **Peaks are read per source**: Windows reads the commit peak
+   (`max_peak_memory_bytes`), Linux reads the cgroup peak
+   (`max_peak_memory_bytes_linux`); they are never mixed across platforms;
 3. neither (first run): a configurable default demand (default 4096 MB) — no more
    whole-pool exclusive runs; the risk of an inaccurate first estimate is accepted
    and history is updated after the run.
@@ -1708,7 +1741,7 @@ first version):
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `memory_margin` | float | 1.2 | Safety factor applied to historical peaks for demand estimation |
-| `memory_commit_reserve_mb` | int | 2048 | Commit reserve (MB) the margin must additionally cover |
+| `memory_commit_reserve_mb` | int | 2048 | Reserve (MB) the margin must additionally cover (commit reserve on Windows, effective-margin reserve on Linux) |
 | `memory_physical_watermark_mb` | int | 2048 | Physical memory low-water mark (MB); below it new admissions pause |
 | `memory_default_demand_mb` | int | 4096 | Default demand estimate (MB) for cases with no history |
 | `memory_min_start_interval_s` | float | 1.0 | Minimum startup interval (seconds) under potential peak crowding; 0 disables |
@@ -1720,11 +1753,9 @@ The startup interval applies only while tasks are active and their summed estima
   failures); a heartbeat log including the denial reason is emitted once per
   minute while waiting;
 - Physical watermark validation: when total physical memory is known, a nonzero watermark must be strictly below it; otherwise initialization raises `ValueError` instead of waiting forever. Lower `memory_physical_watermark_mb`, or set it to 0 to disable this check.
-- estimated demand plus commit reserve exceeding the system commit limit (structurally unsatisfiable, e.g. a
-  small pagefile) warn and skip the commit check (physical watermark and startup
-  interval still apply), leaving the problem to the case's own failure;
-- process mode (`--execution-mode process`) and Linux do not yet participate in
-  memory scheduling or peak measurement;
+- estimated demand plus reserve exceeding the system commit limit (structurally unsatisfiable, e.g. a small pagefile / a small cgroup limit) warn and skip that check (physical watermark and startup interval still apply), leaving the problem to the case's own failure;
+- process mode (`--execution-mode process`) does not yet participate in memory scheduling or peak measurement;
+- on Linux without cgroup v2 delegation rights (cannot create sub-groups under the process's own group) or on kernels without `memory.peak`, measurement degrades to off: admission still runs on manual/default demands, and the startup log clearly states that whole-group peaks cannot be learned; no `memory.max` hard limit, no auto-retry, no proactive kills;
 - measurement failure falls back to the plain execution path with the peak marked
   unknown; test verdicts are unaffected.
 
@@ -1735,7 +1766,7 @@ Use `--history-dir` to specify a directory where the framework maintains a `.sym
 ### How It Works
 
 1. **First run**: No `.symtest` in the directory; an empty file is auto-created; ordering still uses `estimated_time` from the config
-2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order; Windows memory-aware scheduling additionally uses the historical max memory peak for admission estimates
+2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order; memory-aware scheduling additionally uses the platform's own historical max memory peak for admission estimates (commit-peak fields on Windows, cgroup-peak fields on Linux)
 3. **Regression detection**: After each run, if any case's duration exceeds the historical average by the threshold multiplier (default 1.5), a warning is printed
 4. **Memory peaks**: durations are recorded only for passed cases, while memory peaks are recorded whenever a valid measurement exists (including failed/timed-out cases — that data protects the next scheduling decision just as well)
 
@@ -1783,7 +1814,10 @@ success = runner.run_tests()
       "last_peak_memory_bytes": 5500000000,
       "max_peak_memory_bytes": 6100000000,
       "peak_memory_count": 3,
-      "peak_memory_source": "windows_job_commit"
+      "peak_memory_source": "windows_job_commit",
+      "last_peak_memory_bytes_linux": 5100000000,
+      "max_peak_memory_bytes_linux": 5300000000,
+      "peak_memory_count_linux": 2
     }
   }
 }
@@ -1794,12 +1828,21 @@ success = runner.run_tests()
 | `avg_duration` | Cumulative average duration (seconds), used for scheduling and regression baseline |
 | `last_duration` | Most recent run duration |
 | `run_count` | Historical run count |
-| `last_peak_memory_bytes` | Most recent process-group memory peak (bytes, commit basis; recorded when Windows memory management is enabled, including failed cases) |
-| `max_peak_memory_bytes` | Historical max memory peak; used by memory scheduling estimates |
-| `peak_memory_count` | Number of valid peak measurements |
+| `last_peak_memory_bytes` | Most recent process-group memory peak (bytes, Windows Job Object commit basis; recorded when Windows memory management is enabled, including failed cases) |
+| `max_peak_memory_bytes` | Historical max commit-memory peak; used by Windows memory scheduling estimates |
+| `peak_memory_count` | Number of valid peak measurements (Windows) |
 | `peak_memory_source` | Measurement source (`windows_job_commit` = Windows Job Object commit-memory peak) |
+| `last_peak_memory_bytes_linux` | Most recent process-group memory peak (bytes, Linux cgroup v2 accounting basis, includes file cache; recorded on Linux with cgroup delegation rights) |
+| `max_peak_memory_bytes_linux` | Historical max cgroup memory peak; used by Linux memory scheduling estimates |
+| `peak_memory_count_linux` | Number of valid peak measurements (Linux) |
 
-Memory fields are optional: they are absent when measurement is disabled or fails; old-format history files load without migration.
+Memory fields are optional and **isolated by source**: Windows writes the
+commit-peak fields, Linux writes the `*_linux` fields; the two bases are
+numerically incomparable and never overwrite each other — when the same history
+is used on both platforms, each platform reads only its own fields and never
+feeds the other platform's peaks into its demand estimates. Fields stay absent
+when measurement is disabled or fails; old-format history files load without
+migration.
 
 ### Regression Warning Example
 

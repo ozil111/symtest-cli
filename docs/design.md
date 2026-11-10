@@ -155,7 +155,7 @@ raw 形态的模板和继承用例允许局部 `execution` 字典，复用完整
 - JSON/YAML Runner 仅注入不同的 config_loader，通用逻辑统一在顺序 / 并行通用运行器中
 - xfail：`expected_failure=True` 时 `passed → xpassed`（意外通过，计入失败）；任意非 passed → `xfailed`（预期失败，不计入失败）
 - JUnit XML 状态映射：`xfailed → <skipped>`、`xpassed → <failure>`、`timeout → <error>`、`failed` 按消息类型分 `<failure>` / `<error>`
-- 历史：耗时累计平均更新，写入前先按 `regression_threshold` 与旧均值做回归检测；内存峰值独立记录（`last_peak_memory_bytes` / `max_peak_memory_bytes` / `peak_memory_count` / `peak_memory_source`，字节），有效测量即可记录（含 failed / timeout），调度估算用历史最大值；`--update-history` 清除整条记录（耗时 + 内存）
+- 历史：耗时累计平均更新，写入前先按 `regression_threshold` 与旧均值做回归检测；内存峰值独立记录且**按来源隔离**——Windows 提交峰值写 `last_peak_memory_bytes` / `max_peak_memory_bytes` / `peak_memory_count` / `peak_memory_source`，Linux cgroup 峰值写 `*_linux` 同构字段（`max_peak_memory_bytes_linux` 等，来源由字段名表达），两套口径数值不可比、互不覆盖；有效测量即可记录（含 failed / timeout），调度估算按平台读对应字段的历史最大值；`--update-history` 清除整条记录（耗时 + 内存）
 - `--last-failed`：每次运行只覆写本次参与执行的用例状态，子集运行不丢失其余用例状态
 
 ### 4.2 测试双模式
@@ -172,18 +172,19 @@ raw 形态的模板和继承用例允许局部 `execution` 字典，复用完整
 - 环境变量优先级：`os.environ` < 调度器注入 < case 级 env（经 subprocess 注入，不改进程全局环境）
 - 线程模式共享内存 + 结果/打印锁；进程模式经 process worker 隔离；可回退顺序执行
 
-**Windows 内存感知调度——机会式准入**（线程模式 + Windows + 启用 `--history-dir` 或声明 `min_memory_mb` 时启用；其余情况走原 CPU-only 路径，行为不变）：
+**内存感知调度——机会式准入**（线程模式 + 启用 `--history-dir` 或声明 `min_memory_mb` 时启用，Windows/Linux 均可；其余情况走原 CPU-only 路径，行为不变）：
 
-- 内存需求估算优先级：显式 `min_memory_mb` > history 历史最大峰值 × 安全系数（默认 1.2，`memory_margin` 可配） > 可配置默认需求（`memory_default_demand_mb`，默认 4096 MB）；不再整池独占
-- `JointResourceManager` 联合资源池：CPU 令牌 + 系统快照（`GlobalMemoryStatusEx` 可用物理内存、`GetPerformanceInfo` 提交余量）在同一把锁下原子评估——消除"持 CPU 等内存、持内存等 CPU"的部分占有死锁
-- **机会式准入判据**（全部满足才启动）：CPU 令牌充足；峰值可能拥挤时距上次授予 ≥ 最小启动间隔（`memory_min_start_interval_s`，默认 1s，错开启动防扎堆）；提交余量 ≥ 新任务估算需求 + 提交保留量（`memory_commit_reserve_mb`，默认 2048 MB）；可用物理内存 ≥ 物理低水位（`memory_physical_watermark_mb`，默认 2048 MB，独立检查不与需求量挂钩）。提交与物理两种口径分开建模、互不混用
+- 内存需求估算优先级：显式 `min_memory_mb` > history 历史最大峰值 × 安全系数（默认 1.2，`memory_margin` 可配） > 可配置默认需求（`memory_default_demand_mb`，默认 4096 MB）；不再整池独占。**峰值按来源隔离读取**：Windows 读提交峰值（`max_peak_memory_bytes`），Linux 读 cgroup 峰值（`max_peak_memory_bytes_linux`），两套口径数值不可比，不跨平台混用
+- `JointResourceManager` 联合资源池：CPU 令牌 + 系统快照在同一把锁下原子评估——消除"持 CPU 等内存、持内存等 CPU"的部分占有死锁。快照来源按平台：Windows `GlobalMemoryStatusEx` 可用物理内存 + `GetPerformanceInfo` 提交余量（两种口径分开建模）；Linux `/proc/meminfo` 的 `MemAvailable`，且若处于有限额的 cgroup v2 中，对当前组及祖先组取 `memory.max − memory.current` 最小余量与 `MemAvailable` 取更小（有效余量），总量钳制到 `min(MemTotal, 最小组限额)`——Linux 无系统级提交上限概念，单一有效预算同时充当提交余量角色
+- **机会式准入判据**（全部满足才启动）：CPU 令牌充足；峰值可能拥挤时距上次授予 ≥ 最小启动间隔（`memory_min_start_interval_s`，默认 1s，错开启动防扎堆）；有效余量 ≥ 新任务估算需求 + 保留量（`memory_commit_reserve_mb`，默认 2048 MB；Windows 为提交余量，Linux 为有效余量，同一配置键）；可用物理内存 ≥ 物理低水位（`memory_physical_watermark_mb`，默认 2048 MB，独立检查不与需求量挂钩）。提交与物理两种口径分开建模、互不混用（Linux 单一预算下两项检查同源，保留各自语义）
 - **不重复计账**：不再为运行中任务保留完整未来峰值——已占用内存自然体现在系统余量中；未来再次增长导致超额的风险明确接受（允许偶发 OOM，不保证零失败）。实测证明旧的"完整预留 + 快照兜底"策略在 31.8 GiB 机器上把 2/4 worker 并发压到 1
 - 平铺与依赖调度均在提交到线程池前检查准入。暂未获准的就绪用例留在调度队列，后续符合条件的用例可以先运行。调度器在用例结束时或按轮询周期重试，启动间隔即将结束时提前重试
 - 拒绝原因（含关键数值：需求/保留量/余量/水位）来自实际判断路径，记入 `waiter.deny_reason` 与调度日志，供验收归因
 - 物理低水位校验：已知总物理内存时，非零水位必须严格小于总量，否则初始化抛出 `ValueError`，避免永久排队。请降低 `memory_physical_watermark_mb`，或设为 0 禁用该检查。
-- 内存不足排队等待而非降级（CPU 的 10s 降级逻辑不适用内存）；需求未知（`None`）或需求加提交保留量超过系统提交上限（结构性不可满足，如 pagefile 过小）时跳过提交检查放行（物理水位与启动间隔仍生效），交由用例自身失败暴露问题，不永久排队
-- Job 内全部后代与启动器共享命令超时期限；管道 EOF 后继续等待组内进程结束，期限耗尽则终止整组并报告超时
-- 排空查询的 PID 数组使用指针宽度；缓冲区不足或列表不完整时扩容重试（每轮最多 8 次）。查询失败抛出 `JobError`，不作为超时；执行器记录警告，保留 `communicate` 已取得的输出和返回码，不重新执行命令，峰值保持未知。此时无法确认后代排空，关闭 Job 仍清理残留进程。
+- 内存不足排队等待而非降级（CPU 的 10s 降级逻辑不适用内存）；需求未知（`None`）或需求加保留量超过系统提交上限（结构性不可满足，如 pagefile 过小 / cgroup 限额过小）时跳过余量检查放行（物理水位与启动间隔仍生效），交由用例自身失败暴露问题，不永久排队
+- Linux 测量与降级：每条命令一个独立 cgroup v2 子组，shell 先把自身 pid 写入 `cgroup.procs` 再 `exec`（命令先进组再执行，后代全部入组）；管道 EOF 后轮询 `cgroup.procs` 排空才读 `memory.peak`。无法创建 cgroup（无委派权限、内核无 `memory.peak`）时自动降级为不测量——准入仍按手动/默认需求执行，启动日志明确提示无法学习整组峰值；不设 `memory.max` 硬上限、不自动重试、不主动杀任务（超时整组清理与 Windows 语义对齐）
+- 组内全部后代与启动器共享命令超时期限；管道 EOF 后继续等待组内进程结束，期限耗尽则终止整组并报告超时
+- Windows Job 排空查询的 PID 数组使用指针宽度；缓冲区不足或列表不完整时扩容重试（每轮最多 8 次）。查询失败抛出 `JobError`，不作为超时；执行器记录警告，保留 `communicate` 已取得的输出和返回码，不重新执行命令，峰值保持未知。此时无法确认后代排空，关闭 Job 仍清理残留进程。
 - 上述参数为 `symtest.json` run 段配置键（CLI 第一版不提供旗标）；进程模式不接入资源调度（保持既有行为）
 
 仅在存在活动任务且“活动任务估算峰值之和 + 新任务需求 + 提交保留量”大于当前提交余量时，才要求距上次授予达到启动间隔；余量充足或活动任务全部结束时立即放行。该估算可能重复计入已占用内存，只用于保守地触发间隔，不作为硬预留。快照或需求未知且存在活动任务时保守保留间隔。
@@ -201,16 +202,18 @@ raw 形态的模板和继承用例允许局部 `execution` 字典，复用完整
 
 PathResolver 解析（系统命令直通、shell builtin 平台包装、复合命令拆分解析）
 → 声明产物清理（`execution.outputs` 声明的文件在 subprocess 启动前删除；只允许声明文件，声明目录或 workspace 根一律拒绝；路径 resolve 后必须在 workspace 内，删除失败大声失败记为执行错误；每次 attempt 都执行，`--resume` 跳过的 step 天然不清理）
-→ subprocess 隔离执行（捕获 stdout / stderr / returncode / duration；Windows 测量启用时经 Job Object 以挂起创建→绑定→恢复执行整组进程，捕获进程组提交内存峰值 `PeakJobMemoryUsed`，超时经 `TerminateJobObject` 终止整组，测量失败回退普通 subprocess 路径、峰值保持未知）
+→ subprocess 隔离执行（捕获 stdout / stderr / returncode / duration；测量启用时经平台进程组后端整组执行——Windows Job Object 以挂起创建→绑定→恢复捕获 `PeakJobMemoryUsed`，Linux cgroup v2 以 shell 先迁移进组再 exec 捕获 `memory.peak`，超时均终止整组，测量失败回退普通 subprocess 路径、峰值保持未知）
 → 断言校验（return_code / contains / matches / compare_files）
 → 失败按 `retry_count` 重试
 → 超时 kill 整个进程组
 → 返回附带 `next_action_hint` 的结构化结果。
 
 进程组内存峰值是**执行事实**（原则 2），随结果可选携带 `peak_memory_bytes` /
-`peak_memory_source`（Windows 提交内存口径，非物理内存峰值；无可测量时字段缺席，
-不用 0 表示未知）。聚合规则：retry 取各 attempt 最大值；sequence 取实际执行步骤的
-最大值（步骤串行，不求和；`--resume` 跳过的步骤不补造数据）。
+`peak_memory_source`（Windows 为提交内存口径 `windows_job_commit`，Linux 为
+cgroup v2 记账口径 `linux_cgroup_v2`——含文件缓存，非物理内存峰值；两口径
+数值不可比；无可测量时字段缺席，不用 0 表示未知）。聚合规则：retry 取各
+attempt 最大值；sequence 取实际执行步骤的最大值（步骤串行，不求和；
+`--resume` 跳过的步骤不补造数据）。
 
 ### 4.6 断言与文件比较集成
 
@@ -223,7 +226,7 @@ PathResolver 解析（系统命令直通、shell builtin 平台包装、复合�
 | 状态 | 内容 | 更新时机 / 语义 |
 |---|---|---|
 | 项目默认配置 `symtest.json` | `run` 组运行选项 + `report` 组报告路径 | 运行启动时读取（CLI > 选中的参数文件 > 内置默认）；默认入口 `.symtest/symtest.json`（宽容校验，问题只警告），`--defaults FILE` 显式替代入口（严格校验，问题报错退出，不与默认文件叠加）；只读，运行中不更新 |
-| 历史记录 | per-case `avg_duration` / `last_duration` / `run_count` | 运行后累计平均更新；先回归检测后写入 |
+| 历史记录 | per-case `avg_duration` / `last_duration` / `run_count` + 可选内存字段（Windows `last_peak_memory_bytes` / `max_peak_memory_bytes` / `peak_memory_count` / `peak_memory_source`；Linux 为同构 `*_linux` 字段） | 运行后累计平均更新；先回归检测后写入；内存只要有有效测量即记录（含失败用例），估算读平台自身字段的历史最大值 |
 | `last_run.json` | case → 上次状态 | 覆写参与执行的用例；未执行的保留旧状态 |
 | `sequence_state/<case>.json` | steps + case expected 的 SHA-256 配置哈希、已通过的 step 集 | 每步 pass 后保存；全部通过后清理 |
 | `sequence_state/cache/*.log` | 步骤输出缓存 | 与上同步；供 resume 拼接复现 |
@@ -347,11 +350,14 @@ JSON/YAML 配置，学习成本更低且无交互界面维护负担。
 | `--defaults FILE` 显式默认参数文件 | 同一 workspace 需要多套默认参数（如回归 vs 验证）时免建项目 runner。显式文件**完全替代** `.symtest/symtest.json`（不叠加合并，防止验证配置漏写键时静默继承回归设置），并切换为**严格校验**（缺失/坏 JSON/未知键/类型错报错退出）——显式指定即用户意图，静默回退到另一套设置比报错更危险。默认入口保持宽容语义不变，与 `--no-config` 互斥 |
 | Logging 统一化 | 通过 `logging` 模块集中管理，CLI 入口激活控制台输出，库用户按需启用 |
 | Windows Job Object 测量进程组峰值 | 挂起创建→绑定 Job→恢复执行消除后代逃逸竞态；峰值由操作系统持续维护，无需采样即可捕捉短暂尖峰；`PeakJobMemoryUsed` 为提交内存口径，如实命名为 `peak_memory_source=windows_job_commit`，不冒充物理内存峰值 |
+| Linux cgroup v2 测量进程组峰值 | 命令必须**先进组再执行**——启动后迁移 PID 会漏掉已创建的子进程；用 shell 把自身 pid 写入 `cgroup.procs` 后 `exec` 实现（不使用 `preexec_fn`，规避多线程 fork 死锁风险）。每命令一个独立子组，`memory.peak` 高水位由内核持续维护；该口径含文件缓存，如实命名 `linux_cgroup_v2`，不冒充物理内存或提交内存峰值。不设 `memory.max` 硬上限（只测不限），无委派权限/老内核时降级为不测量，准入不受影响 |
+| 内存峰值历史按来源隔离 | Windows commit 峰值与 Linux cgroup 峰值口径不同且数值不可比：分别写 `max_peak_memory_bytes` 与 `max_peak_memory_bytes_linux` 字段，调度估算按平台读取对应字段——跨平台混用会把 5 GiB 提交峰值当作 cgroup 峰值（或反之）参与准入，得出错误余量判断 |
+| Linux 快照钳制 cgroup 限额余量 | 只看 `/proc/meminfo` 会把宿主机内存当作可用额度，容器/限额环境下准入形同虚设；对当前组及祖先组取 `memory.max − memory.current` 最小余量与 `MemAvailable` 取更小，总量同步钳制使物理水位校验在限额环境中正确拦截 |
 | CPU+内存联合原子准入 | 两个独立信号量会产生"持 CPU 等内存、持内存等 CPU"的部分占有死锁；联合池在同一把锁下原子评估池令牌 + 系统快照（物理可用与提交余量分别检查，二者防护目标不同） |
 | 机会式内存准入（不做完整峰值预留） | 旧的"系统余量须覆盖运行中任务的完整预留 + 新请求"会重复计入已分配内存（实测把 2/4 worker 并发压到 1），且把提交峰值误用于物理内存检查。机会式准入只检查新任务自身需求 + 保留量；已占用内存由系统余量自然体现；峰值可能拥挤时授予间保持最小启动间隔错开扎堆；允许偶发 OOM，不保证零失败 |
 | 内存排队而非降级 | CPU 令牌超时降级到 1 核是吞吐启发式；内存降级启动正是并行 OOM 失败的来源，故内存不足持续等待（周期唤醒重评外部内存变化），结构性不可满足（需求加提交保留量超提交上限）才跳过检查放行 |
 | 内存历史用最大值而非平均 | 峰值口径天然只增，偶发高峰被平均稀释后会在下次调度再次 OOM；估算加安全系数（默认 1.2，可配） |
-| 内存测量失败回退普通路径 | 测量是加分项不是验收条件：Job 后端失败/非 Windows/进程模式时峰值保持未知（None，不用 0 伪装），执行与判定语义完全不变 |
+| 内存测量失败回退普通路径 | 测量是加分项不是验收条件：后端失败/平台不支持/进程模式时峰值保持未知（None，不用 0 伪装），执行与判定语义完全不变；Linux 无 cgroup 委派权限时准入仍可用手动/默认需求执行，启动日志明确提示无法学习整组峰值 |
 | 控制台 log/report 通道分离 | 控制台（stderr logging）只承载进度与摘要日志；报告仅在显式 `--output-format text/json/html` 时走 stdout（可重定向落盘），细节经 `--text-report`/`--html-report`/`--junit-xml` 写文件。修复原 `print_report` 把整份文本报告经 `logger.info` 重放到终端的通道混流——`--error-analysis-all` 下逐用例 error_stats 会淹没 pass/failed 摘要 |
 
 ---
