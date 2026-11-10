@@ -71,6 +71,10 @@ def update_case(history: dict, name: str, duration: float) -> None:
         }
 
 
+#: Linux cgroup v2 后端的峰值来源标识（见 execution/linux_cgroup.py）
+LINUX_PEAK_SOURCE = "linux_cgroup_v2"
+
+
 def update_case_memory(
     history: dict, name: str, peak_bytes, source: Optional[str] = None,
 ) -> None:
@@ -78,15 +82,17 @@ def update_case_memory(
 
     与耗时的累计平均语义相互独立：
 
-    - 内存记录采用 ``last_peak_memory_bytes``（最近值）+
-      ``max_peak_memory_bytes``（历史最大）+ ``peak_memory_count``
-      （样本数）+ ``peak_memory_source``（测量来源，如
-      ``windows_job_commit``）；调度估算使用历史最大值，偶发高峰
-      不被平均稀释；
+    - 内存记录采用最近值 + 历史最大 + 样本数；调度估算使用历史最大
+      值，偶发高峰不被平均稀释；
     - 记录条件与耗时不同：任何获得有效测量的运行都可记录（含
       failed / timeout），这些数据同样保护下一次调度决策；
     - 允许产生"只有内存字段、没有 avg_duration"的记录，耗时读取方
       （``update_case`` / ``check_regression``）均已兼容。
+
+    **峰值按来源隔离保存**：Linux cgroup 峰值与 Windows Job 提交峰值
+    口径不同且数值不可比，分别写入 ``*_linux`` 字段与既有平铺字段，
+    互不覆盖；调度读取方（``parallel_config_runner``）按平台读取对应
+    字段，不得跨平台混用。
 
     ``peak_bytes`` 非正数或 ``None`` 视为无有效测量，直接忽略。
     """
@@ -94,6 +100,14 @@ def update_case_memory(
         return
     cases = history.setdefault("cases", {})
     rec = cases.setdefault(name, {})
+    if source == LINUX_PEAK_SOURCE:
+        rec["last_peak_memory_bytes_linux"] = peak_bytes
+        prev_max = rec.get("max_peak_memory_bytes_linux")
+        if prev_max is None or peak_bytes > prev_max:
+            rec["max_peak_memory_bytes_linux"] = peak_bytes
+        rec["peak_memory_count_linux"] = (
+            rec.get("peak_memory_count_linux", 0) + 1)
+        return
     rec["last_peak_memory_bytes"] = peak_bytes
     prev_max = rec.get("max_peak_memory_bytes")
     if prev_max is None or peak_bytes > prev_max:

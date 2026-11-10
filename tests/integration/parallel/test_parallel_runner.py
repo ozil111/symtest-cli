@@ -597,3 +597,154 @@ class TestWindowsMemoryManagement:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Linux memory management (cgroup v2 measurement + joint admission)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux cgroup v2 tests")
+class TestLinuxMemoryManagement:
+    """Linux 内存准入集成测试：假快照 + 假 cgroup 树驱动全链路。
+
+    假树里 cgroup.procs/memory.peak 是普通文件，由命令自身写
+    memory.peak 模拟内核记账；真 cgroupfs 行为由委派环境验收。
+    """
+
+    def _fake_snapshot(self, monkeypatch):
+        from symtest.core.system_memory import MemorySnapshot
+
+        monkeypatch.setattr(
+            "symtest.runners.parallel_config_runner.read_memory_snapshot",
+            lambda: MemorySnapshot(16 * GB, 12 * GB, 12 * GB, 16 * GB),
+        )
+
+    def _fake_cgroup_tree(self, monkeypatch, tmp_path):
+        from symtest.core.execution import linux_cgroup
+
+        root = tmp_path / "cgroup2"
+        root.mkdir()
+        monkeypatch.setattr(linux_cgroup, "_own_cgroup_dir", lambda: root)
+        monkeypatch.setattr(linux_cgroup, "_supported_cache", True)
+        monkeypatch.setattr(linux_cgroup, "_CLOSE_RETRY_S", 0.2)
+        return root
+
+    def test_admission_and_linux_peak_history_full_chain(
+            self, tmp_path, monkeypatch, caplog):
+        """准入开启 → 命令进组执行 → 峰值写回 linux 隔离字段。"""
+        import logging as _logging
+
+        from symtest.core.history_store import load_history
+
+        root = self._fake_cgroup_tree(monkeypatch, tmp_path)
+        self._fake_snapshot(monkeypatch)
+        group_dir = root / "symtest-fixed"
+        case = {
+            "name": "peak-case",
+            "execution": {
+                "command": sys.executable,
+                "args": ["-c",
+                         "import os; "
+                         "open(os.environ['PEAK_FILE'],'w').write"
+                         "('524288000'); print('peak-case')"],
+                "env": {"PEAK_FILE": str(group_dir / "memory.peak")},
+            },
+            "expected": {"return_code": 0,
+                         "output_contains": ["peak-case"]},
+            "scheduling": {"resources": {"min_memory_mb": 16}},
+        }
+        from symtest.core.execution import linux_cgroup
+        monkeypatch.setattr(linux_cgroup, "_new_group_name",
+                            lambda: "symtest-fixed")
+        config = tmp_path / "cases.json"
+        _write_config(config, [case])
+        with caplog.at_level(_logging.INFO):
+            runner = ParallelJSONRunner(
+                str(config), str(tmp_path), max_workers=2,
+                execution_mode="thread", history_dir="hist",
+            )
+            assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["passed"] == 1
+        record = load_history(str(tmp_path / "hist"))["cases"]["peak-case"]
+        assert record["max_peak_memory_bytes_linux"] == 524288000
+        assert record["last_peak_memory_bytes_linux"] == 524288000
+        assert record["peak_memory_count_linux"] == 1
+        # 隔离：不写 Windows 平铺字段
+        assert "max_peak_memory_bytes" not in record
+        assert "peak_memory_source" not in record
+        assert "cgroup v2 whole-group peak measurement enabled" in caplog.text
+
+    def test_degraded_without_cgroup_still_admits(
+            self, tmp_path, monkeypatch, caplog):
+        """无 cgroup 权限：准入仍启用（默认/手动需求），history 无峰值，
+        且明确提示无法学习整组峰值。"""
+        from symtest.core.execution import linux_cgroup
+        from symtest.core.history_store import load_history
+
+        self._fake_snapshot(monkeypatch)
+        monkeypatch.setattr(linux_cgroup, "_supported_cache", False)
+        config = tmp_path / "cases.json"
+        _write_config(config, [_sleep_case("degraded", seconds=0, mem_mb=16)])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=2,
+            execution_mode="thread", history_dir="hist",
+        )
+        assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["passed"] == 1
+        assert "cannot learn per-case whole-group memory peaks" in caplog.text
+        record = load_history(str(tmp_path / "hist"))["cases"]["degraded"]
+        assert "max_peak_memory_bytes_linux" not in record
+        assert "max_peak_memory_bytes" not in record
+
+    def test_short_case_batch_has_no_per_case_startup_delay(
+            self, tmp_path, monkeypatch):
+        """无拥挤风险时连续小任务不引入逐个 1s 启动间隔（对齐 Windows）。"""
+        import itertools
+
+        from symtest.core.execution import linux_cgroup
+
+        root = self._fake_cgroup_tree(monkeypatch, tmp_path)
+        counter = itertools.count()
+        monkeypatch.setattr(linux_cgroup, "_new_group_name",
+                            lambda: "symtest-fixed-%d" % next(counter))
+        self._fake_snapshot(monkeypatch)
+        config = tmp_path / "cases.json"
+        _write_config(config, [
+            _sleep_case("tiny%d" % i, seconds=0, mem_mb=16)
+            for i in range(12)
+        ])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=4,
+            execution_mode="thread",
+        )
+        start = time.perf_counter()
+        assert runner.run_tests()
+        assert runner._memory_enabled
+        assert runner.results["passed"] == 12
+        assert time.perf_counter() - start < 8
+
+    def test_linux_history_peak_feeds_next_admission(
+            self, tmp_path, monkeypatch):
+        """写入 history 的 linux 峰值参与下一轮需求估算（× 安全系数）。"""
+        from symtest.core.execution import linux_cgroup
+        from symtest.core.history_store import (
+            LINUX_PEAK_SOURCE, load_history, save_history, update_case_memory,
+        )
+
+        self._fake_cgroup_tree(monkeypatch, tmp_path)
+        self._fake_snapshot(monkeypatch)
+        config = tmp_path / "cases.json"
+        _write_config(config, [_sleep_case("reuse", seconds=0)])
+        runner = ParallelJSONRunner(
+            str(config), str(tmp_path), max_workers=2,
+            execution_mode="thread", history_dir="hist",
+        )
+        hist = load_history(runner.history_dir)
+        update_case_memory(hist, "reuse", 10 * GB, LINUX_PEAK_SOURCE)
+        save_history(runner.history_dir, hist)
+
+        runner.load_test_cases()
+        est = runner._estimate_memory_bytes(runner.test_cases[0])
+        assert est == int(10 * GB * runner._memory_margin)

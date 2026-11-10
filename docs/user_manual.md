@@ -1617,7 +1617,7 @@ test_cases:
 |---|---|
 | `cpu_cores` | 所需 CPU 核心数，默认 1。框架用信号量控制分配，超限任务排队等待 |
 | `estimated_time` | 预估耗时（秒），用于 LPT 调度（长任务优先启动） |
-| `min_memory_mb` | 内存需求估算量（MB）。Windows 内存管理启用时直接作为准入的需求估算；未启用时仅参与日志提示 |
+| `min_memory_mb` | 内存需求估算量（MB）。内存管理启用时直接作为准入的需求估算；未启用时仅参与日志提示 |
 | `priority` | 优先级 0-10，目前仅用于信息标注 |
 
 框架行为：
@@ -1625,38 +1625,62 @@ test_cases:
 - 任务启动时自动注入 `OMP_NUM_THREADS`、`MKL_NUM_THREADS`、`NPROC` 环境变量，防止求解器线程失控
 - 按 `estimated_time` 降序调度（LPT 策略）；若启用 `--history-dir`，优先使用历史 `avg_duration` 排序
 
-### Windows 内存感知调度（机会式准入）
+### 内存感知调度（机会式准入，Windows / Linux）
 
-大规模并行求解器（如 Abaqus）偶发因内存不足失败。在 **Windows + 线程模式** 下，
-启用 `--history-dir` 或声明 `min_memory_mb` 后，框架进入机会式内存准入：根据
-历史需求和当前内存压力决定是否启动新任务，减少并行引起的内存失败；允许偶发
-超出内存，不保证零 OOM。
+大规模并行求解器（如 Abaqus）偶发因内存不足失败。在**线程模式**下（Windows 或
+Linux），启用 `--history-dir` 或声明 `min_memory_mb` 后，框架进入机会式内存准入：
+根据历史需求和当前内存压力决定是否启动新任务，减少并行引起的内存失败；
+允许偶发超出内存，不保证零 OOM。
 
-**峰值测量**：每个命令经 Windows Job Object 以"挂起创建 → 绑定 → 恢复"方式执行，
-启动器及其后代进程（求解器）整组被统计**提交内存峰值**（commit memory 口径，
-非物理内存峰值）。retry 取各次尝试的最大值；步骤序列取实际执行步骤的最大值。
-启动器退出后仍等待 Job 内全部后代结束；整组进程共享命令的 `timeout`，
-超过期限会终止整组并报告超时，不使用固定的后代清理宽限时间。
-若管道读取及主进程等待已完成，但 Job 排空查询失败，则记录警告，保留命令的输出和返回码，
-不报告超时、不重新执行，峰值标记为未知；此时无法确认后代全部完成，关闭 Job 仍会清理残留进程。
+**峰值测量**（按平台选择后端）：
+
+- **Windows**：每个命令经 Job Object 以"挂起创建 → 绑定 → 恢复"方式执行，
+  启动器及其后代进程（求解器）整组被统计**提交内存峰值**（commit memory
+  口径，非物理内存峰值）。若管道读取及主进程等待已完成，但 Job 排空查询
+  失败，则记录警告，保留命令的输出和返回码，不报告超时、不重新执行，
+  峰值标记为未知；此时无法确认后代全部完成，关闭 Job 仍会清理残留进程；
+- **Linux**：每个命令在独立 cgroup v2 子组中执行（要求 cgroup v2 且有委派
+  权限、内核 ≥ 6.8 提供 `memory.peak`）——包装 shell 先把自身 pid 写入
+  `cgroup.procs` 再 `exec`，命令及其全部后代从一开始就在组内；读取的
+  `memory.peak` 为 **cgroup 记账口径**（含匿名内存、文件缓存与部分内核
+  内存），非物理内存峰值，与 Windows 提交口径数值不可比。
+
+两平台一致的语义：retry 取各次尝试的最大值；步骤序列取实际执行步骤的最大值。
+启动器退出后仍等待组内全部后代结束；整组进程共享命令的 `timeout`，超过期限
+会终止整组并报告超时，不使用固定的后代清理宽限时间。Linux 无 cgroup 权限时
+自动降级为不测量（见下"限制与说明"）。
+
+**系统余量快照**（按平台）：
+
+- **Windows**：可用物理内存（`GlobalMemoryStatusEx`）与提交余量
+  （`GetPerformanceInfo`）分别建模；
+- **Linux**：`/proc/meminfo` 的 `MemAvailable` 为基准；若处于有限额的
+  cgroup v2 中，另对当前组及祖先组取 `memory.max − memory.current` 最小
+  余量，与 `MemAvailable` 取更小（**有效余量**）——避免在容器/限额环境
+  只看到宿主机内存；Linux 无系统级提交上限概念，有效余量同时充当提交
+  余量角色，总量钳制到 `min(MemTotal, 最小组限额)`。
 
 **准入判据**（全部满足才启动，否则排队等待并周期重评）：
 
 1. CPU 令牌充足；
-2. 仅在峰值可能拥挤时要求峰值可能拥挤时距上次授予 ≥ 最小启动间隔（默认 1s，规则见下）；
-3. 提交余量 ≥ 新任务估算需求 + 提交保留量（默认 2048 MB）；
+2. 仅在峰值可能拥挤时要求距上次授予 ≥ 最小启动间隔（默认 1s，规则见下）；
+3. 有效余量 ≥ 新任务估算需求 + 保留量（默认 2048 MB；Windows 为提交余量，
+   Linux 为有效余量，同一配置键）；
 4. 可用物理内存 ≥ 物理低水位（默认 2048 MB，独立压力检查，与任务需求无关）。
 
-提交与物理两种口径分开检查、互不混用。**不做完整峰值预留**：已占用内存自然
-体现在系统余量中，系统余量只需覆盖新任务自身需求——避免旧策略把已分配内存
-重复计入而把并发压到 1。内存压力大时只暂停启动新任务，已运行任务继续执行。
+提交与物理两种口径分开检查、互不混用（Linux 单一预算下两项检查同源，保留
+各自语义）。**不做完整峰值预留**：已占用内存自然体现在系统余量中，系统余量
+只需覆盖新任务自身需求——避免旧策略把已分配内存重复计入而把并发压到 1。
+内存压力大时只暂停启动新任务，已运行任务继续执行。
 每次拒绝的具体原因（需求/保留量/余量/水位数值）记入调度日志，便于归因。
 等待准入的用例留在调度队列，后续满足准入条件且依赖已完成的用例可以先运行。
 
 **需求估算优先级**：
 
 1. 显式声明的 `min_memory_mb`（用户判断优先）；
-2. history 中的历史最大峰值 × 安全系数（默认 1.2）；
+2. history 中的历史最大峰值 × 安全系数（默认 1.2）。**按来源隔离读取**：
+   Windows 读提交峰值（`max_peak_memory_bytes`），Linux 读 cgroup 峰值
+   （`max_peak_memory_bytes_linux`），不跨平台混用；
 3. 两者皆无（首次运行）：使用可配置的默认需求（默认 4096 MB）——不再整池
    独占；首次估算不准的风险接受，运行后更新历史。
 
@@ -1665,7 +1689,7 @@ test_cases:
 | 配置键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `memory_margin` | float | 1.2 | 历史峰值估算需求的安全系数 |
-| `memory_commit_reserve_mb` | int | 2048 | 提交余量保留（MB），准入时需额外覆盖 |
+| `memory_commit_reserve_mb` | int | 2048 | 余量保留（MB），准入时需额外覆盖（Windows 为提交余量保留，Linux 为有效余量保留） |
 | `memory_physical_watermark_mb` | int | 2048 | 物理内存低水位（MB），低于该值暂停新任务 |
 | `memory_default_demand_mb` | int | 4096 | 需求未知 case 的默认估算需求（MB） |
 | `memory_min_start_interval_s` | float | 1.0 | 峰值可能拥挤时的最小启动间隔（秒），0 关闭 |
@@ -1674,9 +1698,10 @@ test_cases:
 
 **限制与说明**：
 - 内存不足持续等待（这正是防止 OOM 失败的机制），等待期间每分钟输出一次心跳日志（含拒绝原因）；
-- 物理低水位校验：已知总物理内存时，非零水位必须严格小于总量，否则初始化抛出 `ValueError`，避免永久排队。请降低 `memory_physical_watermark_mb`，或设为 0 禁用该检查。
-- 估算需求加提交保留量超过系统提交上限（如 pagefile 过小，结构性不可满足）时，警告并跳过提交检查放行（物理水位与启动间隔仍生效），交由用例自身失败暴露问题；
-- 进程模式（`--execution-mode process`）与 Linux 暂不接入内存调度与峰值测量；
+- 物理低水位校验：已知总物理内存时，非零水位必须严格小于总量，否则初始化抛出 `ValueError`，避免永久排队。请降低 `memory_physical_watermark_mb`，或设为 0 禁用该检查；
+- 估算需求加保留量超过系统提交上限（如 pagefile 过小 / cgroup 限额过小，结构性不可满足）时，警告并跳过该项检查放行（物理水位与启动间隔仍生效），交由用例自身失败暴露问题；
+- 进程模式（`--execution-mode process`）暂不接入内存调度与峰值测量；
+- Linux 无法创建测量子组、内核无 `memory.peak` 或命令进程迁移失败时，命令以普通子进程执行一次，整组峰值未知。准入仍按手动/默认需求执行。不设 `memory.max` 硬上限、不主动杀任务。
 - 测量失败自动回退普通执行路径，峰值标记为未知，不影响测试判定。
 
 ## 历史记录与回归检测
@@ -1686,7 +1711,7 @@ test_cases:
 ### 工作原理
 
 1. **首次运行**：目录下没有 `.symtest`，自动创建空文件，排序仍使用配置中的 `estimated_time`
-2. **后续运行**：读取 `.symtest` 中的历史数据，优先使用 `avg_duration` 做调度排序；Windows 内存感知调度同时使用历史最大内存峰值做准入估算
+2. **后续运行**：读取 `.symtest` 中的历史数据，优先使用 `avg_duration` 做调度排序；内存感知调度同时使用平台对应的历史最大内存峰值做准入估算（Windows 读提交峰值字段，Linux 读 cgroup 峰值字段）
 3. **回归检测**：每次运行结束后，如果某 case 耗时超过历史均值的阈值倍数（默认 1.5），打印警告
 4. **内存峰值**：耗时只记录通过的 case，内存峰值只要有有效测量就记录（含失败/超时的 case——这些数据同样保护下一次调度决策）
 
@@ -1734,7 +1759,10 @@ success = runner.run_tests()
       "last_peak_memory_bytes": 5500000000,
       "max_peak_memory_bytes": 6100000000,
       "peak_memory_count": 3,
-      "peak_memory_source": "windows_job_commit"
+      "peak_memory_source": "windows_job_commit",
+      "last_peak_memory_bytes_linux": 5100000000,
+      "max_peak_memory_bytes_linux": 5300000000,
+      "peak_memory_count_linux": 2
     }
   }
 }
@@ -1745,12 +1773,18 @@ success = runner.run_tests()
 | `avg_duration` | 累计平均耗时（秒），用于调度排序和回归基线 |
 | `last_duration` | 最近一次运行耗时 |
 | `run_count` | 历史运行次数 |
-| `last_peak_memory_bytes` | 最近一次进程组内存峰值（字节，提交内存口径；Windows 内存管理启用时记录，含失败用例） |
-| `max_peak_memory_bytes` | 历史最大内存峰值，内存调度估算使用该值 |
-| `peak_memory_count` | 有效峰值测量次数 |
+| `last_peak_memory_bytes` | 最近一次进程组内存峰值（字节，Windows Job Object 提交内存口径；Windows 内存管理启用时记录，含失败用例） |
+| `max_peak_memory_bytes` | 历史最大提交内存峰值，Windows 内存调度估算使用该值 |
+| `peak_memory_count` | 有效峰值测量次数（Windows） |
 | `peak_memory_source` | 测量来源（`windows_job_commit` = Windows Job Object 提交内存峰值） |
+| `last_peak_memory_bytes_linux` | 最近一次进程组内存峰值（字节，Linux cgroup v2 记账口径，含文件缓存；Linux 且有 cgroup 委派权限时记录） |
+| `max_peak_memory_bytes_linux` | 历史最大 cgroup 内存峰值，Linux 内存调度估算使用该值 |
+| `peak_memory_count_linux` | 有效峰值测量次数（Linux） |
 
-内存字段为可选：未启用测量或测量失败时不产生这些字段；旧格式 history 无需迁移即可继续使用。
+内存字段为可选且**按来源隔离**：Windows 写提交峰值字段，Linux 写 `*_linux`
+字段，两套口径数值不可比、互不覆盖——同一份 history 在两平台先后使用时，
+各平台只读自己的字段，不会把另一平台的峰值当作本平台需求估算。未启用
+测量或测量失败时不产生对应字段；旧格式 history 无需迁移即可继续使用。
 
 ### 回归警告示例
 
