@@ -336,8 +336,13 @@ timing samples (earliest run 5). Explicit memory demands skip memory warm-up;
 failed peak collection keeps a case warming up. Windows Job execution adds
 optional `cpu_time` / `cpu_time_source` to result JSON and independent CPU
 averages/counts to history. CPU is summed over all measured attempts/steps;
-incomplete or resumed aggregates are omitted. Scheduling and warnings still use
-wall duration. Existing histories remain usable; `--update-history` can replace
+incomplete or resumed aggregates are omitted. Scheduling still uses wall
+duration, but regression warnings do not: when a CPU measurement is present
+(Windows), the comparison uses only CPU history — warnings are suppressed until
+3 prior CPU samples exist, and there is no fallback to wall time (this path
+cannot detect wall-clock-only slowdowns). Wall-duration warnings apply only
+when no CPU measurement exists (Linux, or Windows measurement failure).
+Existing histories remain usable; `--update-history` can replace
 old mixed-condition timings without discarding pre-run admission knowledge.
 ```bash
 # Machine-readable JSON
