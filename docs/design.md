@@ -166,7 +166,20 @@ raw 形态的模板和继承用例允许局部 `execution` 字典，复用完整
 
 ### 4.3 并行与资源调度
 
-- LPT 策略：长任务先行；启用 history 时优先用 `.symtest` 历史 `avg_duration` 排序，其次才看声明的 `estimated_time`（兼容"只有内存记录、没有耗时字段"的历史条目，按 0 处理）
+- LPT 策略：长任务先行；存在历史耗时样本时优先用 `avg_duration`，只有内存记录时回退声明的 `estimated_time`。
+
+线程内存感知模式按运行前的需求来源决定是否预热：没有显式需求和本平台
+有效历史峰值的用例只学习内存，不计入耗时历史。典型流程为首轮内存、次轮
+耗时、第三轮历史耗时调度。告警要求至少 3 个先前的有效通过耗时样本，先
+比较再更新。Windows Job basic accounting 的用户态 + 内核态 CPU 时间
+从 100 ns tick 换算成秒，经 ExecutionResult → TestResult → 重试求和 →
+序列求和 → 独立 CPU 均值 / 样本数历史。任一部分缺测或包含缓存恢复步骤
+则省略 CPU 总值；None 表示未知，零值有效。CPU 查询失败保留执行结果。
+墙钟耗时继续用于调度、报告和超时；**性能回归告警按度量来源选口径**：本次
+带 CPU 测量（Windows）时只用 CPU 历史比较（同样要求 ≥3 个先前 CPU 样本，
+样本不足不回退墙钟，避免并行负载下的墙钟误报），无 CPU 测量（Linux /
+测量失败）退化为墙钟口径。旧历史保留，`--update-history` 按运行前准入信息
+重建耗时计数。本次不做并发归一化，也不引入 Linux CPU 统计。
 - `AtomicSemaphore` 资源池：`safe_capacity = max(1, cpu_count − 2)`；每个 case 按 `cpu_cores` acquire/release
 - 按权重比例分配相对 CPU 核数，并自动注入 `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC`
 - 环境变量优先级：`os.environ` < 调度器注入 < case 级 env（经 subprocess 注入，不改进程全局环境）

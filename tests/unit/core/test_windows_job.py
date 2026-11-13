@@ -27,6 +27,38 @@ def _py(code: str) -> ExecutionSpec:
 
 
 class TestPeakMeasurement:
+    def test_cpu_includes_exited_descendant(self):
+        busy = "import time; end=time.process_time()+0.25\nwhile time.process_time()<end: pass"
+        spec = _py("import subprocess,sys; subprocess.run([sys.executable,'-c',%r])" % busy)
+        result = execute_command(spec, measure_memory=True)
+        assert result.error is None
+        assert result.return_code == 0
+        assert result.cpu_time is not None
+        assert result.cpu_time >= 0.20
+
+    def test_cpu_query_failure_preserves_command(self):
+        with patch.object(windows_job, 'query_cpu_time', return_value=None):
+            result = execute_command(_py("print('ok')"), measure_memory=True)
+        assert result.return_code == 0
+        assert result.error is None
+        assert result.cpu_time is None
+        assert result.peak_memory_bytes is not None
+
+    def test_cpu_query_converts_ticks(self):
+        def query(job, kind, ptr, size, length):
+            info = ptr._obj
+            info.TotalUserTime = 20_000_000
+            info.TotalKernelTime = 5_000_000
+            return 1
+        with patch.object(windows_job, '_kernel32') as kernel:
+            kernel.return_value.QueryInformationJobObject.side_effect = query
+            assert windows_job.query_cpu_time(123) == 2.5
+
+    def test_cpu_query_failure_returns_unknown(self):
+        with patch.object(windows_job, '_kernel32') as kernel:
+            kernel.return_value.QueryInformationJobObject.return_value = 0
+            assert windows_job.query_cpu_time(123) is None
+
     def test_peak_includes_grandchild_allocation(self):
         """父进程派生子进程分配 100MB —— 峰值必须覆盖后代进程。"""
         child_alloc = "buf=bytearray(100*1024*1024);time.sleep(0.5)"

@@ -11,6 +11,7 @@ from .history_store import (
     load_history,
     update_case,
     update_case_memory,
+    update_case_cpu,
     check_regression,
     save_history,
     reset_cases,
@@ -374,6 +375,10 @@ class BaseRunner(ABC):
         ws = str(self.workspace) if self.workspace else str(Path.cwd())
         update_last_run(ws, self.results["details"])
 
+    def _timing_history_ready(self, name: str) -> bool:
+        """Whether this run used a sufficiently informed resource estimate."""
+        return True
+
     def _update_history(self) -> None:
         """Update .symtest history with successful run results and check for regressions."""
         if not self.history_dir:
@@ -395,12 +400,21 @@ class BaseRunner(ABC):
             # Only record successful cases in history; skip failed ones
             if result["status"] != "passed":
                 continue
+            if not self._timing_history_ready(result["name"]):
+                logger.info("Timing warm-up: '%s' records memory only", result["name"])
+                continue
             duration = result.get("duration", 0)
-            # Check regression BEFORE updating (compare against old avg)
-            warning = check_regression(history, result["name"], duration, self.regression_threshold)
+            # Check regression BEFORE updating (compare against old avg).
+            # Windows（有 CPU 测量）用 CPU 口径，Linux / 测量失败退化为墙钟。
+            warning = check_regression(
+                history, result["name"], duration, self.regression_threshold,
+                cpu_time=result.get("cpu_time"),
+            )
             if warning:
                 logger.warning(warning)
             update_case(history, result["name"], duration)
+            if result.get("cpu_time") is not None:
+                update_case_cpu(history, result["name"], result["cpu_time"])
 
         # ── 内存峰值记录：条件与耗时不同 ──
         # 任何获得有效测量的运行都可记录（含 failed / timeout）——这些

@@ -257,7 +257,7 @@ class ParallelConfigRunner(ParallelRunner):
                     history_cases = hist.get("cases", {})
 
                 def get_estimated_time(case: TestCase) -> float:
-                    if case.name in history_cases:
+                    if history_cases.get(case.name, {}).get("run_count", 0) > 0:
                         # 兼容"只有内存记录、没有耗时字段"的记录
                         # （内存峰值可在 case 失败时先行记录）。
                         return float(
@@ -281,7 +281,7 @@ class ParallelConfigRunner(ParallelRunner):
                 top_case = self.test_cases[0]
                 top_est = get_estimated_time(top_case)
                 source = (
-                    "history" if top_case.name in history_cases else "config"
+                    "history" if history_cases.get(top_case.name, {}).get("run_count", 0) > 0 else "config"
                 )
                 logger.info(
                     "Heaviest task: %s (Est: %.2fs, source: %s)",
@@ -478,6 +478,15 @@ class ParallelConfigRunner(ParallelRunner):
 
     def _required_cores(self, case: TestCase) -> int:
         return min((case.resources or {}).get("cpu_cores", 1), self.safe_capacity)
+
+    def _timing_history_ready(self, name: str) -> bool:
+        if not self._memory_enabled:
+            return True
+        case = next(c for c in self.test_cases if c.name == name)
+        if (case.resources or {}).get("min_memory_mb"):
+            return True
+        key = "max_peak_memory_bytes" if os.name == "nt" else "max_peak_memory_bytes_linux"
+        return self._memory_history.get(name, {}).get(key, 0) > 0
 
     def _run_admitted_test(self, case: TestCase, ticket: ResourceTicket) -> Dict[str, Any]:
         try:

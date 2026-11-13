@@ -328,6 +328,17 @@ for later eligible cases whose dependencies are satisfied.
 The startup interval applies only while tasks are active and their summed estimated peaks plus the new demand and commit reserve exceed current commit headroom. Ample headroom or an empty active set permits immediate admission. This conservative signal may double-count allocated memory; it triggers spacing, never a hard reservation. With active tasks and unknown demand or headroom, spacing is retained conservatively.
 
 ### Output
+
+With memory-aware thread history, cases without a declared memory demand or a
+learned platform peak first warm up memory only. Typically run 2 starts timing
+history and run 3 uses it for scheduling. Regression warnings need 3 prior passed
+timing samples (earliest run 5). Explicit memory demands skip memory warm-up;
+failed peak collection keeps a case warming up. Windows Job execution adds
+optional `cpu_time` / `cpu_time_source` to result JSON and independent CPU
+averages/counts to history. CPU is summed over all measured attempts/steps;
+incomplete or resumed aggregates are omitted. Scheduling and warnings still use
+wall duration. Existing histories remain usable; `--update-history` can replace
+old mixed-condition timings without discarding pre-run admission knowledge.
 ```bash
 # Machine-readable JSON
 symtest run test_cases.json --output-format json

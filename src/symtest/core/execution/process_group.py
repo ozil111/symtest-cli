@@ -51,6 +51,13 @@ def query_peak_bytes(handle):
     return linux_cgroup.query_peak_bytes(handle)
 
 
+def query_cpu_time(handle):
+    """Windows Job user + kernel seconds; None on unsupported/query failure."""
+    if os.name == "nt":
+        return windows_job.query_cpu_time(handle)
+    return None
+
+
 def close_group(handle) -> None:
     """清理组资源（句柄/目录）。"""
     if os.name == "nt":
