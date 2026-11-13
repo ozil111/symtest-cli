@@ -130,3 +130,15 @@ def test_timing_warmup_uses_pre_run_memory_information(declared, peak, enabled, 
     key = 'max_peak_memory_bytes' if os.name == 'nt' else 'max_peak_memory_bytes_linux'
     runner._memory_history = {'a': {key: peak}} if peak is not None else {}
     assert runner._timing_history_ready('a') is ready
+
+
+def test_timing_ready_without_platform_peak_learning():
+    # Linux 无 cgroup 委派：峰值永远学不到时跳过 warm-up，直接记录耗时，
+    # 否则调度 / 回归告警永久失效（GH Actions runner 上曾出现）。
+    from symtest.core.test_case import TestCase
+    runner = ParallelJSONRunner('unused.json')
+    runner.test_cases = [TestCase('a', command='echo')]
+    runner._memory_enabled = True
+    runner._peak_learning_supported = False
+    runner._memory_history = {}
+    assert runner._timing_history_ready('a') is True

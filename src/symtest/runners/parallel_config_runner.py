@@ -94,6 +94,9 @@ class ParallelConfigRunner(ParallelRunner):
         # 在 load_test_cases 解析出用例后按条件启用，见
         # ``_setup_memory_management``。未启用时保持原 CPU-only 路径。
         self._memory_enabled = False
+        # 平台整组峰值学习能力（Linux 无 cgroup v2 委派时为 False）：
+        # 学不到峰值时跳过 warm-up 等待，否则耗时历史永久无法记录。
+        self._peak_learning_supported = True
         self._memory_history: Dict[str, Any] = {}
         self._resource_manager = None
 
@@ -356,10 +359,12 @@ class ParallelConfigRunner(ParallelRunner):
                     "measurement enabled (per-command cgroups).",
                 )
             else:
+                self._peak_learning_supported = False
                 logger.warning(
                     "✅ [Resource Manager] cgroup v2 unavailable — cannot "
                     "learn per-case whole-group memory peaks; admission "
-                    "falls back to manual/default demand estimates.",
+                    "falls back to manual/default demand estimates; "
+                    "timing history starts from the first run.",
                 )
 
         self._memory_history = history_cases or {}
@@ -481,6 +486,10 @@ class ParallelConfigRunner(ParallelRunner):
 
     def _timing_history_ready(self, name: str) -> bool:
         if not self._memory_enabled:
+            return True
+        if not self._peak_learning_supported:
+            # 平台无法学习峰值（Linux 无 cgroup 委派）：warm-up 等不到
+            # 峰值，直接记录耗时，调度 / 回归检测保持可用。
             return True
         case = next(c for c in self.test_cases if c.name == name)
         if (case.resources or {}).get("min_memory_mb"):

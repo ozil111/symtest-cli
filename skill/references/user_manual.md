@@ -1770,6 +1770,12 @@ Use `--history-dir` to specify a directory where the framework maintains `histor
 3. **Regression detection**: Requires at least **3 prior successful timing samples** (fixed minimum). Only then does duration exceeding the historical average times the threshold (default 1.5) warn. For a new memory-aware case, run 1 learns memory, runs 2–4 collect timing samples, and run 5 is the earliest warning. Scheduling may use the first timing sample; it does not wait for baseline maturity.
 4. **Memory peaks**: durations are recorded only for passed cases, while memory peaks are recorded whenever a valid measurement exists (including failed/timed-out cases — that data protects the next scheduling decision just as well)
 
+Exception: on Linux without usable cgroup v2 (no delegation rights, e.g. hosted
+CI runners) the platform can never learn whole-group peaks, so warm-up is
+skipped and timing history starts from the first run — admission keeps working
+with default demand estimates, and scheduling/regression warnings stay
+functional.
+
 Windows Job measurement also records optional `cpu_time` (seconds) and
 `cpu_time_source: "windows_job"` in result JSON / the Python result dictionary.
 This is user + kernel CPU time for the command and all descendants, including

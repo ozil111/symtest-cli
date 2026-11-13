@@ -198,6 +198,9 @@ JSON Schema; it is not restated here.
 Timing history excludes memory-aware thread cases whose pre-run memory estimate
 has neither a declared demand nor a valid platform peak. Memory is still learned
 on the first run; the second can collect timing, the third can schedule from it.
+Exception: on Linux without cgroup v2 (platform peak learning unavailable) the
+warm-up wait can never succeed, so timing history starts on the first run and
+scheduling/regression detection stay functional.
 Regression requires 3 prior successful timing samples, checked before updating.
 Windows Job basic accounting supplies user + kernel CPU seconds (100 ns ticks
 converted to seconds), propagated through ExecutionResult → TestResult → retry
