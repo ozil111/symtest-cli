@@ -25,8 +25,11 @@ def test_memory_warmup_then_timing_then_scheduling(tmp_path, caplog):
     for run in range(1, 6):
         runner = ParallelJSONRunner(str(config), workspace=str(tmp_path), history_dir=history_dir)
         runner.load_test_cases()
-        # Exercise policy independently of host memory/cgroup availability.
+        # Exercise policy independently of host memory/cgroup availability:
+        # simulate a platform whose peak learning works (peaks are reported
+        # below), so warm-up gating must not depend on the host's cgroup.
         runner._memory_enabled = True
+        runner._peak_learning_supported = True
         runner._memory_history = load_history(history_dir)['cases']
         if run == 2:
             assert [c.name for c in runner.test_cases] == ['short', 'long']
