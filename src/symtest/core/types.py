@@ -92,6 +92,8 @@ class TestResultData(TypedDict):
     #  "linux_cgroup_v2" = Linux cgroup v2 whole-group accounting peak).
     peak_memory_bytes: Optional[int]
     peak_memory_source: Optional[str]
+    cpu_time: Optional[float]
+    cpu_time_source: Optional[str]
     # ── Structured remediation suggestion (populated on failure) ──
     # Dict with: action ('update_baseline' | 'update_expected' | 'increase_timeout'
     # | 'investigate'), command (concrete symtest command, filled by runners),

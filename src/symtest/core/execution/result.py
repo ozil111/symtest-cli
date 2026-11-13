@@ -28,3 +28,4 @@ class ExecutionResult:
     # ── 进程组内存峰值（执行事实，可选） ──
     peak_memory_bytes: Optional[int] = None  # 平台后端口径峰值；None=未测量
     peak_memory_source: Optional[str] = None  # "windows_job_commit" / "linux_cgroup_v2"
+    cpu_time: Optional[float] = None  # Windows Job user + kernel CPU seconds

@@ -1761,14 +1761,44 @@ The startup interval applies only while tasks are active and their summed estima
 
 ## History & Regression Detection
 
-Use `--history-dir` to specify a directory where the framework maintains a `.symtest` file recording each case's historical run times.
+Use `--history-dir` to specify a directory where the framework maintains `history.json` with each case's history.
 
 ### How It Works
 
-1. **First run**: No `.symtest` in the directory; an empty file is auto-created; ordering still uses `estimated_time` from the config
-2. **Subsequent runs**: Reads historical data from `.symtest`, preferring `avg_duration` for scheduling order; memory-aware scheduling additionally uses the platform's own historical max memory peak for admission estimates (commit-peak fields on Windows, cgroup-peak fields on Linux)
-3. **Regression detection**: After each run, if any case's duration exceeds the historical average by the threshold multiplier (default 1.5), a warning is printed
+1. **First run**: Creates `history.json`. With memory-aware thread scheduling, a case without an explicit `min_memory_mb` or a valid platform memory peak from a previous run only learns memory; its wall/CPU times remain visible in results but do not enter timing history. Other execution modes keep recording successful timings normally.
+2. **Subsequent runs**: With a learned memory peak, the next successful run starts timing history; the following run can use `avg_duration` for scheduling. Memory-only entries fall back to configured `estimated_time`. Warm-up is per case, including newly added cases. If peak measurement repeatedly fails, that case remains in memory warm-up until a peak is learned or `min_memory_mb` is supplied.
+3. **Regression detection**: Requires at least **3 prior successful timing samples** (fixed minimum). Only then does duration exceeding the historical average times the threshold (default 1.5) warn. For a new memory-aware case, run 1 learns memory, runs 2–4 collect timing samples, and run 5 is the earliest warning. Scheduling may use the first timing sample; it does not wait for baseline maturity.
 4. **Memory peaks**: durations are recorded only for passed cases, while memory peaks are recorded whenever a valid measurement exists (including failed/timed-out cases — that data protects the next scheduling decision just as well)
+
+Exception: on Linux without usable cgroup v2 (no delegation rights, e.g. hosted
+CI runners) the platform can never learn whole-group peaks, so warm-up is
+skipped and timing history starts from the first run — admission keeps working
+with default demand estimates, and scheduling/regression warnings stay
+functional.
+
+Windows Job measurement also records optional `cpu_time` (seconds) and
+`cpu_time_source: "windows_job"` in result JSON / the Python result dictionary.
+This is user + kernel CPU time for the command and all descendants, including
+exited children, summed across retries and sequence steps. It excludes SymTest's
+own validation/file-comparison CPU cost and can exceed wall time for multithreaded
+commands. A genuine zero is valid; unavailable measurements omit the fields.
+If any attempt/step is unmeasured, or a sequence resumes cached steps, the aggregate
+CPU time is omitted rather than reporting a partial total. Failed executions may
+still expose measured CPU time in results. Passed, non-warm-up cases additionally
+store `avg_cpu_time`, `last_cpu_time`, `cpu_run_count`, and `cpu_time_source` in
+history, independently of wall duration. Linux and plain subprocess execution do
+not report this Windows metric. CPU values do not replace wall-time scheduling,
+timeouts, or JUnit durations; **regression warnings pick the metric by source** —
+a run carrying a CPU measurement (Windows) is compared against the CPU average /
+sample count only (also requiring at least 3 prior CPU samples; immature samples
+suppress the warning for that run instead of falling back to wall time, avoiding
+wall-clock false positives under parallel load), and runs without a CPU
+measurement (Linux / query failure) fall back to the wall-clock metric.
+
+These measures avoid cold-memory samples and premature warnings; they do not
+normalize arbitrary CPU/I/O contention. Existing timing records remain compatible
+and count toward the minimum. To replace old mixed-condition samples, run once
+with `--update-history` while retaining learned memory history.
 
 ### CLI Usage
 
@@ -1827,7 +1857,9 @@ success = runner.run_tests()
 |---|---|
 | `avg_duration` | Cumulative average duration (seconds), used for scheduling and regression baseline |
 | `last_duration` | Most recent run duration |
-| `run_count` | Historical run count |
+| `run_count` | Successful timing samples, excluding memory warm-up |
+| `avg_cpu_time` / `last_cpu_time` | Average / latest measured Windows Job CPU seconds (optional); `avg_cpu_time` / `cpu_run_count` drive Windows regression warnings when this run has a CPU measurement |
+| `cpu_run_count` / `cpu_time_source` | Valid CPU timing samples / `windows_job` (optional) |
 | `last_peak_memory_bytes` | Most recent process-group memory peak (bytes, Windows Job Object commit basis; recorded when Windows memory management is enabled, including failed cases) |
 | `max_peak_memory_bytes` | Historical max commit-memory peak; used by Windows memory scheduling estimates |
 | `peak_memory_count` | Number of valid peak measurements (Windows) |
@@ -1852,6 +1884,13 @@ When a case's runtime exceeds the historical average by the threshold multiplier
 ⚠ WARNING: Case 'heavy_simulation' regressed: 18.2s vs avg 10.5s (1.73x slower)
 ```
 
+Runs with a Windows CPU measurement use the CPU metric (message marked `CPU`;
+CPU time can exceed wall time for multithreaded commands):
+
+```
+⚠ WARNING: Case 'heavy_simulation' regressed: 26.4s CPU vs avg 12.1s CPU (2.18x slower)
+```
+
 ### Without History
 
 When `--history-dir` is not provided, behavior is identical to before — no extra files are created.
@@ -1869,7 +1908,7 @@ symtest run config.json --history-dir ./hist --update-history
 - Clears the history entries in `.symtest` for **the cases involved in this run**
 - History data for cases not in this run is preserved
 - No false positives from regression detection in this run (no historical baseline for comparison)
-- The durations of passing cases in this run are recorded as a fresh starting point
+- Passing non-warm-up cases start fresh timing history; memory warm-up uses the pre-run estimates, so an existing learned peak still permits timing. The 3-prior-sample warning minimum starts over.
 - The report shows a `History Reset` count
 
 > **Note**: Must be used with `--history-dir`. Reset scope is limited to the cases run this time; other cases' history data is unaffected.

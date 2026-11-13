@@ -275,6 +275,7 @@ def execute_command(
 
         # ── 组峰值读取（执行事实；测量不可用保持 None） ──
         if job is not None and not job_query_failed:
+            result.cpu_time = process_group.query_cpu_time(job)
             # The entire group shares the command deadline, including children
             # that redirected their output and outlived the direct child.
             peak = process_group.query_peak_bytes(job)

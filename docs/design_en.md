@@ -193,7 +193,28 @@ JSON Schema; it is not restated here.
 
 ### 4.3 Parallelism and Resource Scheduling
 
-- LPT strategy: long tasks first; with history enabled, historical `avg_duration` takes precedence over declared `estimated_time` (entries with memory-only records and no duration fields are tolerated, treated as 0)
+- LPT strategy: long tasks first; a historical timing sample makes `avg_duration` take precedence over declared `estimated_time`; memory-only entries fall back to the declared estimate.
+
+Timing history excludes memory-aware thread cases whose pre-run memory estimate
+has neither a declared demand nor a valid platform peak. Memory is still learned
+on the first run; the second can collect timing, the third can schedule from it.
+Exception: on Linux without cgroup v2 (platform peak learning unavailable) the
+warm-up wait can never succeed, so timing history starts on the first run and
+scheduling/regression detection stay functional.
+Regression requires 3 prior successful timing samples, checked before updating.
+Windows Job basic accounting supplies user + kernel CPU seconds (100 ns ticks
+converted to seconds), propagated through ExecutionResult → TestResult → retry
+sum → sequence sum → optional CPU history averages/counts. Any missing part or
+cached resumed step invalidates the aggregate; None is unknown, zero is valid.
+CPU query failure preserves execution/verdicts. Wall durations retain their
+scheduling/report/timeout meaning; **regression warnings pick the metric by
+source**: when this run carries a CPU measurement (Windows) only CPU history is
+compared (also requiring ≥3 prior CPU samples; immature samples do not fall
+back to wall time, avoiding wall-clock false positives under parallel load),
+and runs without a CPU measurement (Linux / query failure) fall back to the
+wall-clock metric. Existing history
+is preserved; `--update-history` rebuilds timing counts using pre-run admission
+knowledge. There is no concurrency normalization or Linux CPU accounting here.
 - `AtomicSemaphore` resource pool: `safe_capacity = max(1, cpu_count − 2)`; per-case acquire/release by `cpu_cores`
 - Relative CPU cores assigned proportionally by weight; auto-injects `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `NPROC`
 - Environment variable precedence: `os.environ` < scheduler injection < case-level env (via subprocess, never mutating global `os.environ`)

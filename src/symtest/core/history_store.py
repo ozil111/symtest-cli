@@ -12,6 +12,7 @@ import os
 from typing import Dict, Optional
 
 SYMTEST_FILENAME = "history.json"
+REGRESSION_MIN_SAMPLES = 3
 
 
 def _empty_history() -> dict:
@@ -129,11 +130,34 @@ def reset_cases(history: dict, case_names: set) -> int:
 
 
 def check_regression(
-    history: dict, name: str, duration: float, threshold: float = 1.5
+    history: dict, name: str, duration: float, threshold: float = 1.5,
+    cpu_time: Optional[float] = None,
 ) -> Optional[str]:
-    """Return a warning message if duration exceeds avg * threshold, else None."""
+    """Warn above avg * threshold only after 3 prior successful timing samples.
+
+    度量口径选择（见 ``base_runner._update_history``）：
+
+    - 本次带 ``cpu_time``（Windows Job 测量）：只用 CPU 历史比较；CPU 样本
+      不足时本次不告警、不回退墙钟（回退会重现并行负载下的墙钟误报）；
+    - 本次无 ``cpu_time``（Linux / 测量失败）：退化为既有墙钟逻辑。
+    """
     cases = history.get("cases", {})
     if name not in cases:
+        return None
+    if cpu_time is not None:
+        if cases[name].get("cpu_run_count", 0) < REGRESSION_MIN_SAMPLES:
+            return None
+        avg = cases[name].get("avg_cpu_time", 0)
+        if avg <= 0:
+            return None
+        if cpu_time > avg * threshold:
+            ratio = cpu_time / avg
+            return (
+                f"⚠ WARNING: Case '{name}' regressed: "
+                f"{cpu_time:.2f}s CPU vs avg {avg:.2f}s CPU ({ratio:.2f}x slower)"
+            )
+        return None
+    if cases[name].get("run_count", 0) < REGRESSION_MIN_SAMPLES:
         return None
     avg = cases[name].get("avg_duration", 0)
     if avg <= 0:
@@ -145,3 +169,13 @@ def check_regression(
             f"{duration:.2f}s vs avg {avg:.2f}s ({ratio:.2f}x slower)"
         )
     return None
+
+
+def update_case_cpu(history: dict, name: str, cpu_time: float) -> None:
+    """Store measured Windows process-group CPU seconds, independently of wall time."""
+    rec = history.setdefault("cases", {}).setdefault(name, {})
+    count = rec.get("cpu_run_count", 0)
+    rec["avg_cpu_time"] = (rec.get("avg_cpu_time", 0) * count + cpu_time) / (count + 1)
+    rec["last_cpu_time"] = cpu_time
+    rec["cpu_run_count"] = count + 1
+    rec["cpu_time_source"] = "windows_job"

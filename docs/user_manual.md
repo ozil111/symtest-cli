@@ -1706,13 +1706,13 @@ Linux），启用 `--history-dir` 或声明 `min_memory_mb` 后，框架进入�
 
 ## 历史记录与回归检测
 
-通过 `--history-dir` 指定一个目录，框架会在该目录下维护一个 `.symtest` 文件，记录每个 case 的历史运行时间。
+通过 `--history-dir` 指定一个目录，框架会在该目录下维护 `history.json`，记录每个 case 的历史信息。
 
 ### 工作原理
 
-1. **首次运行**：目录下没有 `.symtest`，自动创建空文件，排序仍使用配置中的 `estimated_time`
-2. **后续运行**：读取 `.symtest` 中的历史数据，优先使用 `avg_duration` 做调度排序；内存感知调度同时使用平台对应的历史最大内存峰值做准入估算（Windows 读提交峰值字段，Linux 读 cgroup 峰值字段）
-3. **回归检测**：每次运行结束后，如果某 case 耗时超过历史均值的阈值倍数（默认 1.5），打印警告
+1. **首次运行**：自动创建空 `history.json`，按配置 `estimated_time` 排序。线程内存感知模式下，缺少显式需求和本平台峰值历史的用例只采集内存，不计入耗时历史。
+2. **后续运行**：有了内存峰值后采集通过耗时，下一轮可按 `avg_duration` 调度；内存准入使用本平台历史最大峰值。只有内存的记录回退配置 `estimated_time`。
+3. **回归检测**：至少有 3 个先前有效通过耗时样本后，耗时超过历史均值的阈值倍数（默认 1.5）才打印警告。
 4. **内存峰值**：耗时只记录通过的 case，内存峰值只要有有效测量就记录（含失败/超时的 case——这些数据同样保护下一次调度决策）
 
 ### CLI 用法
@@ -1772,7 +1772,9 @@ success = runner.run_tests()
 |---|---|
 | `avg_duration` | 累计平均耗时（秒），用于调度排序和回归基线 |
 | `last_duration` | 最近一次运行耗时 |
-| `run_count` | 历史运行次数 |
+| `run_count` | 有效通过耗时样本数，不含内存预热 |
+| `avg_cpu_time` / `last_cpu_time` | Windows Job 平均 / 最近一次 CPU 秒数（可选）；`avg_cpu_time` / `cpu_run_count` 在本次带 CPU 测量时用于 Windows 回归告警 |
+| `cpu_run_count` / `cpu_time_source` | 有效 CPU 样本数 / `windows_job`（可选） |
 | `last_peak_memory_bytes` | 最近一次进程组内存峰值（字节，Windows Job Object 提交内存口径；Windows 内存管理启用时记录，含失败用例） |
 | `max_peak_memory_bytes` | 历史最大提交内存峰值，Windows 内存调度估算使用该值 |
 | `peak_memory_count` | 有效峰值测量次数（Windows） |
@@ -1786,12 +1788,54 @@ success = runner.run_tests()
 各平台只读自己的字段，不会把另一平台的峰值当作本平台需求估算。未启用
 测量或测量失败时不产生对应字段；旧格式 history 无需迁移即可继续使用。
 
+### 内存预热、样本可信度与 Windows CPU 时间
+
+线程模式启用内存感知调度时，如果用例没有显式 `min_memory_mb`，也没有
+本平台先前记录的有效内存峰值，本次只学习内存，不计入墙钟 / CPU 耗时历史；
+本次结果中的实际耗时仍保留。规则按用例执行，新增用例也需要预热。
+测量持续失败时，该用例持续预热，直到获得峰值或显式提供 `min_memory_mb`。
+其他执行模式仍正常记录通过用例的耗时。
+
+例外：Linux 上 cgroup v2 不可用（无委派权限，如 CI 托管 runner）时，平台
+永远学不到整组峰值，此时跳过预热、首轮即记录耗时——准入仍按默认需求估算
+工作，调度排序与回归告警不受影响。
+
+典型流程：第 1 轮学习内存，第 2 轮开始采集耗时，第 3 轮即可按历史耗时
+调度。只有内存的历史条目按配置 `estimated_time` 排序。告警则固定要求至少
+**3 个先前的有效通过耗时样本**，所以第 2–4 轮积累样本，第 5 轮最早可以
+报警；仍使用默认 1.5 倍阈值。调度不需要等满 3 个样本。
+
+Windows Job 测量会在结果 JSON / Python 结果字典中增加可选 `cpu_time`
+（秒）和 `cpu_time_source: "windows_job"`，表示命令及其全部后代（含已退出
+进程）的用户态 + 内核态 CPU 时间。重试和多步骤求和，不包含 SymTest 自身
+验证 / 文件比较所消耗的 CPU；多线程命令的 CPU 时间可能大于墙钟时间。
+真实的零值有效，测量不可用则省略字段；任一重试 / 步骤缺少测量，或序列
+恢复了缓存步骤时，省略总 CPU 时间，避免把局部测量当成完整值。
+失败执行也可在结果中保留已测 CPU 时间；通过且非预热的用例另外在 history
+记录 `avg_cpu_time`、`last_cpu_time`、`cpu_run_count`、`cpu_time_source`。
+Linux 和普通 subprocess 不产生此 Windows 指标。CPU 时间不替换调度、超时或
+JUnit 耗时；**性能回归告警按度量来源选口径**——本次带 CPU 测量（Windows）
+时只用 CPU 均值 / 样本数比较（同样要求至少 3 个先前 CPU 样本，样本不足时
+本次不告警、不回退墙钟，避免并行负载下的墙钟误报），无 CPU 测量（Linux /
+测量失败）退化为墙钟口径。
+
+这些规则排除冷内存样本和过早告警，不能消除任意 CPU / I/O 争用。
+旧历史仍兼容，其耗时样本继续计数；需要替换旧的混合条件样本时，保留已学
+内存历史运行一次 `--update-history` 即可。
+
 ### 回归警告示例
 
 当某 case 运行时间超过历史均值的阈值倍数时：
 
 ```
 ⚠ WARNING: Case 'heavy_simulation' regressed: 18.2s vs avg 10.5s (1.73x slower)
+```
+
+Windows 上带 CPU 测量的运行使用 CPU 口径（消息标注 `CPU`，多线程命令的
+CPU 时间可大于墙钟）：
+
+```
+⚠ WARNING: Case 'heavy_simulation' regressed: 26.4s CPU vs avg 12.1s CPU (2.18x slower)
 ```
 
 ### 不启用历史记录
@@ -1813,7 +1857,7 @@ symtest run config.json --history-dir ./hist --update-history
 - 清除 `.symtest` 中**本次运行涉及的 case** 的历史条目
 - 未参与本次运行的 case 的历史数据保留不动
 - 本次运行的回归检测不会产生误报（无历史基线可比）
-- 本次通过 case 的耗时会被记录为全新起点
+- 本次通过且非预热的 case 从头积累耗时；是否预热按运行前的内存信息判定，已有峰值仍允许采样。3 个先前样本的告警门槛重新计数
 - 报告中显示 `History Reset` 计数
 
 > **注意**：需搭配 `--history-dir` 使用。清零范围仅限本次运行的 case，不影响其他 case 的历史数据。
