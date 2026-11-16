@@ -112,8 +112,10 @@ duplicate-name check       # extends references must be unambiguous
 resolve_inheritance()      # Resolve extends chains (deep-merge, remove abstract)
     │
     ▼
-apply_variables()          # Inject --var global variables + case-level variables,
-                           # recursively replace {placeholder} tokens
+apply_variables()          # Inject --var global variables + case-level variables (globals
+                           # win on key conflicts); first expand {references} among variable
+                           # values recursively (order-independent, circular references raise
+                           # ValueError with the chain), then replace {placeholder} tokens
     │
     ▼
 expanded-form validation   # every executable case must be complete after expansion

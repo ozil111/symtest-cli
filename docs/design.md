@@ -87,8 +87,10 @@ expand_imports()           # 递归展开 import 引用（合并 setup、注入 
 resolve_inheritance()      # 解析 extends 继承链（deep-merge、去重 abstract）
     │
     ▼
-apply_variables()          # 注入 --var 全局变量 + case-level variables，
-                           # 递归替换 {placeholder} 占位符
+apply_variables()          # 注入 --var 全局变量 + case-level variables（全局同名覆盖），
+                           # 先递归展开变量值之间的 {引用}（与声明顺序无关，
+                           # 循环引用报 ValueError 并给出引用链），
+                           # 再单遍替换 {placeholder} 占位符
     │
     ▼
 展开形态 schema 校验         # 展开后每个可执行用例必须完整

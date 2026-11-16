@@ -1277,6 +1277,34 @@ test_cases:
 
 > **安全设计**：只有 `variables` 字典中存在的 key 才会被替换。`{xxx}` 若无匹配不会报错，而是原样保留。因此 `expected.output_matches` 中的正则模式（如 `{2,}`、`\d{4}`）不受影响。
 
+### 嵌套引用（变量引用变量）
+
+变量值可以引用其他变量，展开结果与声明顺序无关：
+
+```bash
+symtest run test_cases.json --var BASE_PATH=/tmp
+```
+
+```json
+{
+    "test_cases": [
+        {
+            "name": "求解器测试",
+            "variables": {"work": "{BASE_PATH}/work"},
+            "execution": { "command": "python", "args": ["{work}/run.py"], "expected": { "return_code": 0 } }
+        }
+    ]
+}
+```
+
+`{work}` 的值为 `{BASE_PATH}/work`，最终展开为 `/tmp/work`。用例变量与全局变量合并后（全局同名覆盖）统一展开；`setup` 仅使用全局变量，全局变量之间也可相互引用。
+
+规则与限制：
+
+- 变量值中未匹配的占位符原样保留（与上方安全设计一致）。
+- 变量直接或间接引用自身（如 `a → b → a`）是配置错误，加载时报告完整引用链，如 `Circular variable reference detected: a -> b -> a`。
+- **已知边界**：变量值中的字面 `{name}` 若恰好与某个已定义变量同名，会被递归展开。当前不支持转义字面花括号，请通过调整变量命名规避。
+
 ### 用法
 
 #### CLI

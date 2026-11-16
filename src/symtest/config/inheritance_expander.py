@@ -89,6 +89,16 @@ def apply_variables(
         Global variables from ``--var`` CLI flag.  These take precedence
         over case-level ``variables`` (global overlays).
 
+    Variable values may reference other variables (``work: "{BASE_PATH}/work"``);
+    references are expanded recursively, independent of declaration order.
+    Placeholders not present in the variable table are kept literal.
+
+    Raises
+    ------
+    ValueError
+        If variables form a direct or indirect reference cycle
+        (e.g. ``a -> b -> a``).
+
     Returns
     -------
         A new config dict with all ``{placeholder}`` replaced.  The
@@ -100,6 +110,10 @@ def apply_variables(
     result = copy.deepcopy(config)
     gv = global_variables or {}
 
+    # -- Expand global variables among themselves (order-independent) --
+    if gv:
+        gv = _expand_variable_values(gv)
+
     # -- Substitute setup with global variables only --
     if "setup" in result and gv:
         result["setup"] = substitute_placeholders(result["setup"], gv)
@@ -109,6 +123,7 @@ def apply_variables(
         effective = dict(case_vars)
         effective.update(gv)  # global overlays
         if effective:
+            effective = _expand_variable_values(effective)
             _sub_in_place(case, effective, substitute_placeholders)
 
     return result
@@ -117,6 +132,63 @@ def apply_variables(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _expand_variable_values(variables: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand ``{name}`` references among *variables* themselves.
+
+    Each string value has placeholders that match other variable names
+    replaced by their fully expanded values (memoized DFS, so the result
+    is independent of declaration order).  Placeholders that do not match
+    any variable are kept literal — braces may also be regex quantifiers
+    or other literal content (see user manual).
+
+    Raises
+    ------
+    ValueError
+        On a direct or indirect reference cycle, reporting the full
+        chain, e.g. ``Circular variable reference detected: a -> b -> a``.
+        Cycles are detected for all variables, including unused ones.
+
+    Returns
+    -------
+        A new dict.  Non-string values pass through unchanged.
+    """
+    from ..core.config_loader import _PLACEHOLDER_RE
+
+    expanded: Dict[str, Any] = {}
+    visiting: List[str] = []
+
+    def _expand_name(name: str) -> str:
+        if name in expanded:
+            return str(expanded[name])
+        if name in visiting:
+            cycle = " -> ".join(visiting[visiting.index(name):] + [name])
+            raise ValueError(
+                f"Circular variable reference detected: {cycle}"
+            )
+        raw = variables[name]
+        if not isinstance(raw, str):
+            return str(raw)
+        visiting.append(name)
+        try:
+            result = _PLACEHOLDER_RE.sub(
+                lambda m: _expand_name(m.group(1))
+                if m.group(1) in variables else m.group(0),
+                raw,
+            )
+        finally:
+            visiting.pop()
+        expanded[name] = result
+        return result
+
+    return {
+        key: _PLACEHOLDER_RE.sub(
+            lambda m: _expand_name(m.group(1))
+            if m.group(1) in variables else m.group(0),
+            value,
+        ) if isinstance(value, str) else value
+        for key, value in variables.items()
+    }
 
 def _deep_merge_dicts(base: dict, overlay: dict) -> dict:
     """Deep-merge *overlay* into *base*.

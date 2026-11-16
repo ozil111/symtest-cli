@@ -1302,6 +1302,34 @@ Placeholders `{variable_name}` can appear in any string value in the config file
 
 > **Safety design**: Only keys present in the `variables` dictionary are replaced. Unmatched `{xxx}` is left as-is without error. Therefore, regex patterns in `expected.output_matches` (like `{2,}`, `\d{4}`) are unaffected.
 
+### Nested References (Variable Referencing Variables)
+
+A variable value may reference other variables; expansion is independent of declaration order:
+
+```bash
+symtest run test_cases.json --var BASE_PATH=/tmp
+```
+
+```json
+{
+    "test_cases": [
+        {
+            "name": "solver test",
+            "variables": {"work": "{BASE_PATH}/work"},
+            "execution": { "command": "python", "args": ["{work}/run.py"], "expected": { "return_code": 0 } }
+        }
+    ]
+}
+```
+
+The value of `{work}` is `{BASE_PATH}/work`, which expands to `/tmp/work`. Case variables and global variables are merged first (globals win on key conflicts) and expanded together; `setup` uses global variables only, and global variables may reference each other.
+
+Rules and limits:
+
+- Unmatched placeholders inside variable values are kept literal (same safety design as above).
+- A variable referencing itself directly or indirectly (e.g. `a → b → a`) is a configuration error; the full reference chain is reported at load time, e.g. `Circular variable reference detected: a -> b -> a`.
+- **Known limitation**: a literal `{name}` inside a variable value that happens to match a defined variable will be recursively expanded. Escaping literal braces is not supported; avoid it by adjusting variable names.
+
 ### Usage
 
 #### CLI
