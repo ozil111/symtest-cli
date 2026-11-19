@@ -839,6 +839,71 @@ class TestCompareContentChunked:
         assert result.error_stats is not None
         assert result.error_stats["total_numeric_cells"] == 100
 
+    # -- truncation flag on the chunked lane --------------------------------
+
+    def test_chunked_exactly_ten_mismatches_not_truncated(self, tmp_path):
+        """Regression: 10 mismatches all in the first chunk → truncated=False.
+
+        The chunked lane previously returned as soon as the report cap was
+        full, which was correct here (no further mismatch exists), but it
+        could not distinguish this case from the one below.
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[0:10] = 1.0  # all mismatches inside the first 1000-row chunk
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is False
+
+    def test_chunked_ten_mismatches_plus_one_truncated(self, tmp_path):
+        """Regression: an 11th mismatch in a later chunk must set truncated=True.
+
+        Previously the chunked lane returned early once the report cap filled
+        (10 mismatches in the first chunk), never discovering the mismatch at
+        index 2000 in a later chunk, so the incomplete report was presented
+        as complete (truncated=False).
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[0:10] = 1.0  # cap exactly filled by the first chunk
+        data2[2000] = 1.0  # 11th mismatch in a later chunk
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+
+    def test_chunked_fully_differing_with_error_analysis(self, tmp_path):
+        """Fully differing large dataset + error_analysis: capped report is
+        truncated and stats still cover ALL cells.
+
+        Regression for the sampling overhead: sample construction is limited
+        to the remaining report slots instead of building a Difference for
+        every mismatched element (1M+ objects for 10 retained).
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.ones(1_100_000)
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        comp = H5Comparator(error_analysis=True)
+        result = comp.compare_files(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+        assert result.error_stats is not None
+        assert result.error_stats["total_numeric_cells"] == 1_100_000
+        assert result.error_stats["mismatched_cells"] == 1_100_000
+
 
 # ===========================================================================
 # compare_files - line/column window semantics (end inclusive)

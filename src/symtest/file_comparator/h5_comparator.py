@@ -293,6 +293,12 @@ class H5Comparator(FileComparator):
             else:
                 omitted += 1
 
+        def count_omitted(n):
+            # Bulk-count differences omitted by the report cap without
+            # constructing Difference objects for them.
+            nonlocal omitted
+            omitted += n
+
         # Window offsets stored by read_content; used to map windowed sample
         # coordinates back to original dataset indices.
         start_line = content1.get('_start_line', 0) or 0
@@ -463,6 +469,7 @@ class H5Comparator(FileComparator):
                                 end_column=content1.get('_end_column'),
                                 differences=differences, max_diffs=max_diffs,
                                 add_difference=add_difference,
+                                count_omitted=count_omitted,
                             )
                             if chunk_mismatched:
                                 identical = False
@@ -546,7 +553,8 @@ class H5Comparator(FileComparator):
                                     self._report_mismatch_samples(
                                         res.mismatch_mask, filtered_data1, filtered_data2,
                                         keep_flat, data1.shape, start_line, start_column,
-                                        table_name, add_difference)
+                                        table_name, add_difference,
+                                        max_diffs, differences, count_omitted)
                                     identical = False
                             # 对于字符串或其他类型直接比较
                             else:
@@ -625,16 +633,31 @@ class H5Comparator(FileComparator):
 
     def _report_mismatch_samples(self, mismatch_mask, filt1, filt2, keep_flat,
                                  sample_shape, row_off, col_off, table_name,
-                                 add_difference):
+                                 add_difference, max_diffs, differences,
+                                 count_omitted):
         """
         Append per-element sample differences in index order.
 
         Each sample carries the original (zero-based) dataset coordinate and
         the baseline/actual values; expected always comes from the baseline
-        side. The report cap is applied by ``add_difference``. Positions where
-        either value is non-finite are labeled ``non_finite_value``.
+        side. Positions where either value is non-finite are labeled
+        ``non_finite_value``.
+
+        Samples are constructed only for the report slots that remain in the
+        shared capped list; mismatched elements beyond the cap are counted
+        as omitted via ``count_omitted`` without building objects. Numeric
+        statistics are unaffected: the caller collects them over the full
+        chunk/dataset before reporting samples.
         """
-        for m in np.flatnonzero(mismatch_mask):
+        total = int(np.count_nonzero(mismatch_mask))
+        if total == 0:
+            return
+        remaining = max(0, max_diffs - len(differences))
+        if remaining == 0:
+            count_omitted(total)
+            return
+        mismatch_flat = np.flatnonzero(mismatch_mask)
+        for m in mismatch_flat[:remaining]:
             position = self._flat_index_to_position(
                 int(m), keep_flat, sample_shape, row_off, col_off, table_name)
             v1 = filt1[m]
@@ -646,6 +669,10 @@ class H5Comparator(FileComparator):
                 actual=_format_scalar(v2),
                 diff_type="non_finite_value" if nonfinite else "content",
             ))
+        # Surplus mismatches: omitted from the report without constructing
+        # Difference objects (the cap is guaranteed full at this point).
+        if total > remaining:
+            count_omitted(total - remaining)
 
     def _compare_attributes(self, attrs1, attrs2, table_name):
         """Compare HDF5 attributes"""
@@ -726,7 +753,8 @@ class H5Comparator(FileComparator):
     
     def _compare_dataset_chunked(self, table1, table2, table_name, file1_path, file2_path,
                                  start_line=0, end_line=None, start_column=0, end_column=None,
-                                 differences=None, max_diffs=H5_MAX_DIFFS, add_difference=None):
+                                 differences=None, max_diffs=H5_MAX_DIFFS, add_difference=None,
+                                 count_omitted=None):
         """
         Compare large datasets using chunked reading to avoid loading entire dataset into memory
         @param table1 dict: Dataset info from first file
@@ -741,6 +769,9 @@ class H5Comparator(FileComparator):
         @param differences list: Shared (already capped) report list from compare_content
         @param max_diffs int: Report cap shared with compare_content
         @param add_difference callable: Capped append closure from compare_content
+        @param count_omitted callable: Bulk omitted-difference counter closure
+               from compare_content (counts capped-out mismatches without
+               constructing Difference objects)
         @return tuple: (error_stats or None, mismatched bool) - accumulated statistics
                when error_analysis is enabled
                {"total", "mismatched", "sum_abs", "sum_sq", "max_abs", "max_abs_at",
@@ -749,9 +780,14 @@ class H5Comparator(FileComparator):
         @details The line/column window uses the same 0-based, end-inclusive
                  semantics as the in-memory small-dataset branch. Numeric
                  mismatches are reported as per-element samples at original
-                 dataset coordinates. With error_analysis enabled the whole
-                 window is traversed (no early return on first difference) so
-                 statistics cover ALL numeric cells.
+                 dataset coordinates, constructed only for the report slots
+                 that remain. With error_analysis enabled the whole window is
+                 traversed (no early return on first difference) so statistics
+                 cover ALL numeric cells. Without error_analysis, once the
+                 report cap is full the scan continues until one more
+                 mismatch is found (truncation established) or the window is
+                 exhausted, so ``truncated`` distinguishes exactly max_diffs
+                 differences from more than max_diffs.
         """
         ea = None
         if self.error_analysis:
@@ -864,15 +900,26 @@ class H5Comparator(FileComparator):
                                         row_start, win_col_start, table_name)
                         if res.mismatched > 0:
                             mismatched = True
-                            # Per-element samples at original coordinates
-                            self._report_mismatch_samples(
-                                res.mismatch_mask, filt1, filt2, keep_flat, chunk_shape,
-                                row_start, win_col_start, table_name, add_difference)
-                            # Early return on first difference to save time,
-                            # but only when neither full-window statistics are
-                            # requested nor the report cap still has room.
-                            if ea is None and len(differences) >= max_diffs:
-                                return ea, mismatched
+                            if len(differences) < max_diffs:
+                                # Per-element samples at original coordinates,
+                                # constructed only for the remaining report
+                                # slots (surplus counted as omitted).
+                                self._report_mismatch_samples(
+                                    res.mismatch_mask, filt1, filt2, keep_flat, chunk_shape,
+                                    row_start, win_col_start, table_name, add_difference,
+                                    max_diffs, differences, count_omitted)
+                            else:
+                                # Report cap was already full before this chunk:
+                                # all of its mismatches are omitted.
+                                count_omitted(res.mismatched)
+                                if ea is None:
+                                    # Truncation established and no statistics
+                                    # requested: stop scanning.
+                                    return ea, mismatched
+                            # When the cap was just filled by this chunk, keep
+                            # scanning: only a further mismatch — or the end of
+                            # the window — decides whether the report was
+                            # truncated (exactly max_diffs vs. more than that).
                     else:
                         if not np.array_equal(filt1, filt2):
                             add_difference(self._create_difference(
