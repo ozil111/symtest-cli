@@ -2218,11 +2218,13 @@ compare-files data1.h5 data2.h5 --h5-table group1 --h5-no-expand-path
 | `--h5-table` | Specify table names, comma-separated |
 | `--h5-table-regex` | Regex pattern for table names, comma-separated multi-pattern |
 | `--h5-structure-only` | Compare structure only, not content |
-| `--h5-show-content-diff` | Show content difference details |
+| `--h5-show-content-diff` | Show per-element differences for non-numeric datasets |
 | `--h5-rtol` | Relative tolerance, default 1e-5 |
 | `--h5-atol` | Absolute tolerance, default 1e-8 |
 | `--h5-data-filter` | Data filter expression: `>`, `>=`, `<`, `<=`, `==`; supports `abs` prefix |
 | `--h5-no-expand-path` | Disable automatic expansion of sub-items under group paths |
+
+H5 comparison traverses datasets and attributes in a fixed order (sorted by dataset path); structure, attribute and content differences share a report cap of 10 per file pair, and `truncated` is set only when differences were actually omitted. Numeric mismatches are reported by default as per-element samples with original dataset coordinates and values (expected always taken from the baseline), e.g. `/stress[12,3]`; scalar datasets use `[()]`. Filter, row/column window and chunked-reading offsets are mapped back to original coordinates. Very large datasets (≥1M elements) are compared in chunks, and sample coordinates are still original indices. `--h5-show-content-diff` only affects non-numeric datasets (per-element display); numeric samples need no flag.
 
 ### Binary File Comparison
 

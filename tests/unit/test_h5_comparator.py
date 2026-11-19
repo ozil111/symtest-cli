@@ -839,6 +839,71 @@ class TestCompareContentChunked:
         assert result.error_stats is not None
         assert result.error_stats["total_numeric_cells"] == 100
 
+    # -- truncation flag on the chunked lane --------------------------------
+
+    def test_chunked_exactly_ten_mismatches_not_truncated(self, tmp_path):
+        """Regression: 10 mismatches all in the first chunk → truncated=False.
+
+        The chunked lane previously returned as soon as the report cap was
+        full, which was correct here (no further mismatch exists), but it
+        could not distinguish this case from the one below.
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[0:10] = 1.0  # all mismatches inside the first 1000-row chunk
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is False
+
+    def test_chunked_ten_mismatches_plus_one_truncated(self, tmp_path):
+        """Regression: an 11th mismatch in a later chunk must set truncated=True.
+
+        Previously the chunked lane returned early once the report cap filled
+        (10 mismatches in the first chunk), never discovering the mismatch at
+        index 2000 in a later chunk, so the incomplete report was presented
+        as complete (truncated=False).
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[0:10] = 1.0  # cap exactly filled by the first chunk
+        data2[2000] = 1.0  # 11th mismatch in a later chunk
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+
+    def test_chunked_fully_differing_with_error_analysis(self, tmp_path):
+        """Fully differing large dataset + error_analysis: capped report is
+        truncated and stats still cover ALL cells.
+
+        Regression for the sampling overhead: sample construction is limited
+        to the remaining report slots instead of building a Difference for
+        every mismatched element (1M+ objects for 10 retained).
+        """
+        data1 = np.zeros(1_100_000)
+        data2 = np.ones(1_100_000)
+        f1 = tmp_path / "a.h5"
+        f2 = tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        comp = H5Comparator(error_analysis=True)
+        result = comp.compare_files(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+        assert result.error_stats is not None
+        assert result.error_stats["total_numeric_cells"] == 1_100_000
+        assert result.error_stats["mismatched_cells"] == 1_100_000
+
 
 # ===========================================================================
 # compare_files - line/column window semantics (end inclusive)
@@ -917,3 +982,213 @@ class TestDebugMode:
         create_h5(f2, {"ds": np.array([1.0])})
         result = compare(f1, f2, debug=True)
         assert result.identical
+
+
+# ===========================================================================
+# Report cap and per-element samples with original coordinates
+# ===========================================================================
+
+class TestReportCapAndSamples:
+    """Report cap (10 per file pair) and raw-coordinate numeric samples."""
+
+    def _make_pair(self, tmp_path, datasets1, datasets2, attrs1=None, attrs2=None):
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        create_h5(f1, datasets1, attrs_per_ds=attrs1)
+        create_h5(f2, datasets2, attrs_per_ds=attrs2)
+        return f1, f2
+
+    # -- cap ----------------------------------------------------------------
+
+    def test_exactly_10_numeric_samples_not_truncated(self, tmp_path):
+        datasets1 = {f"ds{i}": np.array([float(i)]) for i in range(10)}
+        datasets2 = {f"ds{i}": np.array([float(i) + 1.0]) for i in range(10)}
+        f1, f2 = self._make_pair(tmp_path, datasets1, datasets2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is False
+
+    def test_more_than_10_numeric_samples_truncated(self, tmp_path):
+        datasets1 = {f"ds{i}": np.array([float(i)]) for i in range(12)}
+        datasets2 = {f"ds{i}": np.array([float(i) + 1.0]) for i in range(12)}
+        f1, f2 = self._make_pair(tmp_path, datasets1, datasets2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+
+    def test_structure_attribute_content_share_cap(self, tmp_path):
+        # 8 missing tables + 1 attribute diff + 2 content samples = 11 diffs
+        datasets1 = {f"m{i}": np.array([1.0]) for i in range(8)}
+        datasets1.update({"a": np.array([1.0]), "b": np.array([2.0]), "c": np.array([1.0])})
+        datasets2 = {"a": np.array([1.0]), "b": np.array([3.0]), "c": np.array([4.0])}
+        f1, f2 = self._make_pair(tmp_path, datasets1, datasets2,
+                                 attrs1={"a": {"units": "m"}}, attrs2={"a": {"units": "km"}})
+        result = compare(f1, f2)
+        assert not result.identical
+        assert len(result.differences) == 10
+        assert result.truncated is True
+        # Fixed (sorted) order: "a" (attr), "b", "c" (content), then m0..m6;
+        # the 11th difference (m7, missing table) is omitted.
+        assert result.differences[0].position == "a/attrs/units"
+        assert result.differences[1].position == "b[0]"
+        assert result.differences[2].position == "c[0]"
+        assert [d.position for d in result.differences[3:]] == [f"m{i}" for i in range(7)]
+
+    # -- small datasets: original coordinates ------------------------------
+
+    def test_sample_position_and_values(self, tmp_path):
+        data1 = np.arange(12, dtype=float).reshape(3, 4)
+        data2 = data1.copy()
+        data2[2, 3] = 99.0
+        f1, f2 = self._make_pair(tmp_path, {"ds": data1}, {"ds": data2})
+        result = compare(f1, f2)
+        assert not result.identical
+        content_diffs = [d for d in result.differences if d.diff_type == "content"]
+        assert len(content_diffs) == 1
+        d = content_diffs[0]
+        assert d.position == "ds[2,3]"
+        assert d.expected == "11.0"
+        assert d.actual == "99.0"
+
+    def test_sample_coordinates_with_window(self, tmp_path):
+        data1 = np.zeros((5, 6))
+        data2 = data1.copy()
+        data2[3, 4] = 7.0
+        f1, f2 = self._make_pair(tmp_path, {"ds": data1}, {"ds": data2})
+        comp = H5Comparator()
+        # Window rows 2..4, columns 3..5 (0-based inclusive): the difference
+        # at original [3,4] must be reported at the original coordinate.
+        result = comp.compare_files(f1, f2, start_line=2, end_line=4,
+                                    start_column=3, end_column=5)
+        assert not result.identical
+        assert result.differences[0].position == "ds[3,4]"
+
+    def test_sample_coordinates_with_filter(self, tmp_path):
+        data1 = np.array([0.0, 1.0, 2.0])
+        data2 = np.array([0.0, 5.0, 9.0])
+        f1, f2 = self._make_pair(tmp_path, {"ds": data1}, {"ds": data2})
+        result = compare(f1, f2, data_filter=">0.5")
+        assert not result.identical
+        # Index 0 is filtered out; mismatches at original indices 1 and 2
+        assert [d.position for d in result.differences] == ["ds[1]", "ds[2]"]
+        assert result.differences[0].expected == "1.0"
+        assert result.differences[0].actual == "5.0"
+
+    def test_scalar_sample_position(self, tmp_path):
+        f1, f2 = self._make_pair(tmp_path, {"s": np.array(1)}, {"s": np.array(99)})
+        result = compare(f1, f2)
+        assert not result.identical
+        assert any(d.position == "s[()]" for d in result.differences)
+
+    def test_nonnumeric_show_content_diff_window_coordinates(self, tmp_path):
+        f1, f2 = self._make_pair(tmp_path,
+                                 {"ds": np.array([b"a", b"b", b"c", b"d"])},
+                                 {"ds": np.array([b"a", b"x", b"c", b"d"])})
+        comp = H5Comparator(show_content_diff=True)
+        # Window starts at original row 1; the difference at original index 1
+        # must be reported at the original coordinate.
+        result = comp.compare_files(f1, f2, start_line=1)
+        assert not result.identical
+        assert result.differences[0].position == "ds[1]"
+
+    # -- chunked (large) datasets: original coordinates --------------------
+
+    def _create_large_h5(self, path, data):
+        with h5py.File(path, "w") as f:
+            f.create_dataset("big", data=data)
+
+    def test_chunked_sample_coordinates(self, tmp_path):
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data2[1_050_000] = 3.0
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        content_diffs = [d for d in result.differences if d.diff_type == "content"]
+        assert len(content_diffs) == 1
+        assert content_diffs[0].position == "big[1050000]"
+        assert content_diffs[0].expected == "0.0"
+        assert content_diffs[0].actual == "3.0"
+
+    def test_chunked_sample_coordinates_with_window(self, tmp_path):
+        data1 = np.zeros((1100, 1000))
+        data2 = np.zeros((1100, 1000))
+        data2[5, 999] = 1.0  # difference in the last column
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        comp = H5Comparator()
+        result = comp.compare_files(f1, f2, start_line=0, end_line=9,
+                                    start_column=998, end_column=999)
+        assert not result.identical
+        content_diffs = [d for d in result.differences if d.diff_type == "content"]
+        assert len(content_diffs) == 1
+        assert content_diffs[0].position == "big[5,999]"
+
+    def test_chunked_with_filter_sample_coordinates(self, tmp_path):
+        data1 = np.full(1_100_000, 0.001)
+        data2 = data1.copy()
+        data1[2000] = 2.0  # passes the filter
+        data2[2000] = 3.0  # mismatch inside the filtered region
+        data1[3000] = 0.1  # both below the filter threshold: never compared
+        data2[3000] = 0.2
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2, data_filter=">0.5")
+        assert not result.identical
+        content_diffs = [d for d in result.differences if d.diff_type == "content"]
+        assert len(content_diffs) == 1
+        assert content_diffs[0].position == "big[2000]"
+
+    def test_chunked_nonfinite_sample_labeled(self, tmp_path):
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        data1[-1] = np.nan
+        data2[-1] = np.nan
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+        result = compare(f1, f2)
+        assert not result.identical
+        assert any(d.diff_type == "non_finite_value" and d.position == "big[1099999]"
+                   for d in result.differences)
+
+    # -- error statistics carry original coordinates -----------------------
+
+    def test_max_error_after_cap_reports_coordinates(self, tmp_path):
+        """With error_analysis the full mismatch count and the max-error
+        coordinate must be reported even when report samples are capped."""
+        data1 = np.zeros(1_100_000)
+        data2 = np.zeros(1_100_000)
+        # 14 mismatches with error 1.0, then the true maximum later in the file
+        for i in range(14):
+            data2[100_000 + i] = 1.0
+        data2[900_000] = 14.0  # max abs error 14.0 at big[900000]
+        f1, f2 = tmp_path / "a.h5", tmp_path / "b.h5"
+        self._create_large_h5(f1, data1)
+        self._create_large_h5(f2, data2)
+
+        comp = H5Comparator(error_analysis=True)
+        result = comp.compare_files(f1, f2)
+        assert not result.identical
+        # Report capped at 10 samples (index order), truncated
+        assert len(result.differences) == 10
+        assert result.truncated is True
+        assert result.differences[0].position == "big[100000]"
+        # Full statistics still cover all 15 mismatches with the coordinate
+        assert result.error_stats["mismatched_cells"] == 15
+        assert result.error_stats["max_abs_error"] == 14.0
+        assert result.error_stats["max_abs_error_at"] == "big[900000]"
+
+    def test_small_dataset_max_error_reports_coordinates(self, tmp_path):
+        data1 = np.array([1.0, 2.0, 3.0, 4.0])
+        data2 = np.array([1.1, 2.0, 3.0, 40.0])
+        f1, f2 = self._make_pair(tmp_path, {"ds": data1}, {"ds": data2})
+        result = compare(f1, f2, error_analysis=True)
+        assert not result.identical
+        assert result.error_stats["max_abs_error"] == 36.0
+        assert result.error_stats["max_abs_error_at"] == "ds[3]"
