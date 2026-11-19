@@ -73,7 +73,8 @@ def add_compare_arguments(parser):
     h5_group.add_argument("--h5-structure-only", action="store_true",
                           help="Only compare HDF5 file structure without comparing content")
     h5_group.add_argument("--h5-show-content-diff", action="store_true",
-                          help="Show detailed content differences when content differs")
+                          help="Show per-element content differences for non-numeric HDF5 datasets "
+                               "(numeric mismatches always report raw coordinates and values)")
     h5_group.add_argument("--h5-rtol", type=float, default=1e-5,
                           help="Relative tolerance for numerical comparison in HDF5 files")
     h5_group.add_argument("--h5-atol", type=float, default=1e-8,

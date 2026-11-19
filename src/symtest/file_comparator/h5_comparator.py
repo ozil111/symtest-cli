@@ -5,6 +5,20 @@ import logging
 import re
 from .numeric_compare import compare_numeric, parse_data_filter, validate_allow_nonfinite
 
+# Maximum number of differences reported per file pair (shared by structure,
+# attribute and content differences, matching the CSV comparator).
+H5_MAX_DIFFS = 10
+
+
+def _format_scalar(value):
+    """Format a numpy scalar for a difference report (plain Python text)."""
+    try:
+        value = value.item()
+    except AttributeError:
+        pass
+    return str(value)
+
+
 class H5Comparator(FileComparator):
     def __init__(self, tables=None, table_regex=None, structure_only=False, show_content_diff=False, debug=False, rtol=1e-5, atol=1e-8, expand_path=True, data_filter=None, error_analysis=False, encoding="utf-8", verbose=False, allow_nonfinite=False):
         """
@@ -258,10 +272,31 @@ class H5Comparator(FileComparator):
     def compare_content(self, content1, content2):
         """Compare two H5 file contents
         @return tuple: (bool, list, bool) - (identical, differences, truncated)
+        @details Differences are reported in a fixed dataset order, capped at
+                 H5_MAX_DIFFS per file pair (structure, attribute and content
+                 differences share the cap). Numeric mismatches are reported
+                 as per-element samples with original dataset coordinates and
+                 baseline/actual values. ``truncated`` is True only when
+                 differences were actually omitted from the report.
         """
         self._error_stats = None  # Reset per comparison
         identical = True
         differences = []
+
+        max_diffs = H5_MAX_DIFFS
+        omitted = 0  # differences found but not reported (cap reached)
+
+        def add_difference(diff):
+            nonlocal omitted
+            if len(differences) < max_diffs:
+                differences.append(diff)
+            else:
+                omitted += 1
+
+        # Window offsets stored by read_content; used to map windowed sample
+        # coordinates back to original dataset indices.
+        start_line = content1.get('_start_line', 0) or 0
+        start_column = content1.get('_start_column', 0) or 0
 
         # ── Error analysis accumulators ──
         _ea_total = 0
@@ -276,8 +311,9 @@ class H5Comparator(FileComparator):
         # Filter out metadata keys (starting with _)
         metadata_keys = {'_file_path', '_start_line', '_end_line', '_start_column', '_end_column'}
         
-        # Get all unique table names (excluding metadata)
-        all_tables = (set(content1.keys()) | set(content2.keys())) - metadata_keys
+        # Get all unique table names (excluding metadata), in fixed order so
+        # report samples are deterministic.
+        all_tables = sorted((set(content1.keys()) | set(content2.keys())) - metadata_keys)
         
         # Debug log
         self.logger.debug(f"Structure-only mode: {self.structure_only}")
@@ -292,7 +328,7 @@ class H5Comparator(FileComparator):
             
             # Check if table exists in both files
             if table_name not in content1:
-                differences.append(self._create_difference(
+                add_difference(self._create_difference(
                     position=table_name,
                     expected="Table exists",
                     actual="Table missing",
@@ -302,7 +338,7 @@ class H5Comparator(FileComparator):
                 continue
                 
             if table_name not in content2:
-                differences.append(self._create_difference(
+                add_difference(self._create_difference(
                     position=table_name,
                     expected="Table exists",
                     actual="Table missing",
@@ -316,7 +352,7 @@ class H5Comparator(FileComparator):
             
             # Compare table type
             if table1.get('type') != table2.get('type'):
-                differences.append(self._create_difference(
+                add_difference(self._create_difference(
                     position=f"{table_name}/type",
                     expected=table1.get('type'),
                     actual=table2.get('type'),
@@ -328,7 +364,7 @@ class H5Comparator(FileComparator):
             # For datasets, compare shape and dtype
             if table1.get('type') == 'dataset':
                 if table1['shape'] != table2['shape']:
-                    differences.append(self._create_difference(
+                    add_difference(self._create_difference(
                         position=f"{table_name}/shape",
                         expected=str(table1['shape']),
                         actual=str(table2['shape']),
@@ -337,7 +373,7 @@ class H5Comparator(FileComparator):
                     identical = False
                 
                 if table1['dtype'] != table2['dtype']:
-                    differences.append(self._create_difference(
+                    add_difference(self._create_difference(
                         position=f"{table_name}/dtype",
                         expected=str(table1['dtype']),
                         actual=str(table2['dtype']),
@@ -353,14 +389,14 @@ class H5Comparator(FileComparator):
                     missing_keys = keys1 - keys2
                     extra_keys = keys2 - keys1
                     if missing_keys:
-                        differences.append(self._create_difference(
+                        add_difference(self._create_difference(
                             position=f"{table_name}/keys",
                             expected=str(sorted(missing_keys)),
                             actual="Keys missing",
                             diff_type="structure"
                         ))
                     if extra_keys:
-                        differences.append(self._create_difference(
+                        add_difference(self._create_difference(
                             position=f"{table_name}/keys",
                             expected="No extra keys",
                             actual=str(sorted(extra_keys)),
@@ -374,8 +410,9 @@ class H5Comparator(FileComparator):
                 
                 # Compare attributes
                 attr_diff = self._compare_attributes(table1['attrs'], table2['attrs'], table_name)
+                for attr_entry in attr_diff:
+                    add_difference(attr_entry)
                 if attr_diff:
-                    differences.extend(attr_diff)
                     identical = False
                 
                 # Compare data content
@@ -383,7 +420,7 @@ class H5Comparator(FileComparator):
                 # a dataset whose data could not be read must never silently pass.
                 read_error = table1.get('read_error') or table2.get('read_error')
                 if read_error:
-                    differences.append(self._create_difference(
+                    add_difference(self._create_difference(
                         position=table_name,
                         expected="Data read successfully",
                         actual=f"Data read failed: {read_error}",
@@ -406,7 +443,7 @@ class H5Comparator(FileComparator):
                         
                         if not file1_path or not file2_path:
                             self.logger.error(f"File paths not available for chunked reading of {table_name}")
-                            differences.append(self._create_difference(
+                            add_difference(self._create_difference(
                                 position=table_name,
                                 expected="File path available",
                                 actual="File path missing",
@@ -416,15 +453,18 @@ class H5Comparator(FileComparator):
                         else:
                             # Both files share the same comparison window
                             # (read_content stored it in the content metadata).
-                            dataset_diff, ea = self._compare_dataset_chunked(
+                            # Sample differences are appended directly to the
+                            # shared (capped) report list.
+                            ea, chunk_mismatched = self._compare_dataset_chunked(
                                 table1, table2, table_name, file1_path, file2_path,
                                 start_line=content1.get('_start_line', 0),
                                 end_line=content1.get('_end_line'),
                                 start_column=content1.get('_start_column', 0),
                                 end_column=content1.get('_end_column'),
+                                differences=differences, max_diffs=max_diffs,
+                                add_difference=add_difference,
                             )
-                            if dataset_diff:
-                                differences.extend(dataset_diff)
+                            if chunk_mismatched:
                                 identical = False
                             # ── Error analysis: merge chunked statistics ──
                             if self.error_analysis and ea:
@@ -476,6 +516,12 @@ class H5Comparator(FileComparator):
                                 )
                                 all_close = res.mismatched == 0
 
+                                # Flat indices (within the windowed dataset) of the
+                                # compared (filtered) elements, in the same order as
+                                # the filtered arrays; used to map mismatch positions
+                                # back to original dataset coordinates.
+                                keep_flat = np.flatnonzero(combined_mask)
+
                                 # ── Error analysis: stats over ALL filtered numeric cells ──
                                 if self.error_analysis:
                                     _ea_total += res.total
@@ -485,45 +531,42 @@ class H5Comparator(FileComparator):
                                     if res.max_abs_error is not None:
                                         if _ea_max_abs is None or res.max_abs_error > _ea_max_abs:
                                             _ea_max_abs = res.max_abs_error
-                                            _ea_max_abs_at = table_name
+                                            _ea_max_abs_at = self._flat_index_to_position(
+                                                res.max_abs_error_index, keep_flat, data1.shape,
+                                                start_line, start_column, table_name)
                                     if res.max_rel_error is not None:
                                         if _ea_max_rel is None or res.max_rel_error > _ea_max_rel:
                                             _ea_max_rel = res.max_rel_error
-                                            _ea_max_rel_at = table_name
+                                            _ea_max_rel_at = self._flat_index_to_position(
+                                                res.max_rel_error_index, keep_flat, data1.shape,
+                                                start_line, start_column, table_name)
 
                                 if not all_close:
-                                    # 过滤后数据内容不同，报告差异（位置语义使用 dataset path）
-                                    if res.nonfinite_mismatched:
-                                        differences.append(self._create_difference(
-                                            position=table_name,
-                                            expected="Finite numeric content",
-                                            actual="Non-finite values (NaN/Inf) rejected by default; set allow_nonfinite=True to allow",
-                                            diff_type="non_finite_value"
-                                        ))
-                                    else:
-                                        differences.append(self._create_difference(
-                                            position=table_name,
-                                            expected="Same content (after filtering)",
-                                            actual="Content differs (after filtering)",
-                                            diff_type="content"
-                                        ))
+                                    # 报告样例：原始数据集坐标 + 基线/实际值
+                                    self._report_mismatch_samples(
+                                        res.mismatch_mask, filtered_data1, filtered_data2,
+                                        keep_flat, data1.shape, start_line, start_column,
+                                        table_name, add_difference)
                                     identical = False
                             # 对于字符串或其他类型直接比较
                             else:
                                 if not np.array_equal(filtered_data1, filtered_data2):
                                     if self.show_content_diff:
-                                        # For non-numeric arrays, find the first difference
-                                        diff_indices = np.where(filtered_data1 != filtered_data2)
-                                        for idx in list(zip(*diff_indices))[:10]:
-                                            position = f"{table_name}[{','.join(map(str, idx))}]"
-                                            differences.append(self._create_difference(
+                                        # Non-numeric arrays: report per-element
+                                        # differences at original dataset coordinates.
+                                        keep_flat = np.flatnonzero(combined_mask)
+                                        for k in np.flatnonzero(filtered_data1 != filtered_data2):
+                                            position = self._flat_index_to_position(
+                                                int(k), keep_flat, data1.shape,
+                                                start_line, start_column, table_name)
+                                            add_difference(self._create_difference(
                                                 position=position,
-                                                expected=str(filtered_data1[idx]),
-                                                actual=str(filtered_data2[idx]),
+                                                expected=_format_scalar(filtered_data1[k]),
+                                                actual=_format_scalar(filtered_data2[k]),
                                                 diff_type="content"
                                             ))
                                     else:
-                                        differences.append(self._create_difference(
+                                        add_difference(self._create_difference(
                                             position=table_name,
                                             expected="Same content (after filtering)",
                                             actual="Content differs (after filtering)",
@@ -532,7 +575,7 @@ class H5Comparator(FileComparator):
                                     identical = False
                         except Exception as e:
                             self.logger.error(f"Error comparing data in table {table_name}: {str(e)}")
-                            differences.append(self._create_difference(
+                            add_difference(self._create_difference(
                                 position=table_name,
                                 expected=f"Data type: {table1.get('dtype', 'unknown')}",
                                 actual=f"Data type: {table2.get('dtype', 'unknown')}",
@@ -555,7 +598,54 @@ class H5Comparator(FileComparator):
                 "rms_abs_error": np.sqrt(_ea_sum_sq / _ea_total),
             }
 
-        return identical, differences, False
+        return identical, differences, omitted > 0
+
+    def _flat_index_to_position(self, flat_idx, keep_flat, sample_shape, row_off, col_off, table_name):
+        """
+        Map a flat index within the compared arrays to an original-dataset
+        position string, e.g. ``/stress[12,3]``.
+
+        @param flat_idx int: Flat index into the (filtered) compared arrays
+        @param keep_flat array or None: Flat indices (within the windowed
+               dataset) of the compared elements; None when no filtering was
+               applied (identity mapping)
+        @param sample_shape tuple: Shape of the windowed dataset slice
+        @param row_off int: Row-window offset (axis 0)
+        @param col_off int: Column-window offset (axis 1; ignored for 1-D)
+        @param table_name str: Dataset path
+        """
+        of = int(keep_flat[flat_idx]) if keep_flat is not None else int(flat_idx)
+        if len(sample_shape) == 0:
+            return f"{table_name}[()]"
+        coords = list(np.unravel_index(of, sample_shape))
+        coords[0] += row_off
+        if len(coords) >= 2:
+            coords[1] += col_off
+        return f"{table_name}[{','.join(map(str, coords))}]"
+
+    def _report_mismatch_samples(self, mismatch_mask, filt1, filt2, keep_flat,
+                                 sample_shape, row_off, col_off, table_name,
+                                 add_difference):
+        """
+        Append per-element sample differences in index order.
+
+        Each sample carries the original (zero-based) dataset coordinate and
+        the baseline/actual values; expected always comes from the baseline
+        side. The report cap is applied by ``add_difference``. Positions where
+        either value is non-finite are labeled ``non_finite_value``.
+        """
+        for m in np.flatnonzero(mismatch_mask):
+            position = self._flat_index_to_position(
+                int(m), keep_flat, sample_shape, row_off, col_off, table_name)
+            v1 = filt1[m]
+            v2 = filt2[m]
+            nonfinite = not (np.isfinite(v1) and np.isfinite(v2))
+            add_difference(self._create_difference(
+                position=position,
+                expected=_format_scalar(v1),
+                actual=_format_scalar(v2),
+                diff_type="non_finite_value" if nonfinite else "content",
+            ))
 
     def _compare_attributes(self, attrs1, attrs2, table_name):
         """Compare HDF5 attributes"""
@@ -635,7 +725,8 @@ class H5Comparator(FileComparator):
         return parse_data_filter(self.data_filter, logger=self.logger)
     
     def _compare_dataset_chunked(self, table1, table2, table_name, file1_path, file2_path,
-                                 start_line=0, end_line=None, start_column=0, end_column=None):
+                                 start_line=0, end_line=None, start_column=0, end_column=None,
+                                 differences=None, max_diffs=H5_MAX_DIFFS, add_difference=None):
         """
         Compare large datasets using chunked reading to avoid loading entire dataset into memory
         @param table1 dict: Dataset info from first file
@@ -647,23 +738,28 @@ class H5Comparator(FileComparator):
         @param end_line int: Window end row (0-based, inclusive; None for last row)
         @param start_column int: Window start column (0-based, inclusive; axis 1 for 2D+)
         @param end_column int: Window end column (0-based, inclusive; None for last column)
-        @return tuple: (differences, error_stats or None) - list of Difference objects
-               and, when error_analysis is enabled, accumulated statistics
+        @param differences list: Shared (already capped) report list from compare_content
+        @param max_diffs int: Report cap shared with compare_content
+        @param add_difference callable: Capped append closure from compare_content
+        @return tuple: (error_stats or None, mismatched bool) - accumulated statistics
+               when error_analysis is enabled
                {"total", "mismatched", "sum_abs", "sum_sq", "max_abs", "max_abs_at",
-               "max_rel", "max_rel_at"} (None otherwise)
+               "max_rel", "max_rel_at"} (None otherwise), and whether this dataset
+               mismatched (even when its samples were dropped by the report cap)
         @details The line/column window uses the same 0-based, end-inclusive
-                 semantics as the in-memory small-dataset branch. With
-                 error_analysis enabled the whole window is traversed (no
-                 early return on first difference) so statistics cover ALL
-                 numeric cells.
+                 semantics as the in-memory small-dataset branch. Numeric
+                 mismatches are reported as per-element samples at original
+                 dataset coordinates. With error_analysis enabled the whole
+                 window is traversed (no early return on first difference) so
+                 statistics cover ALL numeric cells.
         """
-        differences = []
         ea = None
         if self.error_analysis:
             ea = {"total": 0, "mismatched": 0, "sum_abs": 0.0, "sum_sq": 0.0,
                   "max_abs": None, "max_abs_at": None,
                   "max_rel": None, "max_rel_at": None}
         dataset_path = table1.get('dataset_path') or table2.get('dataset_path') or table_name
+        mismatched = False
         
         try:
             with h5py.File(file1_path, 'r') as f1, h5py.File(file2_path, 'r') as f2:
@@ -672,13 +768,13 @@ class H5Comparator(FileComparator):
                 
                 # Verify shapes match (should already be checked, but verify again)
                 if ds1.shape != ds2.shape:
-                    differences.append(self._create_difference(
+                    add_difference(self._create_difference(
                         position=f"{table_name}/shape",
                         expected=str(ds1.shape),
                         actual=str(ds2.shape),
                         diff_type="structure"
                     ))
-                    return differences, ea
+                    return ea, True
                 
                 # Determine chunk size (1000 rows at a time, adjustable based on memory constraints)
                 chunk_size = 1000
@@ -693,6 +789,8 @@ class H5Comparator(FileComparator):
                 win_row_start = max(start_line, 0)
                 win_row_end = total_rows if end_line is None else min(end_line + 1, total_rows)
                 win_row_end = max(win_row_end, win_row_start)
+                win_col_start = 0
+                win_col_end = 0
                 if ndim >= 2:
                     total_cols = ds1.shape[1]
                     win_col_start = max(start_column, 0)
@@ -700,7 +798,6 @@ class H5Comparator(FileComparator):
                     win_col_end = max(win_col_end, win_col_start)
 
                 is_numeric = np.issubdtype(ds1.dtype, np.number) and np.issubdtype(ds2.dtype, np.number)
-                mismatch_reported = False
 
                 # Chunk along the first dimension; the column window applies
                 # to axis 1 for 2D+ datasets, remaining axes are compared in full.
@@ -721,7 +818,12 @@ class H5Comparator(FileComparator):
                         slice2 = ds2[slice_key]
                         position = f"{table_name}[{row_start}:{row_end},...]"
 
+                    # Shape of the raw (pre-filter) chunk slice; used to map flat
+                    # mismatch indices back to original dataset coordinates.
+                    chunk_shape = slice1.shape
+
                     # Apply filter if specified (flatten for element-wise masking)
+                    keep_flat = None
                     if self.filter_func:
                         flat1 = slice1.ravel()
                         flat2 = slice2.ravel()
@@ -731,12 +833,16 @@ class H5Comparator(FileComparator):
                             nonfinite = (~np.isfinite(flat1)) | (~np.isfinite(flat2))
                             if np.any(nonfinite):
                                 combined_mask = combined_mask | nonfinite
-                        slice1 = flat1[combined_mask]
-                        slice2 = flat2[combined_mask]
+                        filt1 = flat1[combined_mask]
+                        filt2 = flat2[combined_mask]
+                        keep_flat = np.flatnonzero(combined_mask)
+                    else:
+                        filt1 = slice1.ravel()
+                        filt2 = slice2.ravel()
 
                     if is_numeric:
                         # Compare slices via shared numeric core
-                        res = compare_numeric(slice1, slice2, rtol=self.rtol, atol=self.atol,
+                        res = compare_numeric(filt1, filt2, rtol=self.rtol, atol=self.atol,
                                               collect_stats=self.error_analysis,
                                               allow_nonfinite=self.allow_nonfinite)
                         if ea is not None:
@@ -747,50 +853,44 @@ class H5Comparator(FileComparator):
                             if res.max_abs_error is not None:
                                 if ea["max_abs"] is None or res.max_abs_error > ea["max_abs"]:
                                     ea["max_abs"] = res.max_abs_error
-                                    ea["max_abs_at"] = table_name
+                                    ea["max_abs_at"] = self._flat_index_to_position(
+                                        res.max_abs_error_index, keep_flat, chunk_shape,
+                                        row_start, win_col_start, table_name)
                             if res.max_rel_error is not None:
                                 if ea["max_rel"] is None or res.max_rel_error > ea["max_rel"]:
                                     ea["max_rel"] = res.max_rel_error
-                                    ea["max_rel_at"] = table_name
+                                    ea["max_rel_at"] = self._flat_index_to_position(
+                                        res.max_rel_error_index, keep_flat, chunk_shape,
+                                        row_start, win_col_start, table_name)
                         if res.mismatched > 0:
-                            if not mismatch_reported:
-                                if res.nonfinite_mismatched:
-                                    differences.append(self._create_difference(
-                                        position=position,
-                                        expected="Finite numeric content",
-                                        actual="Non-finite values (NaN/Inf) rejected by default; set allow_nonfinite=True to allow",
-                                        diff_type="non_finite_value"
-                                    ))
-                                else:
-                                    differences.append(self._create_difference(
-                                        position=position,
-                                        expected="Content matches",
-                                        actual="Content differs",
-                                        diff_type="content"
-                                    ))
-                                mismatch_reported = True
+                            mismatched = True
+                            # Per-element samples at original coordinates
+                            self._report_mismatch_samples(
+                                res.mismatch_mask, filt1, filt2, keep_flat, chunk_shape,
+                                row_start, win_col_start, table_name, add_difference)
                             # Early return on first difference to save time,
-                            # but only when full-window statistics are not
-                            # requested.
-                            if ea is None:
-                                return differences, ea
+                            # but only when neither full-window statistics are
+                            # requested nor the report cap still has room.
+                            if ea is None and len(differences) >= max_diffs:
+                                return ea, mismatched
                     else:
-                        if not np.array_equal(slice1, slice2):
-                            differences.append(self._create_difference(
+                        if not np.array_equal(filt1, filt2):
+                            add_difference(self._create_difference(
                                 position=position,
                                 expected="Content matches",
                                 actual="Content differs",
                                 diff_type="content"
                             ))
-                            return differences, ea
+                            return ea, True
                 
         except Exception as e:
             self.logger.error(f"Error in chunked comparison of {table_name}: {str(e)}")
-            differences.append(self._create_difference(
+            add_difference(self._create_difference(
                 position=table_name,
                 expected="Successful comparison",
                 actual=f"Error: {str(e)}",
                 diff_type="error"
             ))
+            mismatched = True
         
-        return differences, ea
+        return ea, mismatched
