@@ -203,6 +203,118 @@ class TestHistoryPersistence:
         assert hist["cases"]["c"]["max_peak_memory_bytes"] == 500
 
 
+class TestHistoryIsolation:
+    """Linux cgroup 峰值与 Windows commit 峰值分字段保存/读取，不混用。"""
+
+    LINUX_SRC = "linux_cgroup_v2"
+
+    def test_linux_source_writes_isolated_fields(self):
+        from symtest.core.history_store import update_case_memory
+
+        hist = {"cases": {}}
+        update_case_memory(hist, "c", 500, self.LINUX_SRC)
+        rec = hist["cases"]["c"]
+        assert rec["last_peak_memory_bytes_linux"] == 500
+        assert rec["max_peak_memory_bytes_linux"] == 500
+        assert rec["peak_memory_count_linux"] == 1
+        # 不得写入 Windows 平铺字段，也不写来源标记（字段名已表达来源）
+        assert "last_peak_memory_bytes" not in rec
+        assert "max_peak_memory_bytes" not in rec
+        assert "peak_memory_count" not in rec
+        assert "peak_memory_source" not in rec
+
+    def test_linux_max_tracks_historical_peak(self):
+        from symtest.core.history_store import update_case_memory
+
+        hist = {"cases": {}}
+        update_case_memory(hist, "c", 500, self.LINUX_SRC)
+        update_case_memory(hist, "c", 300, self.LINUX_SRC)  # 偶发低谷
+        update_case_memory(hist, "c", 700, self.LINUX_SRC)
+        rec = hist["cases"]["c"]
+        assert rec["last_peak_memory_bytes_linux"] == 700
+        assert rec["max_peak_memory_bytes_linux"] == 700
+        assert rec["peak_memory_count_linux"] == 3
+
+    def test_windows_and_linux_fields_never_overlap(self):
+        from symtest.core.history_store import update_case_memory
+
+        hist = {"cases": {}}
+        # 同一 history 上两平台先后记录：互不覆盖
+        update_case_memory(hist, "c", 111, "windows_job_commit")
+        update_case_memory(hist, "c", 222, self.LINUX_SRC)
+        rec = hist["cases"]["c"]
+        assert rec["max_peak_memory_bytes"] == 111
+        assert rec["peak_memory_source"] == "windows_job_commit"
+        assert rec["max_peak_memory_bytes_linux"] == 222
+
+    def test_invalid_peak_ignored_for_linux_source(self):
+        from symtest.core.history_store import update_case_memory
+
+        hist = {"cases": {}}
+        update_case_memory(hist, "c", 0, self.LINUX_SRC)
+        update_case_memory(hist, "c", None, self.LINUX_SRC)
+        assert "c" not in hist["cases"]
+
+
+class TestPlatformEstimate:
+    """_estimate_memory_bytes 按平台读取对应历史字段。"""
+
+    class _Case:
+        name = "c"
+        resources = {}
+
+    def _runner(self, tmp_path):
+        from symtest.runners.parallel_json_runner import ParallelJSONRunner
+
+        config = tmp_path / "cases.json"
+        config.write_text('{"test_cases": []}', encoding="utf-8")
+        return ParallelJSONRunner(str(config), workspace=str(tmp_path))
+
+    def test_reads_platform_specific_field(self, tmp_path, monkeypatch):
+        runner = self._runner(tmp_path)
+        runner._memory_history = {
+            "c": {"max_peak_memory_bytes": 1000,
+                  "max_peak_memory_bytes_linux": 500},
+        }
+        monkeypatch.setattr("os.name", "nt")
+        assert runner._estimate_memory_bytes(self._Case()) == \
+            int(1000 * runner._memory_margin)
+        monkeypatch.setattr("os.name", "posix")
+        assert runner._estimate_memory_bytes(self._Case()) == \
+            int(500 * runner._memory_margin)
+
+    def test_posix_ignores_windows_peak_records(self, tmp_path, monkeypatch):
+        """只有 Windows 记录的 history 在 Linux 上不参与估算（口径
+        不可比）——回退默认需求而非混用。"""
+        runner = self._runner(tmp_path)
+        runner._memory_history = {"c": {"max_peak_memory_bytes": 1000}}
+        monkeypatch.setattr("os.name", "posix")
+        assert runner._estimate_memory_bytes(self._Case()) == \
+            runner._memory_default_demand_mb * 1024 * 1024
+
+    def test_nt_ignores_linux_peak_records(self, tmp_path, monkeypatch):
+        runner = self._runner(tmp_path)
+        runner._memory_history = {
+            "c": {"max_peak_memory_bytes_linux": 1000},
+        }
+        monkeypatch.setattr("os.name", "nt")
+        assert runner._estimate_memory_bytes(self._Case()) == \
+            runner._memory_default_demand_mb * 1024 * 1024
+
+    def test_explicit_min_memory_mb_priority_all_platforms(
+            self, tmp_path, monkeypatch):
+        runner = self._runner(tmp_path)
+        runner._memory_history = {
+            "c": {"max_peak_memory_bytes": 1000,
+                  "max_peak_memory_bytes_linux": 500},
+        }
+        case = type("Case", (), {"name": "c",
+                                 "resources": {"min_memory_mb": 256}})()
+        for platform in ("nt", "posix"):
+            monkeypatch.setattr("os.name", platform)
+            assert runner._estimate_memory_bytes(case) == 256 * 1024 * 1024
+
+
 class TestMemoryOnlyHistoryCompat:
     @pytest.mark.parametrize("mode", ["thread", "process"])
     @pytest.mark.parametrize("history_dir", [None, "hist"])

@@ -27,8 +27,9 @@ class TestWindowsSnapshot:
 
 
 class TestSnapshotFallbacks:
-    def test_non_windows_returns_unusable(self, monkeypatch):
-        monkeypatch.setattr("os.name", "posix")
+    def test_unimplemented_platform_returns_unusable(self, monkeypatch):
+        """未实现快照的平台（非 nt/posix）返回不可用快照。"""
+        monkeypatch.setattr("os.name", "ce")
         snap = read_memory_snapshot()
         assert not snap.usable
         assert snap.avail_physical_bytes is None
@@ -40,6 +41,7 @@ class TestSnapshotFallbacks:
             raise OSError("api failure")
 
         monkeypatch.setattr(mod, "_read_windows_snapshot", _boom)
+        monkeypatch.setattr(mod, "_read_linux_snapshot", _boom)
         snap = read_memory_snapshot()
         assert not snap.usable
         assert snap.avail_physical_bytes is None

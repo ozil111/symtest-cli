@@ -57,6 +57,7 @@ def _execute_command_once(
         return_code=exec_result.return_code,
         peak_memory_bytes=exec_result.peak_memory_bytes,
         peak_memory_source=exec_result.peak_memory_source,
+        cpu_time=exec_result.cpu_time,
     )
 
     if exec_result.error is not None:
@@ -149,6 +150,8 @@ def execute_single_test_case(
     # 取最大值避免单次偶发低估被平均稀释）。
     peak_bytes: Optional[int] = None
     peak_source: Optional[str] = None
+    cpu_total = 0.0
+    cpu_complete = True
 
     expectation = expectation if expectation is not None else {}
 
@@ -161,6 +164,10 @@ def execute_single_test_case(
             measure_memory=measure_memory,
         )
         total_duration += result["duration"]
+        if result.get("cpu_time") is None:
+            cpu_complete = False
+        else:
+            cpu_total += result["cpu_time"]
         attempt_history.append({
             "attempt": attempt,
             "status": result["status"],
@@ -184,6 +191,11 @@ def execute_single_test_case(
 
     if last_result is not None:
         last_result["duration"] = total_duration
+        last_result.pop("cpu_time", None)
+        last_result.pop("cpu_time_source", None)
+        if cpu_complete:
+            last_result["cpu_time"] = cpu_total
+            last_result["cpu_time_source"] = "windows_job"
         last_result["attempts"] = len(attempt_history)
         last_result["attempt_history"] = attempt_history
         # ── 峰值聚合（attempt 级 → case 级；无可选字段时保持旧形态） ──

@@ -488,7 +488,12 @@ def prepare_config(
         return PreparedConfig(None, False, errors, warnings, _summary())
 
     # ── 6. Apply variables & placeholders ───────────────────────────
-    config = apply_variables(config, variables)
+    try:
+        config = apply_variables(config, variables)
+    except ValueError as exc:
+        # Circular variable reference
+        errors.append(str(exc))
+        return PreparedConfig(None, False, errors, warnings, _summary())
 
     cases: List[Dict[str, Any]] = config.get("test_cases", [])
 

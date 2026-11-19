@@ -305,17 +305,22 @@ symtest run test_cases.json --parallel --workers 4
 symtest run test_cases.json --parallel --execution-mode process
 ```
 
-On Windows in thread mode, `--history-dir` or a declared `min_memory_mb`
-enables opportunistic memory admission: a task starts only when commit margin
-covers its own estimated demand plus a reserve, available physical memory stays
-above a low watermark, and, only under potential peak crowding, the minimum startup interval since the
-last grant has elapsed. Active tasks keep no full peak reservations — memory in use shows up in
+On Windows and Linux in thread mode, `--history-dir` or a declared
+`min_memory_mb` enables opportunistic memory admission: a task starts only when
+the effective memory margin covers its own estimated demand plus a reserve,
+available physical memory stays above a low watermark, and, only under potential
+peak crowding, the minimum startup interval since the last grant has elapsed.
+Active tasks keep no full peak reservations — memory in use shows up in
 the system headroom — so occasional overcommit is accepted (zero-OOM not
 guaranteed). Admission parameters are `symtest.json` `run` keys
 (`memory_margin`, `memory_commit_reserve_mb`, `memory_physical_watermark_mb`,
 `memory_default_demand_mb`, `memory_min_start_interval_s`). A launcher and all
-descendants in its Job share the command's
-`timeout`, including descendants that redirect output and outlive the launcher.
+descendants in its process group share the command's `timeout`, including
+descendants that redirect output and outlive the launcher. Group peaks are
+measured per platform and stored per source in history (Windows Job Object
+commit peak / Linux per-command cgroup v2 `memory.peak`, which needs cgroup
+delegation rights and degrades to measurement-off without them — admission
+then runs on manual/default demands).
 
 Cases waiting for admission stay in the scheduler queue, leaving workers free
 for later eligible cases whose dependencies are satisfied.
@@ -323,6 +328,22 @@ for later eligible cases whose dependencies are satisfied.
 The startup interval applies only while tasks are active and their summed estimated peaks plus the new demand and commit reserve exceed current commit headroom. Ample headroom or an empty active set permits immediate admission. This conservative signal may double-count allocated memory; it triggers spacing, never a hard reservation. With active tasks and unknown demand or headroom, spacing is retained conservatively.
 
 ### Output
+
+With memory-aware thread history, cases without a declared memory demand or a
+learned platform peak first warm up memory only. Typically run 2 starts timing
+history and run 3 uses it for scheduling. Regression warnings need 3 prior passed
+timing samples (earliest run 5). Explicit memory demands skip memory warm-up;
+failed peak collection keeps a case warming up. Windows Job execution adds
+optional `cpu_time` / `cpu_time_source` to result JSON and independent CPU
+averages/counts to history. CPU is summed over all measured attempts/steps;
+incomplete or resumed aggregates are omitted. Scheduling still uses wall
+duration, but regression warnings do not: when a CPU measurement is present
+(Windows), the comparison uses only CPU history — warnings are suppressed until
+3 prior CPU samples exist, and there is no fallback to wall time (this path
+cannot detect wall-clock-only slowdowns). Wall-duration warnings apply only
+when no CPU measurement exists (Linux, or Windows measurement failure).
+Existing histories remain usable; `--update-history` can replace
+old mixed-condition timings without discarding pre-run admission knowledge.
 ```bash
 # Machine-readable JSON
 symtest run test_cases.json --output-format json

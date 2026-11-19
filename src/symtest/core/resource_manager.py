@@ -27,7 +27,7 @@
   间隔唤醒，避免固定轮询周期拉大实际间距；
 - **大小任务共存**：大任务等待期间，余量足够的小任务可正常启动
   （按内存需求降序授予，大任务优先，防饥饿）；
-- **fail-open**：快照不可用（API 失败/非 Windows）时仅保留 CPU
+- **fail-open**：快照不可用（API 失败/平台未实现）时仅保留 CPU
   令牌与启动间隔约束，告警一次；
 - **压力下暂停**：内存压力大时只暂停启动新任务，已运行任务继续
   执行；
@@ -295,7 +295,7 @@ class JointResourceManager:
 
         snap = self._snapshot_fn()
         if not snap.usable:
-            # fail-open：快照不可用（API 失败/非 Windows）时仅保留
+            # fail-open：快照不可用（API 失败/平台未实现）时仅保留
             # CPU 令牌与启动间隔约束，告警一次。
             if not self._snapshot_warned:
                 self._snapshot_warned = True

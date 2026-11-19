@@ -467,3 +467,112 @@ class TestApplyVariables:
         result = apply_variables(config)
         c = result["test_cases"][0]
         assert c["args"] == ["hello {other}"]
+
+    def test_nested_variable_expansion(self):
+        """A variable value referencing another variable is expanded."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{work}"],
+                 "expected": {}},
+            ]
+        }
+        result = apply_variables(config, {"work": "{BASE_PATH}/work",
+                                          "BASE_PATH": "/tmp"})
+        c = result["test_cases"][0]
+        assert c["args"] == ["/tmp/work"]
+
+    def test_nested_expansion_order_independent(self):
+        """A variable may reference a variable declared after it."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{a}"],
+                 "expected": {}},
+            ]
+        }
+        result = apply_variables(config, {"a": "{b}!", "b": "hi"})
+        c = result["test_cases"][0]
+        assert c["args"] == ["hi!"]
+
+    def test_nested_chain_expansion(self):
+        """Chained references a -> b -> c all resolve."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{a}"],
+                 "expected": {}},
+            ]
+        }
+        result = apply_variables(config, {"a": "{b}/x", "b": "{c}/y",
+                                          "c": "root"})
+        c = result["test_cases"][0]
+        assert c["args"] == ["root/y/x"]
+
+    def test_circular_variable_reference_raises(self):
+        """A direct or indirect cycle raises with the full chain."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{a}"],
+                 "expected": {}},
+            ]
+        }
+        with pytest.raises(ValueError, match="Circular variable reference detected: .*b -> a -> b"):
+            apply_variables(config, {"a": "{b}", "b": "{a}"})
+
+    def test_self_reference_raises(self):
+        """A variable referencing itself is a cycle: a -> a."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{a}"],
+                 "expected": {}},
+            ]
+        }
+        with pytest.raises(ValueError, match="a -> a"):
+            apply_variables(config, {"a": "{a}/x"})
+
+    def test_unused_cycle_detected(self):
+        """Cycles are detected even when the variables are never used."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["plain"],
+                 "expected": {}},
+            ]
+        }
+        with pytest.raises(ValueError, match="Circular variable reference"):
+            apply_variables(config, {"x": "{y}", "y": "{x}"})
+
+    def test_variable_value_unknown_placeholder_kept(self):
+        """Unmatched placeholders inside variable values stay literal."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{msg}"],
+                 "expected": {}},
+            ]
+        }
+        result = apply_variables(config, {"msg": "n{2,} {nope}"})
+        c = result["test_cases"][0]
+        assert c["args"] == ["n{2,} {nope}"]
+
+    def test_case_variable_references_global(self):
+        """A case variable may reference a global variable (after overlay)."""
+        config = {
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["{work}"],
+                 "expected": {},
+                 "variables": {"work": "{BASE_PATH}/work"}},
+            ]
+        }
+        result = apply_variables(config, {"BASE_PATH": "/tmp"})
+        c = result["test_cases"][0]
+        assert c["args"] == ["/tmp/work"]
+
+    def test_setup_nested_global_variables(self):
+        """setup sees global variables expanded among themselves."""
+        config = {
+            "setup": {"solver_path": "{solver_bin}"},
+            "test_cases": [
+                {"name": "c1", "command": "echo", "args": ["x"],
+                 "expected": {}},
+            ],
+        }
+        result = apply_variables(config, {"solver_bin": "{root}/bin",
+                                          "root": "/usr"})
+        assert result["setup"]["solver_path"] == "/usr/bin"

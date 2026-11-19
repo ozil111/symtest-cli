@@ -7,14 +7,22 @@
   ``GetPerformanceInfo`` 计算系统提交余量
   ``(CommitLimit − CommitTotal) × PageSize``。两者口径不同：物理内存是否
   充足与系统还能承诺多少内存，应分别检查。
-- 非 Windows 平台本轮不实现（返回全 ``None`` 的快照），调用方按
-  "不可用"降级处理，不得据此阻塞调度。
+- Linux：``/proc/meminfo`` 的 ``MemAvailable``（不发生交换情况下还能供新
+  程序使用的内存，含部分可回收缓存）作为基准余量；若处于有限额的
+  cgroup v2 中，则对当前组及全部祖先组计算 ``memory.max −
+  memory.current`` 余量并取最小值，与 ``MemAvailable`` 取更小——避免只
+  看到宿主机内存而忽略组限额。Linux 没有独立的系统级提交上限概念，
+  有效余量（钳制后）同时充当物理余量与提交余量两种角色，总量取
+  ``min(MemTotal, 最小组限额)``（水位校验据此在限额环境中正确拦截）。
+- 其他平台不实现（返回全 ``None`` 的快照），调用方按"不可用"降级处理，
+  不得据此阻塞调度。
 
 快照只描述事实，不含任何判定语义（够不够由调度层决定）。
 """
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("symtest.core.system_memory")
@@ -38,13 +46,107 @@ class MemorySnapshot:
 
 def read_memory_snapshot() -> MemorySnapshot:
     """读取当前系统内存快照；任何 API 失败返回不可用快照（不抛异常）。"""
-    if os.name != "nt":
-        return MemorySnapshot()
-    try:
-        return _read_windows_snapshot()
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Memory snapshot unavailable: %s", exc)
-        return MemorySnapshot()
+    if os.name == "nt":
+        try:
+            return _read_windows_snapshot()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Memory snapshot unavailable: %s", exc)
+            return MemorySnapshot()
+    if os.name == "posix":
+        try:
+            return _read_linux_snapshot()
+        except Exception as exc:
+            logger.warning("Memory snapshot unavailable: %s", exc)
+            return MemorySnapshot()
+    return MemorySnapshot()
+
+
+# ---------------------------------------------------------------------------
+# Linux implementation (/proc + cgroup v2, no extra dependency)
+# ---------------------------------------------------------------------------
+
+_MEMINFO_PATH = Path("/proc/meminfo")
+_SELF_CGROUP_PATH = Path("/proc/self/cgroup")
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def _parse_meminfo(text: str) -> dict:
+    """解析 /proc/meminfo 文本，返回 {"MemTotal": kB, ...}（int 值）。"""
+    values = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        tokens = rest.split()
+        if tokens and tokens[0].isdigit():
+            values[key.strip()] = int(tokens[0])
+    return values
+
+
+def _own_cgroup_relpath() -> Optional[str]:
+    """读取 /proc/self/cgroup，返回 cgroup v2 相对路径（根组返回 ""）。"""
+    content = _SELF_CGROUP_PATH.read_text(encoding="utf-8")
+    for line in content.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) == 3 and parts[0] == "0" and not parts[1]:
+            return parts[2].strip().strip("/")
+    return None
+
+
+def _cgroup_limits() -> tuple:
+    """对当前组及全部祖先组计算 (最小组限额, 最小组余量)，单位为字节。
+
+    仅统计存在 ``memory.max`` 且值非 "max" 的层；缺文件或无限额的层
+    不参与钳制。返回 ``(None, None)`` 表示无任何限额。
+    """
+    rel = _own_cgroup_relpath()
+    if rel is None:
+        return None, None
+    nodes = [""] + [p for p in rel.split("/") if p]
+    min_limit = None
+    min_margin = None
+    for i in range(len(nodes)):
+        group_dir = _CGROUP_ROOT.joinpath(*nodes[: i + 1])
+        try:
+            text = (group_dir / "memory.max").read_text(encoding="utf-8")
+            limit_bytes = int(text.strip())
+        except (OSError, ValueError):
+            continue  # 无该文件（如根组）/ "max"（无限额）/ 读取失败
+        if min_limit is None or limit_bytes < min_limit:
+            min_limit = limit_bytes
+        try:
+            current_bytes = int((group_dir / "memory.current")
+                                .read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            current_bytes = 0
+        margin_bytes = max(0, limit_bytes - current_bytes)
+        if min_margin is None or margin_bytes < min_margin:
+            min_margin = margin_bytes
+    return min_limit, min_margin
+
+
+def _read_linux_snapshot() -> MemorySnapshot:
+    """Linux 快照：MemAvailable 与 cgroup 限额余量取更小值。"""
+    meminfo = _parse_meminfo(_MEMINFO_PATH.read_text(encoding="utf-8"))
+    total_kb = meminfo.get("MemTotal")
+    if not total_kb:
+        raise ValueError("MemTotal missing from /proc/meminfo")
+    total_bytes = total_kb * 1024
+    available_bytes = meminfo.get("MemAvailable", 0) * 1024
+
+    limit_bytes, margin_bytes = _cgroup_limits()
+    if margin_bytes is not None:
+        available_bytes = min(available_bytes, margin_bytes)
+    if limit_bytes is not None:
+        total_bytes = min(total_bytes, limit_bytes)
+
+    return MemorySnapshot(
+        total_physical_bytes=total_bytes,
+        avail_physical_bytes=available_bytes,
+        # Linux 无系统级提交上限概念：单一有效预算同时充当两种角色
+        avail_commit_bytes=available_bytes,
+        commit_limit_bytes=total_bytes,
+    )
 
 
 # ---------------------------------------------------------------------------

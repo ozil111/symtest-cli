@@ -82,6 +82,34 @@ class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
     ]
 
 
+class _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_longlong),
+        ("TotalKernelTime", ctypes.c_longlong),
+        ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+        ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+        ("TotalPageFaultCount", wintypes.DWORD),
+        ("TotalProcesses", wintypes.DWORD),
+        ("ActiveProcesses", wintypes.DWORD),
+        ("TotalTerminatedProcesses", wintypes.DWORD),
+    ]
+
+
+def query_cpu_time(job: int) -> Optional[float]:
+    """Return cumulative user + kernel CPU seconds for the whole Job, including exited children."""
+    try:
+        info = _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+        if not _kernel32().QueryInformationJobObject(
+            job, 1, ctypes.byref(info), ctypes.sizeof(info), None,
+        ):
+            logger.warning("Job CPU accounting unavailable: %s", ctypes.get_last_error())
+            return None
+        return (info.TotalUserTime + info.TotalKernelTime) / 10_000_000.0
+    except Exception as exc:
+        logger.warning("Job CPU accounting unavailable: %s", exc)
+        return None
+
+
 class _THREADENTRY32(ctypes.Structure):
     _fields_ = [
         ("dwSize", wintypes.DWORD),
@@ -95,7 +123,7 @@ class _THREADENTRY32(ctypes.Structure):
 
 
 def is_supported() -> bool:
-    """仅 Windows 平台可用（本轮不实现 Linux cgroup）。"""
+    """仅 Windows 平台可用（Linux 由 linux_cgroup 模块实现）。"""
     import os
     return os.name == "nt"
 

@@ -42,6 +42,7 @@ class TestResult:
     # ── 进程组内存峰值（执行事实，可选；无可测量时不出现在 wire format） ──
     peak_memory_bytes: Optional[int] = None
     peak_memory_source: Optional[str] = None
+    cpu_time: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为 1.3 兼容的 ``TestResultData`` wire format。"""
@@ -74,4 +75,7 @@ class TestResult:
         if self.peak_memory_bytes is not None:
             data["peak_memory_bytes"] = self.peak_memory_bytes
             data["peak_memory_source"] = self.peak_memory_source
+        if self.cpu_time is not None:
+            data["cpu_time"] = self.cpu_time
+            data["cpu_time_source"] = "windows_job"
         return data

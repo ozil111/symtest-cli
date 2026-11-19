@@ -188,10 +188,13 @@ symtest run test_cases.json --parallel --execution-mode process
 
 Thread mode supports CPU-token allocation, solver thread environment
 variables, and longest-processing-time-first scheduling using estimates or
-runtime history. On Windows, enabling `--history-dir` or declaring
+runtime history. On Windows and Linux, enabling `--history-dir` or declaring
 `min_memory_mb` additionally turns on opportunistic memory admission: each
-case's process-group commit-memory peak is measured via a Job Object and
-stored in history, and a case starts only when CPU tokens, commit margin
+case's process-group memory peak is measured via a platform backend (a
+Windows Job Object for the commit-memory peak; a per-command cgroup v2 for
+the whole-group `memory.peak` on Linux, which requires delegation rights and
+degrades to measurement-off without them) and stored in history per source,
+and a case starts only when CPU tokens, the effective memory margin
 (the case's own estimated demand plus a reserve), a physical-memory
 watermark, and (only under potential peak crowding) a minimum startup interval
 are all satisfied — queued

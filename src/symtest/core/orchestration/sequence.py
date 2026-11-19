@@ -132,6 +132,8 @@ def execute_sequence(
 
     combined_output = ""
     total_duration = 0.0
+    cpu_total = 0.0
+    cpu_complete = True
     all_passed = True
     last_result = None
     failed_step = None
@@ -295,6 +297,12 @@ def execute_sequence(
 
         combined_output += result["output"]
         total_duration += result["duration"]
+        if result.get("cpu_time") is None:
+            cpu_complete = False
+        else:
+            cpu_total += result["cpu_time"]
+            step_result["cpu_time"] = result["cpu_time"]
+            step_result["cpu_time_source"] = "windows_job"
         last_result = result
 
         if result["status"] != "passed":
@@ -462,6 +470,8 @@ def execute_sequence(
         "return_code": last_result["return_code"] if last_result else None,
         "duration": total_duration,
         "step_results": step_results,
+        **({"cpu_time": cpu_total, "cpu_time_source": "windows_job"}
+           if cpu_complete and start_step == 0 and last_result is not None else {}),
         "failed_step": failed_step,
         "failure_kind": last_result.get("failure_kind") if last_result else None,
         "compare_failures": last_result.get("compare_failures", []) if last_result else [],
